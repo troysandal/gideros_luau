@@ -22,16 +22,24 @@ Udata* luaU_newudata(lua_State* L, size_t s, int tag)
 
 void luaU_freeudata(lua_State* L, Udata* u)
 {
-    LUAU_ASSERT(u->tag < LUA_UTAG_LIMIT || u->tag == UTAG_IDTOR);
+    LUAU_ASSERT(u->tag < LUA_UTAG_LIMIT || u->tag == UTAG_IDTOR || u->tag == UTAG_LDTOR);
 
     void (*dtor)(void*) = nullptr;
-    if (u->tag == UTAG_IDTOR)
+    if ((u->tag == UTAG_IDTOR)||(u->tag == UTAG_LDTOR))
         memcpy(&dtor, &u->data + u->len - sizeof(dtor), sizeof(dtor));
     else if (u->tag)
         dtor = L->global->udatagc[u->tag];
 
-    if (dtor)
-        dtor(u->data);
+    if (dtor) {
+        if (u->tag == UTAG_LDTOR)
+        {
+            memcpy(lua_newuserdata(L,u->len),u->data,u->len);
+            dtor(L);
+            lua_pop(L,1);
+        }
+        else
+            dtor(u->data);
+    }
 
     luaM_free(L, u, sizeudata(u->len), u->memcat);
 }

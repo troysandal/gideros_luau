@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #include "luaconf.h"
-
+#define LUA_IS_LUAU
 
 
 
@@ -380,6 +380,27 @@ struct lua_Callbacks
 typedef struct lua_Callbacks lua_Callbacks;
 
 LUA_API lua_Callbacks* lua_callbacks(lua_State* L);
+
+//GIDEROS
+#define lua_pushcnfunction(L, fn, debugname) lua_pushcclosurek(L, fn, debugname, 0, NULL)
+#define lua_pushcnclosure(L, fn, nup, debugname) lua_pushcclosurek(L, fn, debugname, nup, NULL)
+#define luaL_optint luaL_optinteger
+#define luaL_checkint luaL_checkinteger
+#define luaL_typerror luaL_typeerrorL
+#define luaL_unref(L,t,n) lua_unref(L,n)
+#define luaL_openlib(L, n, f, nup) luaL_register(L,n,f)
+
+typedef void (*lua_PrintFunc) (const char* str, int len, void* data);
+LUA_API lua_PrintFunc lua_getprintfunc(lua_State* L);
+LUA_API void* lua_getprintfuncdata(lua_State* L);
+LUA_API void lua_setprintfunc(lua_State* L, lua_PrintFunc printfunc, void* data);
+LUA_API int luaL_ref(lua_State* L, int t);
+LUA_API int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunkname);
+//LUA_API int luaL_loadfile (lua_State *L, const char *filename);
+LUA_API int luaL_loadbuffer(lua_State *L, const char *buff, size_t size,const char *name);
+LUA_API int luaL_loadstring(lua_State *L, const char *s);
+LUA_API void* lua_newuserdataluadtor(lua_State* L, size_t sz, void (*dtor)(void*));
+
 
 /******************************************************************************
  * Copyright (c) 2019-2021 Roblox Corporation

@@ -1204,6 +1204,17 @@ void* lua_newuserdatadtor(lua_State* L, size_t sz, void (*dtor)(void*))
     return u->data;
 }
 
+void* lua_newuserdataluadtor(lua_State* L, size_t sz, void (*dtor)(void*))
+{
+    luaC_checkGC(L);
+    luaC_checkthreadsleep(L);
+    Udata* u = luaU_newudata(L, sz + sizeof(dtor), UTAG_LDTOR);
+    memcpy(&u->data + sz, &dtor, sizeof(dtor));
+    setuvalue(L, L->top, u);
+    api_incr_top(L);
+    return u->data;
+}
+
 static const char* aux_upvalue(StkId fi, int n, TValue** val)
 {
     Closure* f;

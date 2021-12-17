@@ -6,6 +6,8 @@
 
 /* special tag value is used for user data with inline dtors */
 #define UTAG_IDTOR LUA_UTAG_LIMIT
+/* special tag value is used for user data with __gc compatible dtor */
+#define UTAG_LDTOR LUA_UTAG_LIMIT+1
 
 #define sizeudata(len) (offsetof(Udata, data) + len)
 

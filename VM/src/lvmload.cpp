@@ -142,217 +142,224 @@ static void resolveImportSafe(lua_State* L, Table* env, TValue* k, uint32_t id)
 int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size, int env)
 {
     size_t offset = 0;
+    size_t done=0;
 
-    uint8_t version = read<uint8_t>(data, size, offset);
+    while (offset<size) {
 
-    // 0 means the rest of the bytecode is the error message
-    if (version == 0 || version != LBC_VERSION)
-    {
-        char chunkid[LUA_IDSIZE];
-        luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+        uint8_t version = read<uint8_t>(data, size, offset);
 
-        if (version == 0)
-            lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
-        else
-            lua_pushfstring(L, "%s: bytecode version mismatch", chunkid);
-        return 1;
-    }
-
-    // pause GC for the duration of deserialization - some objects we're creating aren't rooted
-    // TODO: if an allocation error happens mid-load, we do not unpause GC!
-    size_t GCthreshold = L->global->GCthreshold;
-    L->global->GCthreshold = SIZE_MAX;
-
-    // env is 0 for current environment and a stack index otherwise
-    Table* envt = (env == 0) ? hvalue(gt(L)) : hvalue(luaA_toobject(L, env));
-
-    TString* source = luaS_new(L, chunkname);
-
-    // string table
-    unsigned int stringCount = readVarInt(data, size, offset);
-    TempBuffer<TString*> strings(L, stringCount);
-
-    for (unsigned int i = 0; i < stringCount; ++i)
-    {
-        unsigned int length = readVarInt(data, size, offset);
-
-        strings[i] = luaS_newlstr(L, data + offset, length);
-        offset += length;
-    }
-
-    // proto table
-    unsigned int protoCount = readVarInt(data, size, offset);
-    TempBuffer<Proto*> protos(L, protoCount);
-
-    for (unsigned int i = 0; i < protoCount; ++i)
-    {
-        Proto* p = luaF_newproto(L);
-        p->source = source;
-
-        p->maxstacksize = read<uint8_t>(data, size, offset);
-        p->numparams = read<uint8_t>(data, size, offset);
-        p->nups = read<uint8_t>(data, size, offset);
-        p->is_vararg = read<uint8_t>(data, size, offset);
-
-        p->sizecode = readVarInt(data, size, offset);
-        p->code = luaM_newarray(L, p->sizecode, Instruction, p->memcat);
-        for (int j = 0; j < p->sizecode; ++j)
-            p->code[j] = read<uint32_t>(data, size, offset);
-
-        p->sizek = readVarInt(data, size, offset);
-        p->k = luaM_newarray(L, p->sizek, TValue, p->memcat);
-
-#ifdef HARDMEMTESTS
-        // this is redundant during normal runs, but resolveImportSafe can trigger GC checks under HARDMEMTESTS
-        // because p->k isn't fully formed at this point, we pre-fill it with nil to make subsequent setup safe
-        for (int j = 0; j < p->sizek; ++j)
+        // 0 means the rest of the bytecode is the error message
+        if (version == 0 || version != LBC_VERSION)
         {
-            setnilvalue(&p->k[j]);
+            char chunkid[LUA_IDSIZE];
+            luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+
+            lua_pop(L,done);
+            if (version == 0)
+                lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
+            else
+                lua_pushfstring(L, "%s: bytecode version mismatch", chunkid);
+            return 1;
         }
-#endif
 
-        for (int j = 0; j < p->sizek; ++j)
+        // pause GC for the duration of deserialization - some objects we're creating aren't rooted
+        // TODO: if an allocation error happens mid-load, we do not unpause GC!
+        size_t GCthreshold = L->global->GCthreshold;
+        L->global->GCthreshold = SIZE_MAX;
+
+        // env is 0 for current environment and a stack index otherwise
+        Table* envt = (env == 0) ? hvalue(gt(L)) : hvalue(luaA_toobject(L, env));
+
+        TString* source = luaS_new(L, chunkname);
+
+        // string table
+        unsigned int stringCount = readVarInt(data, size, offset);
+        TempBuffer<TString*> strings(L, stringCount);
+
+        for (unsigned int i = 0; i < stringCount; ++i)
         {
-            switch (read<uint8_t>(data, size, offset))
+            unsigned int length = readVarInt(data, size, offset);
+
+            strings[i] = luaS_newlstr(L, data + offset, length);
+            offset += length;
+        }
+
+        // proto table
+        unsigned int protoCount = readVarInt(data, size, offset);
+        TempBuffer<Proto*> protos(L, protoCount);
+
+        for (unsigned int i = 0; i < protoCount; ++i)
+        {
+            Proto* p = luaF_newproto(L);
+            p->source = source;
+
+            p->maxstacksize = read<uint8_t>(data, size, offset);
+            p->numparams = read<uint8_t>(data, size, offset);
+            p->nups = read<uint8_t>(data, size, offset);
+            p->is_vararg = read<uint8_t>(data, size, offset);
+
+            p->sizecode = readVarInt(data, size, offset);
+            p->code = luaM_newarray(L, p->sizecode, Instruction, p->memcat);
+            for (int j = 0; j < p->sizecode; ++j)
+                p->code[j] = read<uint32_t>(data, size, offset);
+
+            p->sizek = readVarInt(data, size, offset);
+            p->k = luaM_newarray(L, p->sizek, TValue, p->memcat);
+
+    #ifdef HARDMEMTESTS
+            // this is redundant during normal runs, but resolveImportSafe can trigger GC checks under HARDMEMTESTS
+            // because p->k isn't fully formed at this point, we pre-fill it with nil to make subsequent setup safe
+            for (int j = 0; j < p->sizek; ++j)
             {
-            case LBC_CONSTANT_NIL:
                 setnilvalue(&p->k[j]);
-                break;
-
-            case LBC_CONSTANT_BOOLEAN:
-            {
-                uint8_t v = read<uint8_t>(data, size, offset);
-                setbvalue(&p->k[j], v);
-                break;
             }
+    #endif
 
-            case LBC_CONSTANT_NUMBER:
+            for (int j = 0; j < p->sizek; ++j)
             {
-                double v = read<double>(data, size, offset);
-                setnvalue(&p->k[j], v);
-                break;
-            }
-
-            case LBC_CONSTANT_STRING:
-            {
-                TString* v = readString(strings, data, size, offset);
-                setsvalue2n(L, &p->k[j], v);
-                break;
-            }
-
-            case LBC_CONSTANT_IMPORT:
-            {
-                uint32_t iid = read<uint32_t>(data, size, offset);
-                resolveImportSafe(L, envt, p->k, iid);
-                setobj(L, &p->k[j], L->top - 1);
-                L->top--;
-                break;
-            }
-
-            case LBC_CONSTANT_TABLE:
-            {
-                int keys = readVarInt(data, size, offset);
-                Table* h = luaH_new(L, 0, keys);
-                for (int i = 0; i < keys; ++i)
+                switch (read<uint8_t>(data, size, offset))
                 {
-                    int key = readVarInt(data, size, offset);
-                    TValue* val = luaH_set(L, h, &p->k[key]);
-                    setnvalue(val, 0.0);
+                case LBC_CONSTANT_NIL:
+                    setnilvalue(&p->k[j]);
+                    break;
+
+                case LBC_CONSTANT_BOOLEAN:
+                {
+                    uint8_t v = read<uint8_t>(data, size, offset);
+                    setbvalue(&p->k[j], v);
+                    break;
                 }
-                sethvalue(L, &p->k[j], h);
-                break;
+
+                case LBC_CONSTANT_NUMBER:
+                {
+                    double v = read<double>(data, size, offset);
+                    setnvalue(&p->k[j], v);
+                    break;
+                }
+
+                case LBC_CONSTANT_STRING:
+                {
+                    TString* v = readString(strings, data, size, offset);
+                    setsvalue2n(L, &p->k[j], v);
+                    break;
+                }
+
+                case LBC_CONSTANT_IMPORT:
+                {
+                    uint32_t iid = read<uint32_t>(data, size, offset);
+                    resolveImportSafe(L, envt, p->k, iid);
+                    setobj(L, &p->k[j], L->top - 1);
+                    L->top--;
+                    break;
+                }
+
+                case LBC_CONSTANT_TABLE:
+                {
+                    int keys = readVarInt(data, size, offset);
+                    Table* h = luaH_new(L, 0, keys);
+                    for (int i = 0; i < keys; ++i)
+                    {
+                        int key = readVarInt(data, size, offset);
+                        TValue* val = luaH_set(L, h, &p->k[key]);
+                        setnvalue(val, 0.0);
+                    }
+                    sethvalue(L, &p->k[j], h);
+                    break;
+                }
+
+                case LBC_CONSTANT_CLOSURE:
+                {
+                    uint32_t fid = readVarInt(data, size, offset);
+                    Closure* cl = luaF_newLclosure(L, protos[fid]->nups, envt, protos[fid]);
+                    cl->preload = (cl->nupvalues > 0);
+                    setclvalue(L, &p->k[j], cl);
+                    break;
+                }
+
+                default:
+                    LUAU_ASSERT(!"Unexpected constant kind");
+                }
             }
 
-            case LBC_CONSTANT_CLOSURE:
+            p->sizep = readVarInt(data, size, offset);
+            p->p = luaM_newarray(L, p->sizep, Proto*, p->memcat);
+            for (int j = 0; j < p->sizep; ++j)
             {
                 uint32_t fid = readVarInt(data, size, offset);
-                Closure* cl = luaF_newLclosure(L, protos[fid]->nups, envt, protos[fid]);
-                cl->preload = (cl->nupvalues > 0);
-                setclvalue(L, &p->k[j], cl);
-                break;
+                p->p[j] = protos[fid];
             }
 
-            default:
-                LUAU_ASSERT(!"Unexpected constant kind");
+            p->debugname = readString(strings, data, size, offset);
+
+            uint8_t lineinfo = read<uint8_t>(data, size, offset);
+
+            if (lineinfo)
+            {
+                p->linegaplog2 = read<uint8_t>(data, size, offset);
+
+                int intervals = ((p->sizecode - 1) >> p->linegaplog2) + 1;
+                int absoffset = (p->sizecode + 3) & ~3;
+
+                p->sizelineinfo = absoffset + intervals * sizeof(int);
+                p->lineinfo = luaM_newarray(L, p->sizelineinfo, uint8_t, p->memcat);
+                p->abslineinfo = (int*)(p->lineinfo + absoffset);
+
+                uint8_t lastoffset = 0;
+                for (int j = 0; j < p->sizecode; ++j)
+                {
+                    lastoffset += read<uint8_t>(data, size, offset);
+                    p->lineinfo[j] = lastoffset;
+                }
+
+                int lastLine = 0;
+                for (int j = 0; j < intervals; ++j)
+                {
+                    lastLine += read<int32_t>(data, size, offset);
+                    p->abslineinfo[j] = lastLine;
+                }
             }
+
+            uint8_t debuginfo = read<uint8_t>(data, size, offset);
+
+            if (debuginfo)
+            {
+                p->sizelocvars = readVarInt(data, size, offset);
+                p->locvars = luaM_newarray(L, p->sizelocvars, LocVar, p->memcat);
+
+                for (int j = 0; j < p->sizelocvars; ++j)
+                {
+                    p->locvars[j].varname = readString(strings, data, size, offset);
+                    p->locvars[j].startpc = readVarInt(data, size, offset);
+                    p->locvars[j].endpc = readVarInt(data, size, offset);
+                    p->locvars[j].reg = read<uint8_t>(data, size, offset);
+                }
+
+                p->sizeupvalues = readVarInt(data, size, offset);
+                p->upvalues = luaM_newarray(L, p->sizeupvalues, TString*, p->memcat);
+
+                for (int j = 0; j < p->sizeupvalues; ++j)
+                {
+                    p->upvalues[j] = readString(strings, data, size, offset);
+                }
+            }
+
+            protos[i] = p;
         }
 
-        p->sizep = readVarInt(data, size, offset);
-        p->p = luaM_newarray(L, p->sizep, Proto*, p->memcat);
-        for (int j = 0; j < p->sizep; ++j)
-        {
-            uint32_t fid = readVarInt(data, size, offset);
-            p->p[j] = protos[fid];
-        }
+        // "main" proto is pushed to Lua stack
+        uint32_t mainid = readVarInt(data, size, offset);
+        Proto* main = protos[mainid];
 
-        p->debugname = readString(strings, data, size, offset);
+        luaC_checkthreadsleep(L);
 
-        uint8_t lineinfo = read<uint8_t>(data, size, offset);
+        Closure* cl = luaF_newLclosure(L, 0, envt, main);
+        setclvalue(L, L->top, cl);
+        incr_top(L);
+        lua_insert(L,-1-done);
 
-        if (lineinfo)
-        {
-            p->linegaplog2 = read<uint8_t>(data, size, offset);
+        L->global->GCthreshold = GCthreshold;
 
-            int intervals = ((p->sizecode - 1) >> p->linegaplog2) + 1;
-            int absoffset = (p->sizecode + 3) & ~3;
-
-            p->sizelineinfo = absoffset + intervals * sizeof(int);
-            p->lineinfo = luaM_newarray(L, p->sizelineinfo, uint8_t, p->memcat);
-            p->abslineinfo = (int*)(p->lineinfo + absoffset);
-
-            uint8_t lastoffset = 0;
-            for (int j = 0; j < p->sizecode; ++j)
-            {
-                lastoffset += read<uint8_t>(data, size, offset);
-                p->lineinfo[j] = lastoffset;
-            }
-
-            int lastLine = 0;
-            for (int j = 0; j < intervals; ++j)
-            {
-                lastLine += read<int32_t>(data, size, offset);
-                p->abslineinfo[j] = lastLine;
-            }
-        }
-
-        uint8_t debuginfo = read<uint8_t>(data, size, offset);
-
-        if (debuginfo)
-        {
-            p->sizelocvars = readVarInt(data, size, offset);
-            p->locvars = luaM_newarray(L, p->sizelocvars, LocVar, p->memcat);
-
-            for (int j = 0; j < p->sizelocvars; ++j)
-            {
-                p->locvars[j].varname = readString(strings, data, size, offset);
-                p->locvars[j].startpc = readVarInt(data, size, offset);
-                p->locvars[j].endpc = readVarInt(data, size, offset);
-                p->locvars[j].reg = read<uint8_t>(data, size, offset);
-            }
-
-            p->sizeupvalues = readVarInt(data, size, offset);
-            p->upvalues = luaM_newarray(L, p->sizeupvalues, TString*, p->memcat);
-
-            for (int j = 0; j < p->sizeupvalues; ++j)
-            {
-                p->upvalues[j] = readString(strings, data, size, offset);
-            }
-        }
-
-        protos[i] = p;
+        done++;
     }
-
-    // "main" proto is pushed to Lua stack
-    uint32_t mainid = readVarInt(data, size, offset);
-    Proto* main = protos[mainid];
-
-    luaC_checkthreadsleep(L);
-
-    Closure* cl = luaF_newLclosure(L, 0, envt, main);
-    setclvalue(L, L->top, cl);
-    incr_top(L);
-
-    L->global->GCthreshold = GCthreshold;
-
-    return 0;
+    return -done;
 }

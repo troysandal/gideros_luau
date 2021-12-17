@@ -508,3 +508,65 @@ const char* luaL_tolstring(lua_State* L, int idx, size_t* len)
     }
     return lua_tolstring(L, -1, len);
 }
+
+//GIDEROS
+#include <assert.h>
+int luaL_ref(lua_State* L, int t)
+{
+    assert(t == LUA_REGISTRYINDEX);
+    int r = lua_ref(L, -1);
+    lua_pop(L, 1);
+    return r;
+}
+
+#ifndef DESKTOP_TOOLS
+#include "gstdio.h"
+static int errfile (lua_State *L, const char *what, const char *fname) {
+  const char *serr = strerror(errno);
+  lua_pushfstring(L, "cannot %s %s: %s", what, fname, serr);
+  return 1;
+}
+
+
+int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunkname) {
+  G_FILE *f=g_fopen(filename,"rb");
+  if (f == NULL) return errfile(L, "open", filename);
+  g_fseek(f,0,SEEK_END);
+  size_t fsize=g_ftell(f);
+  g_fseek(f, 0, SEEK_SET);
+  void *fbytes=malloc(fsize);
+  if (g_fread(fbytes,1,fsize,f)!=fsize) {
+	  free(fbytes);
+	  g_fclose(f);
+	  return errfile(L, "read", filename);
+  }
+  g_fclose(f);
+  int loadres=luaL_loadbuffer(L,(const char *)fbytes,fsize,chunkname);
+  free(fbytes);
+  return loadres;
+}
+
+/*
+int luaL_loadfile (lua_State *L, const char *filename) {
+	return luaL_loadfilenamed(L,filename,filename);
+}*/
+
+#include <string>
+#include "Luau/Compiler.h"
+int luaL_loadbuffer (lua_State *L, const char *buff, size_t size,
+                                const char *name) {
+    std::string result;
+    if (((*buff)&0xFF)>2) { //not a valid binary, assume source code
+        Luau::CompileOptions opts;
+        result = compile(std::string(buff, size), opts);
+        buff=result.data();
+        size=result.size();
+    }
+    return luau_load(L,name,buff,size,0);
+}
+
+
+int (luaL_loadstring) (lua_State *L, const char *s) {
+  return luaL_loadbuffer(L, s, strlen(s), s);
+}
+#endif

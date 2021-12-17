@@ -209,7 +209,9 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
 
     g->cb = lua_Callbacks();
     g->gcstats = GCStats();
-
+    g->printfunc = NULL;
+    g->printfuncdata = NULL;
+  
     if (luaD_rawrunprotected(L, f_luaopen, NULL) != 0)
     {
         /* memory allocation error: free partial state */
@@ -224,4 +226,20 @@ void lua_close(lua_State* L)
     L = L->global->mainthread; /* only the main thread can be closed */
     luaF_close(L, L->stack);   /* close all upvalues for this thread */
     close_state(L);
+}
+
+lua_PrintFunc lua_getprintfunc(lua_State* L)
+{
+	return L->global->printfunc;
+}
+
+void* lua_getprintfuncdata(lua_State* L)
+{
+ 	return L->global->printfuncdata;
+}
+
+void lua_setprintfunc(lua_State* L, lua_PrintFunc printfunc, void* data)
+{
+	L->global->printfunc = printfunc;
+	L->global->printfuncdata = data;
 }

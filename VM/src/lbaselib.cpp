@@ -10,9 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static void writestring(const char* s, size_t l)
+static void writestring(lua_State* L,const char* s, size_t l)
 {
-    fwrite(s, 1, l, stdout);
+    lua_PrintFunc pf=lua_getprintfunc(L);
+    if (pf)
+        pf(s, l, lua_getprintfuncdata(L));
+     else
+        fwrite(s,1,l,stdout);
 }
 
 static int luaB_print(lua_State* L)
@@ -23,11 +27,11 @@ static int luaB_print(lua_State* L)
         size_t l;
         const char* s = luaL_tolstring(L, i, &l); /* convert to string using __tostring et al */
         if (i > 1)
-            writestring("\t", 1);
-        writestring(s, l);
+            writestring(L, "\t", 1);
+        writestring(L, s, l);
         lua_pop(L, 1); /* pop result */
     }
-    writestring("\n", 1);
+    writestring(L, "\n", 1);
     return 0;
 }
 

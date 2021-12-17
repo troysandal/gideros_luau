@@ -34,8 +34,31 @@
 #endif
 
 /* Can be used to reconfigure visibility/exports for public APIs */
+#ifdef __cplusplus
+#if defined(LUA_BUILD_AS_DLL)
+
+#if defined(LUA_CORE) || defined(LUA_LIB)
+#define LUA_API extern "C" __declspec(dllexport)
+#else
+#define LUA_API extern "C" __declspec(dllimport)
+#endif
+#endif
+
+#ifndef LUA_API
+#define LUA_API extern "C"
+#endif
+#else
+#if defined(LUA_BUILD_AS_DLL)
+#if defined(LUA_CORE) || defined(LUA_LIB)
+#define LUA_API extern  __declspec(dllexport)
+#else
+#define LUA_API extern  __declspec(dllimport)
+#endif
+#endif
+
 #ifndef LUA_API
 #define LUA_API extern
+#endif
 #endif
 
 #define LUALIB_API LUA_API

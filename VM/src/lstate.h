@@ -189,6 +189,10 @@ typedef struct global_State
 
     GCStats gcstats;
 
+    //GIDEROS
+    lua_PrintFunc printfunc;
+    void* printfuncdata;
+
 } global_State;
 // clang-format on
 

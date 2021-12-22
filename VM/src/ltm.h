@@ -36,6 +36,19 @@ typedef enum
     TM_CALL,
     TM_TYPE,
 
+//GIDEROS
+    TM_IDIV,
+    TM_MAXOF,
+    TM_MINOF,
+    TM_ANGDEG,
+    TM_ANGRAD,
+    TM_BOR,
+    TM_BAND,
+    TM_BXOR,
+    TM_SHR,
+    TM_SHL,
+    TM_BNOT,
+
     TM_N /* number of elements in the enum */
 } TMS;
 // clang-format on

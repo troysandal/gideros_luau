@@ -382,6 +382,7 @@ typedef struct lua_Callbacks lua_Callbacks;
 LUA_API lua_Callbacks* lua_callbacks(lua_State* L);
 
 //GIDEROS
+#define LUA_DTOR_UDATA(p) (p)
 #define lua_pushcnfunction(L, fn, debugname) lua_pushcclosurek(L, fn, debugname, 0, NULL)
 #define lua_pushcnclosure(L, fn, nup, debugname) lua_pushcclosurek(L, fn, debugname, nup, NULL)
 #define luaL_optint luaL_optinteger
@@ -399,7 +400,6 @@ LUA_API int luaL_loadfilenamed (lua_State *L, const char *filename, const char *
 //LUA_API int luaL_loadfile (lua_State *L, const char *filename);
 LUA_API int luaL_loadbuffer(lua_State *L, const char *buff, size_t size,const char *name);
 LUA_API int luaL_loadstring(lua_State *L, const char *s);
-LUA_API void* lua_newuserdataluadtor(lua_State* L, size_t sz, void (*dtor)(void*));
 
 
 /******************************************************************************

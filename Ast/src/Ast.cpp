@@ -244,6 +244,13 @@ std::string toString(AstExprUnary::Op op)
         return "not";
     case AstExprUnary::Len:
         return "#";
+//GIDEROS
+    case AstExprUnary::AngToDeg:
+        return "^>";
+    case AstExprUnary::AngToRad:
+        return "^<";
+    case AstExprUnary::BinNot:
+        return "~";
     default:
         LUAU_ASSERT(false);
         return ""; // MSVC requires this even though the switch/case is exhaustive
@@ -301,6 +308,23 @@ std::string toString(AstExprBinary::Op op)
         return "and";
     case AstExprBinary::Or:
         return "or";
+//GIDEROS
+    case AstExprBinary::DivInt:
+        return "//";
+    case AstExprBinary::MinOf:
+        return "><";
+    case AstExprBinary::MaxOf:
+        return "<>";
+    case AstExprBinary::BinAnd:
+        return "&";
+    case AstExprBinary::BinOr:
+        return "|";
+    case AstExprBinary::BinXor:
+        return "~";
+    case AstExprBinary::BinShiftR:
+        return ">>";
+    case AstExprBinary::BinShiftL:
+        return "<<";
     default:
         LUAU_ASSERT(false);
         return ""; // MSVC requires this even though the switch/case is exhaustive

@@ -632,7 +632,11 @@ public:
     {
         Not,
         Minus,
-        Len
+        Len,
+        //GIDEROS ADDED
+        AngToDeg,
+        AngToRad,
+        BinNot
     };
 
     AstExprUnary(const Location& location, Op op, AstExpr* expr);
@@ -666,7 +670,16 @@ public:
         CompareGt,
         CompareGe,
         And,
-        Or
+        Or,
+        //GIDEROS ADDED
+        DivInt,
+        MaxOf,
+        MinOf,
+        BinAnd,
+        BinOr,
+        BinXor,
+        BinShiftR,
+        BinShiftL
     };
 
     AstExprBinary(const Location& location, Op op, AstExpr* left, AstExpr* right);

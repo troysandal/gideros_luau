@@ -1102,6 +1102,14 @@ void BytecodeBuilder::validate() const
         case LOP_DIV:
         case LOP_MOD:
         case LOP_POW:
+        case LOP_DIVINT: //GIDEROS
+        case LOP_MAXOF: //GIDEROS
+        case LOP_MINOF: //GIDEROS
+        case LOP_BINAND: //GIDEROS
+        case LOP_BINOR: //GIDEROS
+        case LOP_BINXOR: //GIDEROS
+        case LOP_SHIFTR: //GIDEROS
+        case LOP_SHIFTL: //GIDEROS
             VREG(LUAU_INSN_A(insn));
             VREG(LUAU_INSN_B(insn));
             VREG(LUAU_INSN_C(insn));
@@ -1113,6 +1121,14 @@ void BytecodeBuilder::validate() const
         case LOP_DIVK:
         case LOP_MODK:
         case LOP_POWK:
+        case LOP_DIVINTK: //GIDEROS
+        case LOP_MAXOFK: //GIDEROS
+        case LOP_MINOFK: //GIDEROS
+        case LOP_BINANDK: //GIDEROS
+        case LOP_BINORK: //GIDEROS
+        case LOP_BINXORK: //GIDEROS
+        case LOP_SHIFTRK: //GIDEROS
+        case LOP_SHIFTLK: //GIDEROS
             VREG(LUAU_INSN_A(insn));
             VREG(LUAU_INSN_B(insn));
             VCONST(LUAU_INSN_C(insn), Number);
@@ -1142,6 +1158,9 @@ void BytecodeBuilder::validate() const
         case LOP_NOT:
         case LOP_MINUS:
         case LOP_LENGTH:
+        case LOP_ANGTODEG: //GIDEROS
+        case LOP_ANGTORAD: //GIDEROS
+        case LOP_BINNOT: //GIDEROS
             VREG(LUAU_INSN_A(insn));
             VREG(LUAU_INSN_B(insn));
             break;
@@ -1602,6 +1621,78 @@ const uint32_t* BytecodeBuilder::dumpInstruction(const uint32_t* code, std::stri
 
     case LOP_JUMPIFNOTEQK:
         formatAppend(result, "JUMPIFNOTEQK R%d K%d %+d\n", LUAU_INSN_A(insn), *code++, LUAU_INSN_D(insn));
+        break;
+
+        //GIDEROS OPCODES
+        // DIVINT,MINOF,MAXOF,BINAND,BINOR,BINXOR,SHIFTR,SHIFTL: compute arithmetic operation between two source registers and put the result into target register
+        // A: target register
+        // B: source register 1
+        // C: source register 2
+    case LOP_DIVINT:
+        formatAppend(result, "DIVINT R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_MINOF:
+        formatAppend(result, "MINOF R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_MAXOF:
+        formatAppend(result, "MAXOF R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_BINAND:
+        formatAppend(result, "BINAND R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_BINOR:
+        formatAppend(result, "BINOR R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_BINXOR:
+        formatAppend(result, "BINXOR R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_SHIFTR:
+        formatAppend(result, "SHIFTR R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_SHIFTL:
+        formatAppend(result, "SHIFTL R%d R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+
+        // DIVINTK, MINOFK, MAXOFK,BINANDK,BINORK,BINXORK,SHIFTRK,SHIFTLK: compute arithmetic operation between the source register and a constant and put the result into target register
+        // A: target register
+        // B: source register
+        // C: constant table index (0..255)
+    case LOP_DIVINTK:
+        formatAppend(result, "DIVINTK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_MINOFK:
+        formatAppend(result, "MINOFK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_MAXOFK:
+        formatAppend(result, "MAXOFK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_BINANDK:
+        formatAppend(result, "BINANDK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_BINORK:
+        formatAppend(result, "BINORK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_BINXORK:
+        formatAppend(result, "BINXORK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_SHIFTRK:
+        formatAppend(result, "SHIFTRK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+    case LOP_SHIFTLK:
+        formatAppend(result, "SHIFTLK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
+        break;
+
+        // ANGTODEG, ANGTORAD: compute unary operation for source register and put the result into target register
+        // A: target register
+        // B: source register
+    case LOP_ANGTODEG:
+        formatAppend(result, "ANGTODEG R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn));
+        break;
+    case LOP_ANGTORAD:
+        formatAppend(result, "ANGTORAD R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn));
+        break;
+    case LOP_BINNOT:
+        formatAppend(result, "BINNOT R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn));
         break;
 
     default:

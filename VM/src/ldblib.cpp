@@ -102,6 +102,78 @@ static int db_info(lua_State* L)
     return results;
 }
 
+static int db_getinfo(lua_State* L)
+{
+    int arg;
+    lua_State* L1 = getthread(L, &arg);
+
+    // If L1 != L, L1 can be in any state, and therefore there are no guarantees about its stack space
+    if (L != L1)
+        lua_rawcheckstack(L1, 1); // for 'f' option
+
+    int level;
+    if (lua_isnumber(L, arg + 1))
+    {
+        level = (int)lua_tointeger(L, arg + 1);
+        luaL_argcheck(L, level >= 0, arg + 1, "level can't be negative");
+    }
+    else if (arg == 0 && lua_isfunction(L, 1))
+    {
+        // convert absolute index to relative index
+        level = -lua_gettop(L);
+    }
+    else
+        luaL_argerror(L, arg + 1, "function or level expected");
+
+    const char* options = luaL_checkstring(L, arg + 2);
+
+    lua_Debug ar;
+    if (!lua_getinfo(L1, level, options, &ar))
+        return 0;
+
+    bool occurs[26] = {};
+
+    lua_newtable(L);
+    for (const char* it = options; *it; ++it)
+    {
+        if (unsigned(*it - 'a') < 26)
+        {
+            if (occurs[*it - 'a'])
+                luaL_argerror(L, arg + 2, "duplicate option");
+            occurs[*it - 'a'] = true;
+        }
+
+        switch (*it)
+        {
+        case 'S':
+            lua_pushstring(L, ar.source);
+            lua_setfield(L,-2,"source");
+            break;
+
+        case 's':
+            lua_pushstring(L, ar.short_src);
+            lua_setfield(L,-2,"short_src");
+            break;
+
+        case 'l':
+            lua_pushinteger(L, ar.currentline);
+            lua_setfield(L,-2,"currentline");
+            break;
+
+        case 'n':
+            lua_pushstring(L, ar.name ? ar.name : "");
+            lua_setfield(L,-2,"name");
+            break;
+
+        default:
+            luaL_argerror(L, arg + 2, "invalid option");
+        }
+    }
+
+    return 1;
+}
+
+
 static int db_traceback(lua_State* L)
 {
     int arg;
@@ -156,6 +228,7 @@ static int db_traceback(lua_State* L)
 
 static const luaL_Reg dblib[] = {
     {"info", db_info},
+    {"getinfo", db_getinfo},
     {"traceback", db_traceback},
     {NULL, NULL},
 };

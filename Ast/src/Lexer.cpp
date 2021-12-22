@@ -160,6 +160,27 @@ std::string Lexeme::toString() const
 
     case ConcatAssign:
         return "'..='";
+//GIDEROS ADDED
+    case DivInt:
+        return "'//'";
+
+    case MaxOf:
+        return "'<>'";
+
+    case MinOf:
+        return "'><'";
+
+    case AngToRad:
+        return "'^<'";
+
+    case AngToDeg:
+        return "'^>'";
+
+    case BinShiftR:
+        return "'>>'";
+
+    case BinShiftL:
+        return "'<<'";
 
     case RawString:
     case QuotedString:
@@ -690,6 +711,16 @@ Lexeme Lexer::readNext()
             consume();
             return Lexeme(Location(start, 2), Lexeme::LessEqual);
         }
+        else if (peekch() == '>')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::MaxOf);
+        }
+        else if (peekch() == '<')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::BinShiftL);
+        }
         else
             return Lexeme(Location(start, 1), '<');
     }
@@ -702,6 +733,16 @@ Lexeme Lexer::readNext()
         {
             consume();
             return Lexeme(Location(start, 2), Lexeme::GreaterEqual);
+        }
+        else if (peekch() == '<')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::MinOf);
+        }
+        else if (peekch() == '>')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::BinShiftR);
         }
         else
             return Lexeme(Location(start, 1), '>');
@@ -775,6 +816,11 @@ Lexeme Lexer::readNext()
             consume();
             return Lexeme(Location(start, 2), Lexeme::DivAssign);
         }
+        else if (peekch() == '/')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::DivInt);
+        }
         else
             return Lexeme(Location(start, 1), '/');
 
@@ -807,6 +853,16 @@ Lexeme Lexer::readNext()
         {
             consume();
             return Lexeme(Location(start, 2), Lexeme::PowAssign);
+        }
+        else if (peekch() == '<')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::AngToRad);
+        }
+        else if (peekch() == '>')
+        {
+            consume();
+            return Lexeme(Location(start, 2), Lexeme::AngToDeg);
         }
         else
             return Lexeme(Location(start, 1), '^');

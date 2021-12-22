@@ -55,6 +55,18 @@ const char* const luaT_eventname[] = {
     "__concat",
     "__call",
     "__type",
+
+	"__idiv",
+	"__max",
+	"__min",
+	"__deg",
+	"__rad",
+    "__bor",
+	"__band",
+	"__bxor",
+	"__shr",
+	"__shl",
+	"__bnot",
 };
 // clang-format on
 

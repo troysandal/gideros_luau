@@ -353,6 +353,40 @@ enum LuauOpcode
     // AUX: constant index
     LOP_FASTCALL2K,
 
+    //GIDEROS OPCODES
+    // DIVINT,MINOF,MAXOF,BINAND,BINOR,BINXOR,SHIFTR,SHIFTL: compute arithmetic operation between two source registers and put the result into target register
+    // A: target register
+    // B: source register 1
+    // C: source register 2
+    LOP_DIVINT,
+    LOP_MINOF,
+    LOP_MAXOF,
+    LOP_BINAND,
+    LOP_BINOR,
+    LOP_BINXOR,
+    LOP_SHIFTR,
+    LOP_SHIFTL,
+
+    // DIVINTK, MINOFK, MAXOFK,BINANDK,BINORK,BINXORK,SHIFTRK,SHIFTLK: compute arithmetic operation between the source register and a constant and put the result into target register
+    // A: target register
+    // B: source register
+    // C: constant table index (0..255)
+    LOP_DIVINTK,
+    LOP_MINOFK,
+    LOP_MAXOFK,
+    LOP_BINANDK,
+    LOP_BINORK,
+    LOP_BINXORK,
+    LOP_SHIFTRK,
+    LOP_SHIFTLK,
+
+    // ANGTODEG, ANGTORAD: compute unary operation for source register and put the result into target register
+    // A: target register
+    // B: source register
+    LOP_ANGTODEG,
+    LOP_ANGTORAD,
+    LOP_BINNOT,
+
     // Enum entry for number of opcodes, not a valid opcode by itself!
     LOP__COUNT
 };

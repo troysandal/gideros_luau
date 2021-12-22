@@ -9,6 +9,9 @@
 #include <algorithm>
 #include <bitset>
 #include <math.h>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 LUAU_FASTFLAG(LuauIfElseExpressionBaseSupport)
 LUAU_FASTFLAGVARIABLE(LuauBit32CountBuiltin, false)
@@ -518,6 +521,16 @@ struct Compiler
         case AstExprUnary::Len:
             return LOP_LENGTH;
 
+        //GIDEROS
+        case AstExprUnary::AngToDeg:
+            return LOP_ANGTODEG;
+
+        case AstExprUnary::AngToRad:
+            return LOP_ANGTORAD;
+
+        case AstExprUnary::BinNot:
+            return LOP_BINNOT;
+
         default:
             LUAU_ASSERT(!"Unexpected unary operation");
             return LOP_NOP;
@@ -545,6 +558,31 @@ struct Compiler
 
         case AstExprBinary::Pow:
             return k ? LOP_POWK : LOP_POW;
+
+        //GIDEROS
+        case AstExprBinary::DivInt:
+            return k ? LOP_DIVINTK : LOP_DIVINT;
+
+        case AstExprBinary::MaxOf:
+            return k ? LOP_MAXOFK : LOP_MAXOF;
+
+        case AstExprBinary::MinOf:
+            return k ? LOP_MINOFK : LOP_MINOF;
+
+        case AstExprBinary::BinAnd:
+            return k ? LOP_BINANDK : LOP_BINAND;
+
+        case AstExprBinary::BinOr:
+            return k ? LOP_BINORK : LOP_BINOR;
+
+        case AstExprBinary::BinXor:
+            return k ? LOP_BINXORK : LOP_BINXOR;
+
+        case AstExprBinary::BinShiftR:
+            return k ? LOP_SHIFTRK : LOP_SHIFTR;
+
+        case AstExprBinary::BinShiftL:
+            return k ? LOP_SHIFTLK : LOP_SHIFTL;
 
         default:
             LUAU_ASSERT(!"Unexpected binary operation");
@@ -952,6 +990,15 @@ struct Compiler
         case AstExprBinary::Div:
         case AstExprBinary::Mod:
         case AstExprBinary::Pow:
+        //GIDEROS
+        case AstExprBinary::DivInt:
+        case AstExprBinary::MaxOf:
+        case AstExprBinary::MinOf:
+        case AstExprBinary::BinAnd:
+        case AstExprBinary::BinOr:
+        case AstExprBinary::BinXor:
+        case AstExprBinary::BinShiftR:
+        case AstExprBinary::BinShiftL:
         {
             int32_t rc = getConstantNumber(expr->right);
 
@@ -2348,6 +2395,10 @@ struct Compiler
         case AstExprBinary::Div:
         case AstExprBinary::Mod:
         case AstExprBinary::Pow:
+        //GIDEROS
+        case AstExprBinary::DivInt:
+        case AstExprBinary::MaxOf:
+        case AstExprBinary::MinOf:
         {
             if (var.kind != LValue::Kind_Local)
                 compileLValueUse(var, target, /* set= */ false);
@@ -2900,6 +2951,30 @@ struct Compiler
                 }
                 break;
 
+            case AstExprUnary::AngToDeg: //GIDEROS
+                if (arg.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = arg.valueNumber*180.0/M_PI;
+                }
+                break;
+
+            case AstExprUnary::AngToRad: //GIDEROS
+                if (arg.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = arg.valueNumber*M_PI/180.0;
+                }
+                break;
+
+            case AstExprUnary::BinNot: //GIDEROS
+                if (arg.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = ~((uint32_t)arg.valueNumber);
+                }
+                break;
+
             default:
                 LUAU_ASSERT(!"Unexpected unary operation");
             }
@@ -2979,6 +3054,70 @@ struct Compiler
                 {
                     result.type = Constant::Type_Number;
                     result.valueNumber = pow(la.valueNumber, ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::DivInt: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = trunc(la.valueNumber / ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::MaxOf: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = fmax(la.valueNumber , ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::MinOf: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = fmin(la.valueNumber , ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::BinAnd: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = ((uint32_t)la.valueNumber)&((uint32_t)ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::BinOr: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = ((uint32_t)la.valueNumber)|((uint32_t)ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::BinXor: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = ((uint32_t)la.valueNumber)^((uint32_t)ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::BinShiftR: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = ((uint32_t)la.valueNumber)>>((uint32_t)ra.valueNumber);
+                }
+                break;
+
+            case AstExprBinary::BinShiftL: //GIDEROS
+                if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+                {
+                    result.type = Constant::Type_Number;
+                    result.valueNumber = ((uint32_t)la.valueNumber)<<((uint32_t)ra.valueNumber);
                 }
                 break;
 

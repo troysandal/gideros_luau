@@ -68,6 +68,14 @@ struct Lexeme
         ModAssign,
         PowAssign,
         ConcatAssign,
+//GIDEROS ADDED
+        DivInt,
+        MaxOf,
+        MinOf,
+        AngToRad,
+        AngToDeg,
+        BinShiftR,
+        BinShiftL,
 
         RawString,
         QuotedString,

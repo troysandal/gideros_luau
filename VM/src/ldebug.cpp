@@ -96,6 +96,7 @@ static int auxgetinfo(lua_State* L, const char* what, lua_Debug* ar, Closure* f,
     {
         switch (*what)
         {
+        case 'S':
         case 's':
         {
             if (f->isC)

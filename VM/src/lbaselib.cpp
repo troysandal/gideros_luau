@@ -416,6 +416,32 @@ static int luaB_newproxy(lua_State* L)
     return 1;
 }
 
+#ifndef DESKTOP_TOOLS
+static int luaB_loadfile(lua_State *L) {
+  const char *s=luaL_checkstring(L,1);
+  int nret=luaL_loadfilenamed(L, s, luaL_optstring(L,2,s));
+  if (nret>0) {
+      lua_pushnil(L);
+      lua_replace(L,-2);
+      return 2;
+  }
+  return -nret;
+}
+
+
+static int luaB_loadstring(lua_State *L) {
+  size_t sz;
+  const char *s=luaL_checklstring(L,1,&sz);
+  int nret=luaL_loadbuffer(L, s, sz, luaL_optstring(L,2,"string-chunk"));
+  if (nret>0) {
+      lua_pushnil(L);
+      lua_replace(L,-2);
+      return 2;
+  }
+  return -nret;
+}
+#endif
+
 static const luaL_Reg base_funcs[] = {
     {"assert", luaB_assert},
     {"error", luaB_error},
@@ -435,6 +461,10 @@ static const luaL_Reg base_funcs[] = {
     {"tostring", luaB_tostring},
     {"type", luaB_type},
     {"typeof", luaB_typeof},
+#ifndef DESKTOP_TOOLS
+    {"loadfile", luaB_loadfile},
+    {"loadstring", luaB_loadstring},
+#endif
     {NULL, NULL},
 };
 

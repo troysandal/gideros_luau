@@ -1683,6 +1683,12 @@ std::optional<AstExprUnary::Op> Parser::parseUnaryOp(const Lexeme& l)
         return AstExprUnary::Minus;
     else if (l.type == '#')
         return AstExprUnary::Len;
+    else if (l.type == Lexeme::AngToDeg)
+        return AstExprUnary::AngToDeg;
+    else if (l.type == Lexeme::AngToRad)
+        return AstExprUnary::AngToRad;
+    else if (l.type == '~')
+        return AstExprUnary::BinNot;
     else
         return std::nullopt;
 }
@@ -1719,6 +1725,23 @@ std::optional<AstExprBinary::Op> Parser::parseBinaryOp(const Lexeme& l)
         return AstExprBinary::And;
     else if (l.type == Lexeme::ReservedOr)
         return AstExprBinary::Or;
+//GIDEROS Added
+    else if (l.type == Lexeme::DivInt)
+        return AstExprBinary::DivInt;
+    else if (l.type == Lexeme::MaxOf)
+        return AstExprBinary::MaxOf;
+    else if (l.type == Lexeme::MinOf)
+        return AstExprBinary::MinOf;
+    else if (l.type == '|')
+        return AstExprBinary::BinOr;
+    else if (l.type == '&')
+        return AstExprBinary::BinAnd;
+    else if (l.type == '~')
+        return AstExprBinary::BinXor;
+    else if (l.type == Lexeme::BinShiftR)
+        return AstExprBinary::BinShiftR;
+    else if (l.type == Lexeme::BinShiftL)
+        return AstExprBinary::BinShiftL;
     else
         return std::nullopt;
 }
@@ -1807,7 +1830,9 @@ AstExpr* Parser::parseExpr(unsigned int limit)
         {10, 9}, {5, 4},                        // power and concat (right associative)
         {3, 3}, {3, 3},                         // equality and inequality
         {3, 3}, {3, 3}, {3, 3}, {3, 3},         // order
-        {2, 2}, {1, 1}                          // logical (and/or)
+        {2, 2}, {1, 1},                         // logical (and/or)
+        {7, 7}, {7, 7}, {7, 7},                 // GIDEROS (DivInt, MaxOf, MinOf)
+        {6, 6}, {6, 6}, {6, 6}, {7, 7}, {7, 7}  // GIDEROS (&,|,~,>>,<<)
     };
 
     unsigned int recursionCounterOld = recursionCounter;

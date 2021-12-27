@@ -275,6 +275,7 @@ typedef struct Proto
     struct LocVar* locvars; /* information about local variables */
     TString** upvalues;     /* upvalue names */
     TString* source;
+    TString* pseudocode;   /* Gideros AST pseudocode */
 
     TString* debugname;
     uint8_t* debuginsn; // a copy of code[] array with just opcodes

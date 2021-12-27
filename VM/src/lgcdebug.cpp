@@ -121,6 +121,9 @@ static void validateproto(global_State* g, Proto* f)
     if (f->debugname)
         validateobjref(g, obj2gco(f), obj2gco(f->debugname));
 
+    if (f->pseudocode)
+        validateobjref(g, obj2gco(f), obj2gco(f->pseudocode));
+
     for (int i = 0; i < f->sizek; ++i)
         validateref(g, obj2gco(f), &f->k[i]);
 

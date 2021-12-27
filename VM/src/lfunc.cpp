@@ -31,6 +31,7 @@ Proto* luaF_newproto(lua_State* L)
     f->source = NULL;
     f->debugname = NULL;
     f->debuginsn = NULL;
+    f->pseudocode = NULL;
     return f;
 }
 

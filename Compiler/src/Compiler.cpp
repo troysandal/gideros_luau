@@ -5,6 +5,7 @@
 #include "Luau/BytecodeBuilder.h"
 #include "Luau/Common.h"
 #include "Luau/TimeTrace.h"
+#include "Luau/PseudoCode.h"
 
 #include <algorithm>
 #include <bitset>
@@ -149,6 +150,12 @@ struct Compiler
 
         bool self = func->self != 0;
         uint32_t fid = bytecode.beginFunction(uint8_t(self + func->args.size), func->vararg);
+
+        if (func->hasReturnAnnotation) {
+            AstTypeReference *returnType=(AstTypeReference *)func->returnAnnotation.types.data[0];
+            if (returnType->name=="Shader")
+                bytecode.setPseudoCode(generatePseudoCode(func));
+        }
 
         setDebugLine(func);
 

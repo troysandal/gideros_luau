@@ -343,6 +343,10 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
                 }
             }
 
+            unsigned int pseudoCodeLength = readVarInt(data, size, offset);
+            p->pseudocode = luaS_newlstr(L, data + offset, pseudoCodeLength);
+            offset += pseudoCodeLength;
+
             protos[i] = p;
         }
 

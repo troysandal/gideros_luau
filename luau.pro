@@ -36,7 +36,7 @@ INCLUDEPATH += \
 SOURCES += \
          $$expand(lapi laux lbaselib lbitlib lbuiltins lcorolib ldblib ldebug ldo lfunc lgc lgcdebug linit lint64lib liolib lmathlib lmem lobject loslib lperf lstate lstring lstrlib \
          ltable ltablib ltm ludata lutf8lib lvmexecute lvmload lvmutils,VM/src/,.cpp) \
-         $$expand(lcode Compiler BytecodeBuilder,Compiler/src/,.cpp) \
+         $$expand(lcode Compiler BytecodeBuilder PseudoCode,Compiler/src/,.cpp) \
          $$expand(Ast Confusables Lexer Location Parser StringUtils TimeTrace,Ast/src/,.cpp)
 
 win32 {

@@ -1970,11 +1970,17 @@ AstExpr* Parser::parsePrimaryExpr(bool asStatement)
         else if (lexer.current().type == '[')
         {
             Lexeme matchBracket = lexer.current();
-            nextLexeme();
+            AstExpr* index;
+            Location end;
 
-            AstExpr* index = parseExpr();
-
-            Location end = lexer.current().location;
+            while (true) {
+                nextLexeme();
+                index = parseExpr();
+                end = lexer.current().location;
+                if (lexer.current().type != ',') break;
+                expr = allocator.alloc<AstExprIndexExpr>(Location(start, end), expr, index);
+                incrementRecursionCounter("expression");
+            }
 
             expectMatchAndConsume(']', matchBracket);
 

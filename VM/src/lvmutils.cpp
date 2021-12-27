@@ -385,6 +385,9 @@ void luaV_doarith(lua_State* L, StkId ra, const TValue* rb, const TValue* rc, TM
         case TM_UNM:
             setnvalue(ra, luai_numunm(nb));
             break;
+        case TM_IDIV:
+            setnvalue(ra, luai_numidiv(nb, nc));
+            break;
         default:
             LUAU_ASSERT(0);
             break;

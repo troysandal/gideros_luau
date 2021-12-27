@@ -442,6 +442,64 @@ static int luaB_loadstring(lua_State *L) {
 }
 #endif
 
+#include <string.h>
+static int luaB_collectgarbage(lua_State* L)
+{
+    const char* option = luaL_optstring(L, 1, "collect");
+
+    if (strcmp(option, "collect") == 0)
+    {
+        lua_gc(L, LUA_GCCOLLECT, 0);
+        return 0;
+    }
+
+    if (strcmp(option, "count") == 0)
+    {
+        int c = lua_gc(L, LUA_GCCOUNT, 0);
+        lua_pushnumber(L, c);
+        return 1;
+    }
+
+    if (strcmp(option, "restart") == 0)
+    {
+        int c = lua_gc(L, LUA_GCRESTART, 0);
+        lua_pushnumber(L, c);
+        return 1;
+    }
+
+    if (strcmp(option, "setstepsize") == 0)
+    {
+        int c = lua_gc(L, LUA_GCSETSTEPSIZE, luaL_checkint(L,2));
+        lua_pushnumber(L, c);
+        return 1;
+    }
+
+    if (strcmp(option, "setstepmul") == 0)
+    {
+        int c = lua_gc(L, LUA_GCSETSTEPMUL, luaL_checkint(L,2));
+        lua_pushnumber(L, c);
+        return 1;
+    }
+
+    if (strcmp(option, "step") == 0)
+    {
+        int c = lua_gc(L, LUA_GCSTEP, luaL_checkint(L,2));
+        lua_pushnumber(L, c);
+        return 1;
+    }
+
+    if (strcmp(option, "stop") == 0)
+    {
+        int c = lua_gc(L, LUA_GCSTOP, 0);
+        lua_pushnumber(L, c);
+        return 1;
+    }
+
+    luaL_error(L, "collectgarbage must be called with one of the supported options");
+    return 0;
+}
+
+
 static const luaL_Reg base_funcs[] = {
     {"assert", luaB_assert},
     {"error", luaB_error},
@@ -461,6 +519,7 @@ static const luaL_Reg base_funcs[] = {
     {"tostring", luaB_tostring},
     {"type", luaB_type},
     {"typeof", luaB_typeof},
+    {"collectgarbage", luaB_collectgarbage},
 #ifndef DESKTOP_TOOLS
     {"loadfile", luaB_loadfile},
     {"loadstring", luaB_loadstring},

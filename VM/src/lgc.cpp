@@ -228,6 +228,8 @@ static void traverseproto(global_State* g, Proto* f)
         stringmark(f->source);
     if (f->debugname)
         stringmark(f->debugname);
+    if (f->pseudocode)
+        stringmark(f->pseudocode);
     for (i = 0; i < f->sizek; i++) /* mark literals */
         markvalue(g, &f->k[i]);
     for (i = 0; i < f->sizeupvalues; i++)

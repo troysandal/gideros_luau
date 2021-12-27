@@ -97,6 +97,8 @@ public:
 
     void setDumpSource(const std::string& source);
 
+    void setPseudoCode(const std::string& pseudoCode);
+
     const std::string& getBytecode() const
     {
         LUAU_ASSERT(!bytecode.empty()); // did you forget to call finalize?
@@ -231,6 +233,8 @@ private:
 
     uint32_t dumpFlags = 0;
     std::vector<std::string> dumpSource;
+
+    std::string pseudoCode;
 
     std::string (BytecodeBuilder::*dumpFunctionPtr)() const = nullptr;
 

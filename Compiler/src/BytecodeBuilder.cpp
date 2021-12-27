@@ -196,6 +196,8 @@ void BytecodeBuilder::endFunction(uint8_t maxstacksize, uint8_t numupvalues)
 
     constantMap.clear();
     tableShapeMap.clear();
+
+    pseudoCode.clear();
 }
 
 void BytecodeBuilder::setMainFunction(uint32_t fid)
@@ -614,6 +616,9 @@ void BytecodeBuilder::writeFunction(std::string& ss, uint32_t id) const
     {
         writeByte(ss, 0);
     }
+
+    writeVarInt(ss, uint32_t(pseudoCode.length()));
+    ss.append(pseudoCode.data(), pseudoCode.length());
 }
 
 void BytecodeBuilder::writeLineInfo(std::string& ss) const
@@ -1788,6 +1793,11 @@ void BytecodeBuilder::setDumpSource(const std::string& source)
         if (!dumpSource.back().empty() && dumpSource.back().back() == '\r')
             dumpSource.back().pop_back();
     }
+}
+
+void BytecodeBuilder::setPseudoCode(const std::string& code)
+{
+	pseudoCode=code;
 }
 
 std::string BytecodeBuilder::dumpFunction(uint32_t id) const

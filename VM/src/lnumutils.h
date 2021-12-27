@@ -9,6 +9,7 @@
 #define luai_numsub(a, b) ((a) - (b))
 #define luai_nummul(a, b) ((a) * (b))
 #define luai_numdiv(a, b) ((a) / (b))
+#define luai_numidiv(a, b) (trunc((a) / (b)))
 #define luai_numpow(a, b) (pow(a, b))
 #define luai_numunm(a) (-(a))
 #define luai_numisnan(a) ((a) != (a))

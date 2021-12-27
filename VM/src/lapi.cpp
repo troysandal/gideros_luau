@@ -473,6 +473,16 @@ lua_CFunction lua_tocfunction(lua_State* L, int idx)
     return (!iscfunction(o)) ? NULL : cast_to(lua_CFunction, clvalue(o)->c.f);
 }
 
+int lua_getpseudocode(lua_State* L, int idx)
+{
+    StkId o = index2addr(L, idx);
+    if (!isLfunction(o)) return 0;
+    if (!clvalue(o)->l.p->pseudocode) return 0;
+    setsvalue2s(L, L->top, clvalue(o)->l.p->pseudocode);
+    api_incr_top(L);
+    return 1;
+}
+
 void* lua_touserdata(lua_State* L, int idx)
 {
     StkId o = index2addr(L, idx);

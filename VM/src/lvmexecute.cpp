@@ -1031,6 +1031,9 @@ static void luau_execute(lua_State* L)
                 L->base = ci->base;
                 L->top = argtop;
 
+                if (L->profilerHook)
+                  L->profilerHook(L,1);
+
                 // note: this reallocs stack, but we don't need to VM_PROTECT this
                 // this is because we're going to modify base/savedpc manually anyhow
                 // crucially, we can't use ra/argtop after this line
@@ -1064,6 +1067,9 @@ static void luau_execute(lua_State* L)
                     // yield
                     if (n < 0)
                         goto exit;
+
+                    if (L->profilerHook)
+                      L->profilerHook(L,0);
 
                     // ci is our callinfo, cip is our parent
                     CallInfo* ci = L->ci;
@@ -1101,6 +1107,9 @@ static void luau_execute(lua_State* L)
                 // ci is our callinfo, cip is our parent
                 CallInfo* ci = L->ci;
                 CallInfo* cip = ci - 1;
+
+                if (L->profilerHook)
+                    L->profilerHook(L,0);
 
                 StkId res = ci->func; // note: we assume CALL always puts func+args and expects results to start at func
 
@@ -3331,16 +3340,24 @@ int luau_precall(lua_State* L, StkId func, int nresults)
 
         L->ci->savedpc = ccl->l.p->code;
 
+        if (L->profilerHook)
+            L->profilerHook(L,1);
+
         return PCRLUA;
     }
     else
     {
+        if (L->profilerHook)
+            L->profilerHook(L,1);
         lua_CFunction func = ccl->c.f;
         int n = func(L);
 
         // yield
         if (n < 0)
             return PCRYIELD;
+
+        if (L->profilerHook)
+          L->profilerHook(L,0);
 
         // ci is our callinfo, cip is our parent
         CallInfo* ci = L->ci;
@@ -3370,6 +3387,9 @@ int luau_precall(lua_State* L, StkId func, int nresults)
 void luau_poscall(lua_State* L, StkId first)
 {
     // finish interrupted execution of `OP_CALL'
+    if (L->profilerHook)
+      L->profilerHook(L,1);
+
     // ci is our callinfo, cip is our parent
     CallInfo* ci = L->ci;
     CallInfo* cip = ci - 1;

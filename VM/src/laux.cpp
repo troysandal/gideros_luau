@@ -521,6 +521,9 @@ int luaL_ref(lua_State* L, int t)
 
 #ifndef DESKTOP_TOOLS
 #include "gstdio.h"
+#else
+#include "stdio.h"
+#endif
 static int errfile (lua_State *L, const char *what, const char *fname) {
   const char *serr = strerror(errno);
   lua_pushfstring(L, "cannot %s %s: %s", what, fname, serr);
@@ -528,6 +531,7 @@ static int errfile (lua_State *L, const char *what, const char *fname) {
 }
 
 
+#ifndef DESKTOP_TOOLS
 int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunkname) {
   G_FILE *f=g_fopen(filename,"rb");
   if (f == NULL) return errfile(L, "open", filename);
@@ -545,10 +549,28 @@ int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunknam
   free(fbytes);
   return loadres;
 }
-
+#else
+int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunkname) {
+    FILE *f=fopen(filename,"rb");
+    if (f == NULL) return errfile(L, "open", filename);
+    fseek(f,0,SEEK_END);
+    size_t fsize=ftell(f);
+    fseek(f, 0, SEEK_SET);
+    void *fbytes=malloc(fsize);
+    if (fread(fbytes,1,fsize,f)!=fsize) {
+        free(fbytes);
+        fclose(f);
+        return errfile(L, "read", filename);
+    }
+    fclose(f);
+    int loadres=luaL_loadbuffer(L,(const char *)fbytes,fsize,chunkname);
+    free(fbytes);
+    return loadres;
+}
+#endif
 /*
 int luaL_loadfile (lua_State *L, const char *filename) {
-	return luaL_loadfilenamed(L,filename,filename);
+    return luaL_loadfilenamed(L,filename,filename);
 }*/
 
 #include <string>
@@ -569,4 +591,4 @@ int luaL_loadbuffer (lua_State *L, const char *buff, size_t size,
 int (luaL_loadstring) (lua_State *L, const char *s) {
   return luaL_loadbuffer(L, s, strlen(s), s);
 }
-#endif
+

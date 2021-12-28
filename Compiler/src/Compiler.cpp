@@ -3901,13 +3901,19 @@ void compileOrThrow(BytecodeBuilder& bytecode, const std::string& source, const 
     compileOrThrow(bytecode, root, names, options);
 }
 
-std::string compile(const std::string& source, const CompileOptions& options, const ParseOptions& parseOptions, BytecodeEncoder* encoder)
+std::string compile(const std::string& source, const CompileOptions& options, const ParseOptions& parseOptions, BytecodeEncoder* encoder, ParseResult *parseResult)
 {
     LUAU_TIMETRACE_SCOPE("compile", "Compiler");
 
     Allocator allocator;
     AstNameTable names(allocator);
-    ParseResult result = Parser::parse(source.c_str(), source.size(), names, allocator, parseOptions);
+    ParseResult result;
+    if (parseResult!=nullptr) {
+        result=*parseResult;
+    }
+    else {
+        result = Parser::parse(source.c_str(), source.size(), names, allocator, parseOptions);
+    }
 
     if (!result.errors.empty())
     {

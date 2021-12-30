@@ -483,7 +483,7 @@ static int luaB_collectgarbage(lua_State* L)
 
     if (strcmp(option, "step") == 0)
     {
-        int c = lua_gc(L, LUA_GCSTEP, luaL_checkint(L,2));
+        int c = lua_gc(L, LUA_GCSTEP, luaL_optint(L,2,0));
         lua_pushnumber(L, c);
         return 1;
     }

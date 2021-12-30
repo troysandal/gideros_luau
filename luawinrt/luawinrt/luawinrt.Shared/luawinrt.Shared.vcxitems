@@ -1,0 +1,82 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+    <MSBuildAllProjects>$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <ItemsProjectGuid>{212298a0-62c1-48cb-85c0-00d2afd482cd}</ItemsProjectGuid>
+    <ItemsRootNamespace>luawinrt</ItemsRootNamespace>
+    <ItemsProjectName>luawinrt.Shared</ItemsProjectName>
+    <CodeSharingProject>248F659F-DAC5-46E8-AC09-60EC9FC95053</CodeSharingProject>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ProjectCapability Include="SourceItemsFromImports" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\Ast.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\Confusables.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\Lexer.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\Location.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\Parser.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\StringUtils.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\TimeTrace.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\BytecodeBuilder.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\Compiler.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\lcode.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\PseudoCode.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lapi.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\laux.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbaselib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbitlib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuiltins.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lcorolib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ldblib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ldebug.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ldo.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lfunc.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lgc.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lgcdebug.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\linit.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lint64lib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\liolib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lmathlib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lmem.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lobject.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\loslib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lperf.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lstate.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lstring.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lstrlib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ltable.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ltablib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ltm.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ludata.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lutf8lib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lvmexecute.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lvmload.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lvmutils.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lapi.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuiltins.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbytecode.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lcommon.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ldebug.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ldo.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lfunc.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lgc.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lmem.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lnumutils.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lobject.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lstate.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lstring.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ltable.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ltm.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ludata.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lvm.h" />
+  </ItemGroup>
+</Project>

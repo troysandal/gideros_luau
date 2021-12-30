@@ -511,6 +511,7 @@ const char* luaL_tolstring(lua_State* L, int idx, size_t* len)
 
 //GIDEROS
 #include <assert.h>
+#include <string>
 int luaL_ref(lua_State* L, int t)
 {
     assert(t == LUA_REGISTRYINDEX);
@@ -521,17 +522,12 @@ int luaL_ref(lua_State* L, int t)
 
 #ifndef DESKTOP_TOOLS
 #include "gstdio.h"
-#else
-#include "stdio.h"
-#endif
+#include <errno.h>
 static int errfile (lua_State *L, const char *what, const char *fname) {
   const char *serr = strerror(errno);
   lua_pushfstring(L, "cannot %s %s: %s", what, fname, serr);
   return 1;
 }
-
-
-#ifndef DESKTOP_TOOLS
 int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunkname) {
   G_FILE *f=g_fopen(filename,"rb");
   if (f == NULL) return errfile(L, "open", filename);
@@ -545,11 +541,20 @@ int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunknam
 	  return errfile(L, "read", filename);
   }
   g_fclose(f);
-  int loadres=luaL_loadbuffer(L,(const char *)fbytes,fsize,chunkname);
+  std::string cname="@";
+  cname=cname+chunkname;
+  int loadres=luaL_loadbuffer(L,(const char *)fbytes,fsize,cname.c_str());
   free(fbytes);
   return loadres;
 }
 #else
+#include "stdio.h"
+#include <errno.h>
+static int errfile (lua_State *L, const char *what, const char *fname) {
+  const char *serr = strerror(errno);
+  lua_pushfstring(L, "cannot %s %s: %s", what, fname, serr);
+  return 1;
+}
 int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunkname) {
     FILE *f=fopen(filename,"rb");
     if (f == NULL) return errfile(L, "open", filename);
@@ -563,7 +568,9 @@ int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunknam
         return errfile(L, "read", filename);
     }
     fclose(f);
-    int loadres=luaL_loadbuffer(L,(const char *)fbytes,fsize,chunkname);
+    std::string cname="@";
+    cname=cname+chunkname;
+    int loadres=luaL_loadbuffer(L,(const char *)fbytes,fsize,cname.c_str());
     free(fbytes);
     return loadres;
 }

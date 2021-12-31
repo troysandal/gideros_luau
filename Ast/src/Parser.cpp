@@ -10,7 +10,7 @@
 // See docs/SyntaxChanges.md for an explanation.
 LUAU_FASTINTVARIABLE(LuauRecursionLimit, 1000)
 LUAU_FASTINTVARIABLE(LuauParseErrorLimit, 100)
-LUAU_FASTFLAGVARIABLE(LuauIfElseExpressionBaseSupport, false)
+LUAU_FASTFLAGVARIABLE(LuauIfElseExpressionBaseSupport, true)
 LUAU_FASTFLAGVARIABLE(LuauIfStatementRecursionGuard, false)
 LUAU_FASTFLAGVARIABLE(LuauFixAmbiguousErrorRecoveryInAssign, false)
 LUAU_FASTFLAGVARIABLE(LuauParseSingletonTypes, false)

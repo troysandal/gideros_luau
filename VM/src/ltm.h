@@ -40,8 +40,6 @@ typedef enum
     TM_IDIV,
     TM_MAXOF,
     TM_MINOF,
-    TM_ANGDEG,
-    TM_ANGRAD,
     TM_BOR,
     TM_BAND,
     TM_BXOR,

@@ -1163,8 +1163,6 @@ void BytecodeBuilder::validate() const
         case LOP_NOT:
         case LOP_MINUS:
         case LOP_LENGTH:
-        case LOP_ANGTODEG: //GIDEROS
-        case LOP_ANGTORAD: //GIDEROS
         case LOP_BINNOT: //GIDEROS
             VREG(LUAU_INSN_A(insn));
             VREG(LUAU_INSN_B(insn));
@@ -1687,15 +1685,9 @@ const uint32_t* BytecodeBuilder::dumpInstruction(const uint32_t* code, std::stri
         formatAppend(result, "SHIFTLK R%d R%d K%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn), LUAU_INSN_C(insn));
         break;
 
-        // ANGTODEG, ANGTORAD: compute unary operation for source register and put the result into target register
+        // BINNOT: compute unary operation for source register and put the result into target register
         // A: target register
         // B: source register
-    case LOP_ANGTODEG:
-        formatAppend(result, "ANGTODEG R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn));
-        break;
-    case LOP_ANGTORAD:
-        formatAppend(result, "ANGTORAD R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn));
-        break;
     case LOP_BINNOT:
         formatAppend(result, "BINNOT R%d R%d\n", LUAU_INSN_A(insn), LUAU_INSN_B(insn));
         break;

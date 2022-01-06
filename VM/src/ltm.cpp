@@ -59,8 +59,6 @@ const char* const luaT_eventname[] = {
 	"__idiv",
 	"__max",
 	"__min",
-	"__deg",
-	"__rad",
     "__bor",
 	"__band",
 	"__bxor",

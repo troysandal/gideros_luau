@@ -112,7 +112,6 @@
         VM_DISPATCH_OP(LOP_BINAND), VM_DISPATCH_OP(LOP_BINOR), VM_DISPATCH_OP(LOP_BINXOR), VM_DISPATCH_OP(LOP_SHIFTR), VM_DISPATCH_OP(LOP_SHIFTL), \
         VM_DISPATCH_OP(LOP_DIVINTK), VM_DISPATCH_OP(LOP_MINOFK), VM_DISPATCH_OP(LOP_MAXOFK), \
         VM_DISPATCH_OP(LOP_BINANDK), VM_DISPATCH_OP(LOP_BINORK), VM_DISPATCH_OP(LOP_BINXORK), VM_DISPATCH_OP(LOP_SHIFTRK), VM_DISPATCH_OP(LOP_SHIFTLK), \
-        VM_DISPATCH_OP(LOP_ANGTODEG), VM_DISPATCH_OP(LOP_ANGTORAD), \
         VM_DISPATCH_OP(LOP_BINNOT)
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -2992,46 +2991,6 @@ static void luau_execute(lua_State* L)
                 {
                     // slow-path, may invoke C/Lua via metamethods
                     VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_MINOF));
-                    VM_NEXT();
-                }
-            }
-
-            VM_CASE(LOP_ANGTODEG)
-            {
-                Instruction insn = *pc++;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-                StkId rb = VM_REG(LUAU_INSN_B(insn));
-
-                // fast-path
-                if (ttisnumber(rb))
-                {
-                    setnvalue(ra, nvalue(rb)*180.0/M_PI);
-                    VM_NEXT();
-                }
-                else
-                {
-                    // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rb, TM_ANGDEG));
-                    VM_NEXT();
-                }
-            }
-
-            VM_CASE(LOP_ANGTORAD)
-            {
-                Instruction insn = *pc++;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-                StkId rb = VM_REG(LUAU_INSN_B(insn));
-
-                // fast-path
-                if (ttisnumber(rb))
-                {
-                    setnvalue(ra, nvalue(rb)*M_PI/180.0);
-                    VM_NEXT();
-                }
-                else
-                {
-                    // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rb, TM_ANGRAD));
                     VM_NEXT();
                 }
             }

@@ -380,11 +380,9 @@ enum LuauOpcode
     LOP_SHIFTRK,
     LOP_SHIFTLK,
 
-    // ANGTODEG, ANGTORAD: compute unary operation for source register and put the result into target register
+    // BIN_NOT: compute unary operation for source register and put the result into target register
     // A: target register
     // B: source register
-    LOP_ANGTODEG,
-    LOP_ANGTORAD,
     LOP_BINNOT,
 
     // Enum entry for number of opcodes, not a valid opcode by itself!

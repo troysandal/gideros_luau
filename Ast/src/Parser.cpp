@@ -4,6 +4,9 @@
 #include "Luau/TimeTrace.h"
 
 #include <algorithm>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // Warning: If you are introducing new syntax, ensure that it is behind a separate
 // flag so that we don't break production games by reverting syntax changes.
@@ -1857,7 +1860,13 @@ AstExpr* Parser::parseExpr(unsigned int limit)
 
         AstExpr* subexpr = parseExpr(unaryPriority);
 
-        expr = allocator.alloc<AstExprUnary>(Location(start, subexpr->location), *uop, subexpr);
+        if ((uop==AstExprUnary::AngToDeg)||(uop==AstExprUnary::AngToRad)) {
+        	// Resolve those with a '*' operation
+        	AstExpr *cst = allocator.alloc<AstExprConstantNumber>(start, (uop==AstExprUnary::AngToDeg)?(180.0/M_PI):(M_PI/180.0));
+            expr = allocator.alloc<AstExprBinary>(Location(start, subexpr->location), AstExprBinary::Mul, subexpr, cst);
+        }
+        else
+        	expr = allocator.alloc<AstExprUnary>(Location(start, subexpr->location), *uop, subexpr);
     }
     else
     {

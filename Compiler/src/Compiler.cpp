@@ -529,12 +529,6 @@ struct Compiler
             return LOP_LENGTH;
 
         //GIDEROS
-        case AstExprUnary::AngToDeg:
-            return LOP_ANGTODEG;
-
-        case AstExprUnary::AngToRad:
-            return LOP_ANGTORAD;
-
         case AstExprUnary::BinNot:
             return LOP_BINNOT;
 

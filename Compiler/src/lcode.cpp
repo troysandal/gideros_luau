@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-char* luau_compile(const char* source, size_t size, lua_CompileOptions* options, size_t* outsize)
+char* luau_compile(const char* source, size_t size, const char* chunkname, lua_CompileOptions* options, size_t* outsize)
 {
     LUAU_ASSERT(outsize);
 
@@ -17,7 +17,7 @@ char* luau_compile(const char* source, size_t size, lua_CompileOptions* options,
         memcpy(static_cast<void*>(&opts), options, sizeof(opts));
     }
 
-    std::string result = compile(std::string(source, size), opts);
+    std::string result = compile(std::string(source, size), chunkname, opts);
 
     char* copy = static_cast<char*>(malloc(result.size()));
     if (!copy)

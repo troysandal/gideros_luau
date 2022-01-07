@@ -64,6 +64,6 @@ void compileOrThrow(BytecodeBuilder& bytecode, const std::string& source, const 
 
 // compiles bytecode into a bytecode blob, that either contains the valid bytecode or an encoded error that luau_load can decode
 std::string compile(
-    const std::string& source, const CompileOptions& options = {}, const ParseOptions& parseOptions = {}, BytecodeEncoder* encoder = nullptr, ParseResult *parseResult = nullptr );
+    const std::string& source, const std::string& chunkname, const CompileOptions& options = {}, const ParseOptions& parseOptions = {}, BytecodeEncoder* encoder = nullptr, ParseResult *parseResult = nullptr );
 
 } // namespace Luau

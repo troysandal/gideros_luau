@@ -12,6 +12,7 @@
 #include "lapi.h"
 
 #include <string.h>
+#include <string>
 
 LUAU_FASTFLAGVARIABLE(LuauBytecodeV2Read, true)
 LUAU_FASTFLAGVARIABLE(LuauBytecodeV2Force, false)
@@ -167,6 +168,12 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 			lua_pushfstring(L, "%s: bytecode version mismatch (expected %d, got %d)", chunkid, FFlag::LuauBytecodeV2Force ? LBC_VERSION_FUTURE : LBC_VERSION, version);
 			return 1;
 		}
+
+        unsigned int chunkNameLength = readVarInt(data, size, offset);
+        std::string chunkName=std::string(data + offset, chunkNameLength);
+        offset += chunkNameLength;
+        if (chunkName.size()>0)
+        	chunkname=chunkName.c_str();
 
 		// pause GC for the duration of deserialization - some objects we're creating aren't rooted
 		// TODO: if an allocation error happens mid-load, we do not unpause GC!

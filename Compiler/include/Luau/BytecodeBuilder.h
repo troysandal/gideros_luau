@@ -100,6 +100,8 @@ public:
 
     void setPseudoCode(const std::string& pseudoCode);
 
+    void setChunkName(const std::string& chunkName);
+
     const std::string& getBytecode() const
     {
         LUAU_ASSERT(!bytecode.empty()); // did you forget to call finalize?
@@ -237,6 +239,8 @@ private:
     std::vector<std::string> dumpSource;
 
     std::string pseudoCode;
+
+    std::string chunkName;
 
     std::string (BytecodeBuilder::*dumpFunctionPtr)() const = nullptr;
 

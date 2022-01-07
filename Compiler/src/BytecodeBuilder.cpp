@@ -514,6 +514,9 @@ void BytecodeBuilder::finalize()
     LUAU_ASSERT(bytecode.empty());
     bytecode = char(FFlag::LuauBytecodeV2Write ? LBC_VERSION_FUTURE : LBC_VERSION);
 
+    writeVarInt(bytecode, uint32_t(chunkName.length()));
+    bytecode.append(chunkName.data(), chunkName.length());
+
     writeStringTable(bytecode);
 
     writeVarInt(bytecode, uint32_t(functions.size()));
@@ -1839,6 +1842,11 @@ void BytecodeBuilder::setDumpSource(const std::string& source)
 void BytecodeBuilder::setPseudoCode(const std::string& code)
 {
 	pseudoCode=code;
+}
+
+void BytecodeBuilder::setChunkName(const std::string& name)
+{
+	chunkName=name;
 }
 
 std::string BytecodeBuilder::dumpFunction(uint32_t id) const

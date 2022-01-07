@@ -43,7 +43,7 @@ static int lua_loadstring(lua_State* L)
 
     lua_setsafeenv(L, LUA_ENVIRONINDEX, false);
 
-    std::string bytecode = Luau::compile(std::string(s, l), copts());
+    std::string bytecode = Luau::compile(std::string(s, l), chunkname, copts());
     if (luau_load(L, chunkname, bytecode.data(), bytecode.size(), 0) == 0)
         return 1;
 
@@ -90,7 +90,7 @@ static int lua_require(lua_State* L)
     luaL_sandboxthread(ML);
 
     // now we can compile & run module on the new thread
-    std::string bytecode = Luau::compile(*source, copts());
+    std::string bytecode = Luau::compile(*source, chunkname, copts());
     if (luau_load(ML, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
     {
         if (coverageActive())
@@ -163,7 +163,7 @@ static void setupState(lua_State* L)
 
 static std::string runCode(lua_State* L, const std::string& source)
 {
-    std::string bytecode = Luau::compile(source, copts());
+    std::string bytecode = Luau::compile(source, "=stdin", copts());
 
     if (luau_load(L, "=stdin", bytecode.data(), bytecode.size(), 0) != 0)
     {
@@ -375,7 +375,7 @@ static bool runFile(const char* name, lua_State* GL)
 
     std::string chunkname = "=" + std::string(name);
 
-    std::string bytecode = Luau::compile(*source, copts());
+    std::string bytecode = Luau::compile(*source, chunkname, copts());
     int status = 0;
 
     if (luau_load(L, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
@@ -440,6 +440,7 @@ static bool compileFile(const char* name, CompileFormat format)
     try
     {
         Luau::BytecodeBuilder bcb;
+        bcb.setChunkName(name);
 
         if (format == CompileFormat::Text)
         {

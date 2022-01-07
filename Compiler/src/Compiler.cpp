@@ -3896,7 +3896,7 @@ void compileOrThrow(BytecodeBuilder& bytecode, const std::string& source, const 
     compileOrThrow(bytecode, root, names, options);
 }
 
-std::string compile(const std::string& source, const CompileOptions& options, const ParseOptions& parseOptions, BytecodeEncoder* encoder, ParseResult *parseResult)
+std::string compile(const std::string& source, const std::string& chunkname, const CompileOptions& options, const ParseOptions& parseOptions, BytecodeEncoder* encoder, ParseResult *parseResult)
 {
     LUAU_TIMETRACE_SCOPE("compile", "Compiler");
 
@@ -3922,6 +3922,7 @@ std::string compile(const std::string& source, const CompileOptions& options, co
     try
     {
         BytecodeBuilder bcb(encoder);
+        bcb.setChunkName(chunkname);
         compileOrThrow(bcb, result.root, names, options);
 
         return bcb.getBytecode();

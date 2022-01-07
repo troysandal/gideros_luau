@@ -619,7 +619,7 @@ int luaL_loadbuffer (lua_State *L, const char *buff, size_t size,
     std::string result;
     if (((*buff)&0xFF)>2) { //not a valid binary, assume source code
         Luau::CompileOptions opts;
-        result = compile(std::string(buff, size), opts);
+        result = compile(std::string(buff, size), name, opts);
         buff=result.data();
         size=result.size();
     }

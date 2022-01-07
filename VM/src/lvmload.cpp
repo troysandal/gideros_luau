@@ -13,6 +13,9 @@
 
 #include <string.h>
 
+LUAU_FASTFLAGVARIABLE(LuauBytecodeV2Read, true)
+LUAU_FASTFLAGVARIABLE(LuauBytecodeV2Force, false)
+
 // TODO: RAII deallocation doesn't work for longjmp builds if a memory error happens
 template<typename T>
 struct TempBuffer
@@ -148,68 +151,71 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 
         uint8_t version = read<uint8_t>(data, size, offset);
 
-        // 0 means the rest of the bytecode is the error message
-        if (version == 0 || version != LBC_VERSION)
-        {
-            char chunkid[LUA_IDSIZE];
-            luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+		// 0 means the rest of the bytecode is the error message
+		if (version == 0)
+		{
+			char chunkid[LUA_IDSIZE];
+			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+			lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
+			return 1;
+		}
 
-            lua_pop(L,done);
-            if (version == 0)
-                lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
-            else
-                lua_pushfstring(L, "%s: bytecode version mismatch", chunkid);
-            return 1;
-        }
+		if (FFlag::LuauBytecodeV2Force ? (version != LBC_VERSION_FUTURE) : FFlag::LuauBytecodeV2Read ? (version != LBC_VERSION && version != LBC_VERSION_FUTURE) : (version != LBC_VERSION))
+		{
+			char chunkid[LUA_IDSIZE];
+			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+			lua_pushfstring(L, "%s: bytecode version mismatch (expected %d, got %d)", chunkid, FFlag::LuauBytecodeV2Force ? LBC_VERSION_FUTURE : LBC_VERSION, version);
+			return 1;
+		}
 
-        // pause GC for the duration of deserialization - some objects we're creating aren't rooted
-        // TODO: if an allocation error happens mid-load, we do not unpause GC!
-        size_t GCthreshold = L->global->GCthreshold;
-        L->global->GCthreshold = SIZE_MAX;
+		// pause GC for the duration of deserialization - some objects we're creating aren't rooted
+		// TODO: if an allocation error happens mid-load, we do not unpause GC!
+		size_t GCthreshold = L->global->GCthreshold;
+		L->global->GCthreshold = SIZE_MAX;
 
-        // env is 0 for current environment and a stack index otherwise
-        Table* envt = (env == 0) ? hvalue(gt(L)) : hvalue(luaA_toobject(L, env));
+		// env is 0 for current environment and a stack index otherwise
+		Table* envt = (env == 0) ? hvalue(gt(L)) : hvalue(luaA_toobject(L, env));
 
-        TString* source = luaS_new(L, chunkname);
+		TString* source = luaS_new(L, chunkname);
 
-        // string table
-        unsigned int stringCount = readVarInt(data, size, offset);
-        TempBuffer<TString*> strings(L, stringCount);
+		// string table
+		unsigned int stringCount = readVarInt(data, size, offset);
+		TempBuffer<TString*> strings(L, stringCount);
 
-        for (unsigned int i = 0; i < stringCount; ++i)
-        {
-            unsigned int length = readVarInt(data, size, offset);
+		for (unsigned int i = 0; i < stringCount; ++i)
+		{
+			unsigned int length = readVarInt(data, size, offset);
 
-            strings[i] = luaS_newlstr(L, data + offset, length);
-            offset += length;
-        }
+			strings[i] = luaS_newlstr(L, data + offset, length);
+			offset += length;
+		}
 
-        // proto table
-        unsigned int protoCount = readVarInt(data, size, offset);
-        TempBuffer<Proto*> protos(L, protoCount);
+		// proto table
+		unsigned int protoCount = readVarInt(data, size, offset);
+		TempBuffer<Proto*> protos(L, protoCount);
 
-        for (unsigned int i = 0; i < protoCount; ++i)
-        {
-            Proto* p = luaF_newproto(L);
-            p->source = source;
+		for (unsigned int i = 0; i < protoCount; ++i)
+		{
+			Proto* p = luaF_newproto(L);
+			p->source = source;
 
-            p->maxstacksize = read<uint8_t>(data, size, offset);
-            p->numparams = read<uint8_t>(data, size, offset);
-            p->nups = read<uint8_t>(data, size, offset);
-            p->is_vararg = read<uint8_t>(data, size, offset);
+			p->maxstacksize = read<uint8_t>(data, size, offset);
+			p->numparams = read<uint8_t>(data, size, offset);
+			p->nups = read<uint8_t>(data, size, offset);
+			p->is_vararg = read<uint8_t>(data, size, offset);
 
-            p->sizecode = readVarInt(data, size, offset);
-            p->code = luaM_newarray(L, p->sizecode, Instruction, p->memcat);
-            for (int j = 0; j < p->sizecode; ++j)
-                p->code[j] = read<uint32_t>(data, size, offset);
+			p->sizecode = readVarInt(data, size, offset);
+			p->code = luaM_newarray(L, p->sizecode, Instruction, p->memcat);
+			for (int j = 0; j < p->sizecode; ++j)
+				p->code[j] = read<uint32_t>(data, size, offset);
 
-            p->sizek = readVarInt(data, size, offset);
-            p->k = luaM_newarray(L, p->sizek, TValue, p->memcat);
+			p->sizek = readVarInt(data, size, offset);
+			p->k = luaM_newarray(L, p->sizek, TValue, p->memcat);
 
-    #ifdef HARDMEMTESTS
-            // this is redundant during normal runs, but resolveImportSafe can trigger GC checks under HARDMEMTESTS
-            // because p->k isn't fully formed at this point, we pre-fill it with nil to make subsequent setup safe
-            for (int j = 0; j < p->sizek; ++j)
+	#ifdef HARDMEMTESTS
+			// this is redundant during normal runs, but resolveImportSafe can trigger GC checks under HARDMEMTESTS
+			// because p->k isn't fully formed at this point, we pre-fill it with nil to make subsequent setup safe
+			for (int j = 0; j < p->sizek; ++j)
             {
                 setnilvalue(&p->k[j]);
             }
@@ -289,6 +295,11 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
                 p->p[j] = protos[fid];
             }
 
+            if (FFlag::LuauBytecodeV2Force || (FFlag::LuauBytecodeV2Read && version == LBC_VERSION_FUTURE))
+                p->linedefined = readVarInt(data, size, offset);
+            else
+                p->linedefined = -1;
+
             p->debugname = readString(strings, data, size, offset);
 
             uint8_t lineinfo = read<uint8_t>(data, size, offset);
@@ -296,6 +307,10 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
             if (lineinfo)
             {
                 p->linegaplog2 = read<uint8_t>(data, size, offset);
+
+                int intervals = ((p->sizecode - 1) >> p->linegaplog2) + 1;
+                int absoffset = (p->sizecode + 3) & ~3;
+
 
                 int intervals = ((p->sizecode - 1) >> p->linegaplog2) + 1;
                 int absoffset = (p->sizecode + 3) & ~3;
@@ -311,11 +326,11 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
                     p->lineinfo[j] = lastoffset;
                 }
 
-                int lastLine = 0;
+                int lastline = 0;
                 for (int j = 0; j < intervals; ++j)
                 {
-                    lastLine += read<int32_t>(data, size, offset);
-                    p->abslineinfo[j] = lastLine;
+                    lastline += read<int32_t>(data, size, offset);
+                    p->abslineinfo[j] = lastline;
                 }
             }
 
@@ -342,6 +357,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
                     p->upvalues[j] = readString(strings, data, size, offset);
                 }
             }
+
 
             unsigned int pseudoCodeLength = readVarInt(data, size, offset);
             p->pseudocode = luaS_newlstr(L, data + offset, pseudoCodeLength);

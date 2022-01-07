@@ -45,6 +45,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\liolib.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lmathlib.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lmem.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lnumprint.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lobject.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\loslib.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lperf.cpp" />

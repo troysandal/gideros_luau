@@ -17,6 +17,7 @@
 
 #include "lauxlib.h"
 #include "lualib.h"
+#include "lnumutils.h"
 
 #ifndef DESKTOP_TOOLS
 #include <gstdio.h>

@@ -311,10 +311,6 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
                 int intervals = ((p->sizecode - 1) >> p->linegaplog2) + 1;
                 int absoffset = (p->sizecode + 3) & ~3;
 
-
-                int intervals = ((p->sizecode - 1) >> p->linegaplog2) + 1;
-                int absoffset = (p->sizecode + 3) & ~3;
-
                 p->sizelineinfo = absoffset + intervals * sizeof(int);
                 p->lineinfo = luaM_newarray(L, p->sizelineinfo, uint8_t, p->memcat);
                 p->abslineinfo = (int*)(p->lineinfo + absoffset);

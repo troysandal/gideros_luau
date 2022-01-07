@@ -24,11 +24,11 @@ void luaU_freeudata(lua_State* L, Udata* u)
 {
     LUAU_ASSERT(u->tag < LUA_UTAG_LIMIT || u->tag == UTAG_IDTOR);
 
-    void (*dtor)(void*) = nullptr;
+    int (*dtor)(void*) = nullptr;
     if (u->tag == UTAG_IDTOR)
         memcpy(&dtor, &u->data + u->len - sizeof(dtor), sizeof(dtor));
     else if (u->tag)
-        dtor = L->global->udatagc[u->tag];
+        dtor = (int (*)(void *))L->global->udatagc[u->tag];
 
     if (dtor)
         dtor(u->data);

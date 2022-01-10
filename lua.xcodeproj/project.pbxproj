@@ -49,6 +49,7 @@
 		03087B39277EE070005D6D9B /* lmathlib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1A277EE070005D6D9B /* lmathlib.cpp */; };
 		03087B3A277EE070005D6D9B /* lbuiltins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1B277EE070005D6D9B /* lbuiltins.cpp */; };
 		03087B3B277EE070005D6D9B /* ldblib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1C277EE070005D6D9B /* ldblib.cpp */; };
+		032FC7C5278C277400DD298A /* lnumprint.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 032FC7C4278C277400DD298A /* lnumprint.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -123,6 +124,7 @@
 		03087B1A277EE070005D6D9B /* lmathlib.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lmathlib.cpp; sourceTree = "<group>"; };
 		03087B1B277EE070005D6D9B /* lbuiltins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lbuiltins.cpp; sourceTree = "<group>"; };
 		03087B1C277EE070005D6D9B /* ldblib.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ldblib.cpp; sourceTree = "<group>"; };
+		032FC7C4278C277400DD298A /* lnumprint.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lnumprint.cpp; sourceTree = "<group>"; };
 		5F1183531833B78A00904D46 /* liblua.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = liblua.a; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -167,6 +169,7 @@
 		03087AEC277EE070005D6D9B /* src */ = {
 			isa = PBXGroup;
 			children = (
+				032FC7C4278C277400DD298A /* lnumprint.cpp */,
 				03087AED277EE070005D6D9B /* lmem.h */,
 				03087AEE277EE070005D6D9B /* lperf.cpp */,
 				03087AEF277EE070005D6D9B /* lgc.h */,
@@ -326,6 +329,7 @@
 				03087ADC277EE036005D6D9B /* Ast.cpp in Sources */,
 				03087B24277EE070005D6D9B /* lapi.cpp in Sources */,
 				03087AE9277EE04D005D6D9B /* Compiler.cpp in Sources */,
+				032FC7C5278C277400DD298A /* lnumprint.cpp in Sources */,
 				03087B3B277EE070005D6D9B /* ldblib.cpp in Sources */,
 				03087B1E277EE070005D6D9B /* ltm.cpp in Sources */,
 				03087B2A277EE070005D6D9B /* lutf8lib.cpp in Sources */,

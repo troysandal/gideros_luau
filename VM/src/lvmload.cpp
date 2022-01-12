@@ -148,6 +148,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
     size_t offset = 0;
     size_t done=0;
 
+    lua_newtable(L);
     while (offset<size) {
 
         uint8_t version = read<uint8_t>(data, size, offset);
@@ -157,6 +158,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 		{
 			char chunkid[LUA_IDSIZE];
 			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+			lua_pop(L,1);
 			lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
 			return 1;
 		}
@@ -165,6 +167,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 		{
 			char chunkid[LUA_IDSIZE];
 			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+			lua_pop(L,1);
 			lua_pushfstring(L, "%s: bytecode version mismatch (expected %d, got %d)", chunkid, FFlag::LuauBytecodeV2Force ? LBC_VERSION_FUTURE : LBC_VERSION, version);
 			return 1;
 		}
@@ -378,11 +381,9 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
         Closure* cl = luaF_newLclosure(L, 0, envt, main);
         setclvalue(L, L->top, cl);
         incr_top(L);
-        lua_insert(L,-1-done);
+        lua_rawseti(L,-2,++done);
 
         L->global->GCthreshold = GCthreshold;
-
-        done++;
     }
     return -done;
 }

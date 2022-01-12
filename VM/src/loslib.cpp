@@ -4,8 +4,19 @@
 
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#ifndef DESKTOP_TOOLS
+#include <gpath.h>
+#else
+#define gpath_transform(p) p
+#endif
 
 #define LUA_STRFTIMEOPTIONS "aAbBcdHIjmMpSUwWxXyYzZ%"
+#define LUA_TMPNAMBUFSIZE	L_tmpnam
+#define lua_tmpnam(b,e)		{ e = (tmpnam(b) == NULL); }
 
 #if defined(_WIN32)
 static tm* gmtime_r(const time_t* timep, tm* result)
@@ -77,6 +88,62 @@ static int getfield(lua_State* L, const char* key, int d)
     return res;
 }
 
+#ifndef DESKTOP_TOOLS
+#include <gpath.h>
+#else
+#define gpath_transform(p) p
+#endif
+
+static int os_pushresult (lua_State *L, int i, const char *filename) {
+  int en = errno;  /* calls to Lua API may change this value */
+  if (i) {
+    lua_pushboolean(L, 1);
+    return 1;
+  }
+  else {
+    lua_pushnil(L);
+    lua_pushfstring(L, "%s: %s", filename, strerror(en));
+    lua_pushinteger(L, en);
+    return 3;
+  }
+}
+
+
+static int os_execute (lua_State *L) {
+  #ifdef QT_NO_DEBUG
+  lua_pushinteger(L, system(luaL_optstring(L, 1, NULL)));
+  #else
+  lua_pushnil(L);
+  #endif
+  return 1;
+}
+
+
+static int os_remove (lua_State *L) {
+  const char *filename = luaL_checkstring(L, 1);
+  return os_pushresult(L, remove(gpath_transform(filename)) == 0, filename);
+}
+
+
+static int os_rename (lua_State *L) {
+  char fromname2[1024], toname2[1024];
+  const char *fromname = luaL_checkstring(L, 1);
+  const char *toname = luaL_checkstring(L, 2);
+  strcpy(fromname2, gpath_transform(fromname));
+  strcpy(toname2, gpath_transform(toname));
+  return os_pushresult(L, rename(fromname2, toname2) == 0, fromname);
+}
+
+
+static int os_tmpname (lua_State *L) {
+  char buff[LUA_TMPNAMBUFSIZE];
+  int err;
+  lua_tmpnam(buff, err);
+  if (err)
+    luaL_error(L, "unable to generate a unique filename");
+  lua_pushstring(L, buff);
+  return 1;
+}
 static int os_date(lua_State* L)
 {
     const char* s = luaL_optstring(L, 1, "%c");
@@ -178,12 +245,23 @@ static int os_difftime(lua_State* L)
     return 1;
 }
 
+static int os_exit (lua_State *L) {
+  exit(luaL_optint(L, 1, EXIT_SUCCESS));
+}
+
 static const luaL_Reg syslib[] = {
-    {"clock", os_clock},
-    {"date", os_date},
-    {"difftime", os_difftime},
-    {"time", os_time},
-    {NULL, NULL},
+	{"clock", 	  os_clock},
+	{"date", 	  os_date},
+	{"difftime",  os_difftime},
+	{"execute",   os_execute},
+	{"exit",      os_exit},
+//	{"getenv",    os_getenv},
+	{"remove",    os_remove},
+	{"rename",    os_rename},
+//	{"setlocale", os_setlocale},
+	{"time",      os_time},
+	{"tmpname",   os_tmpname},
+	{NULL, NULL},
 };
 
 int luaopen_os(lua_State* L)

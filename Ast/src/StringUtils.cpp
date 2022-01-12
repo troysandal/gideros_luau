@@ -251,6 +251,9 @@ std::string escape(std::string_view s)
             case '\b':
                 r += 'b';
                 break;
+            case '\e':
+                r += 'e';
+                break;
             case '\f':
                 r += 'f';
                 break;

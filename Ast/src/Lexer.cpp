@@ -338,6 +338,8 @@ static char unescape(char ch)
         return '\a';
     case 'b':
         return '\b';
+    case 'e':
+        return '\e';
     case 'f':
         return '\f';
     case 'n':

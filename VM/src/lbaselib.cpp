@@ -427,7 +427,11 @@ static int luaB_loadfile(lua_State *L) {
       lua_replace(L,-2);
       return 2;
   }
-  return -nret;
+  if (nret==-1) {
+	  lua_rawgeti(L,-1,1);
+	  lua_remove(L,-2);
+  }
+  return 1;
 }
 
 
@@ -440,7 +444,11 @@ static int luaB_loadstring(lua_State *L) {
       lua_replace(L,-2);
       return 2;
   }
-  return -nret;
+  if (nret==-1) {
+	  lua_rawgeti(L,-1,1);
+	  lua_remove(L,-2);
+  }
+  return 1;
 }
 #endif
 

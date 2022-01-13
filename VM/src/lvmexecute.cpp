@@ -81,6 +81,8 @@
         if (LUAU_UNLIKELY(!!interrupt)) \
         { /* the interrupt hook is called right before we advance pc */ \
             VM_PROTECT(L->ci->savedpc++; interrupt(L, -1)); \
+            if (L->status != 0) \
+                goto exit; \
         } \
     }
 #endif

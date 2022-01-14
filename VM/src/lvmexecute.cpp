@@ -27,6 +27,7 @@
 #endif
 #endif
 
+#define BINOP(v) ((uint32_t)(((int32_t)(v))&0xFFFFFFFF))
 // When working with VM code, pay attention to these rules for correctness:
 // 1. Many external Lua functions can fail; for them to fail and be able to generate a proper stack, we need to copy pc to L->ci->savedpc before the
 // call
@@ -3011,7 +3012,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, ((uint32_t)nb)&((uint32_t)nc));
+                    setnvalue(ra, BINOP(nb)&BINOP(nc));
                     VM_NEXT();
                 }
                 else
@@ -3034,7 +3035,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, ((uint32_t)nb)|((uint32_t)nc));
+                    setnvalue(ra, BINOP(nb)|BINOP(nc));
                     VM_NEXT();
                 }
                 else
@@ -3057,7 +3058,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, ((uint32_t)nb)^((uint32_t)nc));
+                    setnvalue(ra, BINOP(nb)^BINOP(nc));
                     VM_NEXT();
                 }
                 else
@@ -3080,7 +3081,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, ((uint32_t)nb)>>((uint32_t)nc));
+                    setnvalue(ra, BINOP(nb)>>BINOP(nc));
                     VM_NEXT();
                 }
                 else
@@ -3103,7 +3104,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, ((uint32_t)nb)<<((uint32_t)nc));
+                    setnvalue(ra, BINOP(nb)<<BINOP(nc));
                     VM_NEXT();
                 }
                 else
@@ -3126,7 +3127,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, ((uint32_t)nb)&((uint32_t)nk));
+                    setnvalue(ra, BINOP(nb)&BINOP(nk));
                     VM_NEXT();
                 }
                 else
@@ -3149,7 +3150,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, ((uint32_t)nb)|((uint32_t)nk));
+                    setnvalue(ra, BINOP(nb)|BINOP(nk));
                     VM_NEXT();
                 }
                 else
@@ -3172,7 +3173,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, ((uint32_t)nb)^((uint32_t)nk));
+                    setnvalue(ra, BINOP(nb)^BINOP(nk));
                     VM_NEXT();
                 }
                 else
@@ -3195,7 +3196,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, ((uint32_t)nb)>>((uint32_t)nk));
+                    setnvalue(ra, BINOP(nb)>>BINOP(nk));
                     VM_NEXT();
                 }
                 else
@@ -3218,7 +3219,7 @@ static void luau_execute(lua_State* L)
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, ((uint32_t)nb)<<((uint32_t)nk));
+                    setnvalue(ra, BINOP(nb)<<BINOP(nk));
                     VM_NEXT();
                 }
                 else
@@ -3238,7 +3239,7 @@ static void luau_execute(lua_State* L)
                 // fast-path
                 if (ttisnumber(rb))
                 {
-                    setnvalue(ra, ~((uint32_t)nvalue(rb)));
+                    setnvalue(ra, ~BINOP(nvalue(rb)));
                     VM_NEXT();
                 }
                 else

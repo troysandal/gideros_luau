@@ -1992,6 +1992,10 @@ ExprResult<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExprUn
     {
     case AstExprUnary::Not:
         return {booleanType, {NotPredicate{std::move(result.predicates)}}};
+    case AstExprUnary::AngToDeg:
+    case AstExprUnary::AngToRad:
+    	return {numberType};
+    case AstExprUnary::BinNot:
     case AstExprUnary::Minus:
     {
         const bool operandIsAny = get<AnyTypeVar>(operandType) || get<ErrorTypeVar>(operandType);
@@ -2001,7 +2005,7 @@ ExprResult<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExprUn
 
         if (typeCouldHaveMetatable(operandType))
         {
-            if (auto fnt = findMetatableEntry(operandType, "__unm", expr.location))
+            if (auto fnt = findMetatableEntry(operandType, (expr.op==AstExprUnary::BinNot?"__bnot":"__unm"), expr.location))
             {
                 TypeId actualFunctionType = instantiate(scope, *fnt, expr.location);
                 TypePackId arguments = addTypePack({operandType});
@@ -2083,6 +2087,22 @@ std::string opToMetaTableEntry(const AstExprBinary::Op& op)
         return "__pow";
     case AstExprBinary::Concat:
         return "__concat";
+    case AstExprBinary::DivInt:
+        return "__idiv";
+    case AstExprBinary::MaxOf:
+        return "__max";
+    case AstExprBinary::MinOf:
+        return "__min";
+    case AstExprBinary::BinOr:
+        return "__bor";
+    case AstExprBinary::BinAnd:
+        return "__band";
+    case AstExprBinary::BinXor:
+        return "__bxor";
+    case AstExprBinary::BinShiftR:
+        return "__shr";
+    case AstExprBinary::BinShiftL:
+        return "__shl";
     default:
         return "";
     }
@@ -2435,6 +2455,14 @@ TypeId TypeChecker::checkBinaryOperation(
     case AstExprBinary::Div:
     case AstExprBinary::Mod:
     case AstExprBinary::Pow:
+    case AstExprBinary::DivInt:
+    case AstExprBinary::MaxOf:
+    case AstExprBinary::MinOf:
+    case AstExprBinary::BinAnd:
+    case AstExprBinary::BinOr:
+    case AstExprBinary::BinXor:
+    case AstExprBinary::BinShiftR:
+    case AstExprBinary::BinShiftL:
         reportErrors(tryUnify(lhsType, numberType, expr.left->location));
         reportErrors(tryUnify(rhsType, numberType, expr.right->location));
         return numberType;

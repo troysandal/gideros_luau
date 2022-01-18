@@ -13,6 +13,7 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+#define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
 
 LUAU_FASTFLAG(LuauIfElseExpressionBaseSupport)
 
@@ -2973,7 +2974,7 @@ struct Compiler
                 if (arg.type == Constant::Type_Number)
                 {
                     result.type = Constant::Type_Number;
-                    result.valueNumber = ~((uint32_t)arg.valueNumber);
+                    result.valueNumber = ~BINOP(arg.valueNumber);
                 }
                 break;
 
@@ -3087,7 +3088,7 @@ struct Compiler
                 if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
                 {
                     result.type = Constant::Type_Number;
-                    result.valueNumber = ((uint32_t)la.valueNumber)&((uint32_t)ra.valueNumber);
+                    result.valueNumber = BINOP(la.valueNumber)&BINOP(ra.valueNumber);
                 }
                 break;
 
@@ -3095,7 +3096,7 @@ struct Compiler
                 if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
                 {
                     result.type = Constant::Type_Number;
-                    result.valueNumber = ((uint32_t)la.valueNumber)|((uint32_t)ra.valueNumber);
+                    result.valueNumber = BINOP(la.valueNumber)|BINOP(ra.valueNumber);
                 }
                 break;
 
@@ -3103,7 +3104,7 @@ struct Compiler
                 if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
                 {
                     result.type = Constant::Type_Number;
-                    result.valueNumber = ((uint32_t)la.valueNumber)^((uint32_t)ra.valueNumber);
+                    result.valueNumber = BINOP(la.valueNumber)^BINOP(ra.valueNumber);
                 }
                 break;
 
@@ -3111,7 +3112,7 @@ struct Compiler
                 if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
                 {
                     result.type = Constant::Type_Number;
-                    result.valueNumber = ((uint32_t)la.valueNumber)>>((uint32_t)ra.valueNumber);
+                    result.valueNumber = BINOP(la.valueNumber)>>BINOP(ra.valueNumber);
                 }
                 break;
 
@@ -3119,7 +3120,7 @@ struct Compiler
                 if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
                 {
                     result.type = Constant::Type_Number;
-                    result.valueNumber = ((uint32_t)la.valueNumber)<<((uint32_t)ra.valueNumber);
+                    result.valueNumber = BINOP(la.valueNumber)<<BINOP(ra.valueNumber);
                 }
                 break;
 

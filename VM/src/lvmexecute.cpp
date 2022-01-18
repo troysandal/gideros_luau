@@ -27,7 +27,7 @@
 #endif
 #endif
 
-#define BINOP(v) ((uint32_t)(((int32_t)(v))&0xFFFFFFFF))
+#define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
 // When working with VM code, pay attention to these rules for correctness:
 // 1. Many external Lua functions can fail; for them to fail and be able to generate a proper stack, we need to copy pc to L->ci->savedpc before the
 // call

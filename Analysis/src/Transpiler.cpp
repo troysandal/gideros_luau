@@ -468,6 +468,15 @@ struct Printer
             case AstExprUnary::Len:
                 writer.symbol("#");
                 break;
+            case AstExprUnary::AngToDeg:
+                writer.symbol("^>");
+                break;
+            case AstExprUnary::AngToRad:
+                writer.symbol("^<");
+                break;
+            case AstExprUnary::BinNot:
+                writer.symbol("~");
+                break;
             }
             visualize(*a->expr);
         }
@@ -485,6 +494,14 @@ struct Printer
             case AstExprBinary::Pow:
             case AstExprBinary::CompareLt:
             case AstExprBinary::CompareGt:
+            case AstExprBinary::DivInt:
+            case AstExprBinary::MaxOf:
+            case AstExprBinary::MinOf:
+            case AstExprBinary::BinAnd:
+            case AstExprBinary::BinOr:
+            case AstExprBinary::BinXor:
+            case AstExprBinary::BinShiftL:
+            case AstExprBinary::BinShiftR:
                 writer.maybeSpace(a->right->location.begin, 2);
                 writer.symbol(toString(a->op));
                 break;

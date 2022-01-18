@@ -395,6 +395,12 @@ struct AstJsonEncoder : public AstVisitor
             return writeString("minus");
         case AstExprUnary::Len:
             return writeString("len");
+        case AstExprUnary::AngToDeg:
+            return writeString("todeg");
+        case AstExprUnary::AngToRad:
+            return writeString("torad");
+        case AstExprUnary::BinNot:
+            return writeString("bnot");
         }
     }
 
@@ -440,6 +446,22 @@ struct AstJsonEncoder : public AstVisitor
             return writeString("And");
         case AstExprBinary::Or:
             return writeString("Or");
+        case AstExprBinary::DivInt:
+            return writeString("IDiv");
+        case AstExprBinary::MaxOf:
+            return writeString("Max");
+        case AstExprBinary::MinOf:
+            return writeString("Min");
+        case AstExprBinary::BinAnd:
+            return writeString("BAnd");
+        case AstExprBinary::BinOr:
+            return writeString("BOr");
+        case AstExprBinary::BinXor:
+            return writeString("BXor");
+        case AstExprBinary::BinShiftL:
+            return writeString("Shl");
+        case AstExprBinary::BinShiftR:
+            return writeString("Shr");
         }
     }
 

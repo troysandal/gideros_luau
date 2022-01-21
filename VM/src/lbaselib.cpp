@@ -418,7 +418,6 @@ static int luaB_newproxy(lua_State* L)
     return 1;
 }
 
-#ifndef DESKTOP_TOOLS
 static int luaB_loadfile(lua_State *L) {
   const char *s=luaL_checkstring(L,1);
   int nret=luaL_loadfilenamed(L, s, luaL_optstring(L,2,s));
@@ -450,7 +449,6 @@ static int luaB_loadstring(lua_State *L) {
   }
   return 1;
 }
-#endif
 
 #include <string.h>
 static int luaB_collectgarbage(lua_State* L)
@@ -530,10 +528,8 @@ static const luaL_Reg base_funcs[] = {
     {"type", luaB_type},
     {"typeof", luaB_typeof},
     {"collectgarbage", luaB_collectgarbage},
-#ifndef DESKTOP_TOOLS
     {"loadfile", luaB_loadfile},
     {"loadstring", luaB_loadstring},
-#endif
     {NULL, NULL},
 };
 

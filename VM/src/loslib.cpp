@@ -41,6 +41,11 @@ static int os_clock(lua_State* L)
     return 1;
 }
 
+static int os_getenv (lua_State *L) {
+  lua_pushstring(L, getenv(luaL_checkstring(L, 1)));  /* if NULL push nil */
+  return 1;
+}
+
 /*
 ** {======================================================
 ** Time/Date operations
@@ -255,7 +260,7 @@ static const luaL_Reg syslib[] = {
 	{"difftime",  os_difftime},
 	{"execute",   os_execute},
 	{"exit",      os_exit},
-//	{"getenv",    os_getenv},
+    {"getenv",    os_getenv},
 	{"remove",    os_remove},
 	{"rename",    os_rename},
 //	{"setlocale", os_setlocale},

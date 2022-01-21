@@ -440,7 +440,8 @@ static int io_readline (lua_State *L) {
     if (lua_toboolean(L, lua_upvalueindex(2))) {  /* generator created file? */
       lua_settop(L, 0);
       lua_pushvalue(L, lua_upvalueindex(1));
-      aux_close(L);  /* close it */
+      io_fclose(L); /* close it */
+      //aux_close(L);
     }
     return 0;
   }

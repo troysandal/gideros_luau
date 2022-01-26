@@ -1077,12 +1077,13 @@ class AstTypeTable : public AstType
 public:
     LUAU_RTTI(AstTypeTable)
 
-    AstTypeTable(const Location& location, const AstArray<AstTableProp>& props, AstTableIndexer* indexer = nullptr);
+    AstTypeTable(const Location& location, const AstArray<AstTableProp>& props, AstTableIndexer* indexer = nullptr, bool unsealed = false);
 
     void visit(AstVisitor* visitor) override;
 
     AstArray<AstTableProp> props;
     AstTableIndexer* indexer;
+    bool unsealed;
 };
 
 class AstTypeFunction : public AstType

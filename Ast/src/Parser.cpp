@@ -1269,6 +1269,7 @@ AstType* Parser::parseTableTypeAnnotation()
 
     TempVector<AstTableProp> props(scratchTableTypeProps);
     AstTableIndexer* indexer = nullptr;
+    bool unsealed = false;
 
     Location start = lexer.current().location;
 
@@ -1337,9 +1338,15 @@ AstType* Parser::parseTableTypeAnnotation()
             props.push_back({name->name, name->location, type});
         }
 
-        if (lexer.current().type == ',' || lexer.current().type == ';')
+        if (lexer.current().type == ';')
         {
             nextLexeme();
+        }
+        else  if (lexer.current().type == ',' )
+        {
+            nextLexeme();
+            if (lexer.current().type == '}')
+            	unsealed=true;
         }
         else
         {
@@ -1353,7 +1360,7 @@ AstType* Parser::parseTableTypeAnnotation()
     if (!expectMatchAndConsume('}', matchBrace))
         end = lexer.previousLocation();
 
-    return allocator.alloc<AstTypeTable>(Location(start, end), copy(props), indexer);
+    return allocator.alloc<AstTypeTable>(Location(start, end), copy(props), indexer, unsealed);
 }
 
 // ReturnType ::= TypeAnnotation | `(' TypeList `)'

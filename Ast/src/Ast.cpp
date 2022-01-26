@@ -780,10 +780,11 @@ void AstTypeReference::visit(AstVisitor* visitor)
     }
 }
 
-AstTypeTable::AstTypeTable(const Location& location, const AstArray<AstTableProp>& props, AstTableIndexer* indexer)
+AstTypeTable::AstTypeTable(const Location& location, const AstArray<AstTableProp>& props, AstTableIndexer* indexer, bool unsealed)
     : AstType(ClassIndex(), location)
     , props(props)
     , indexer(indexer)
+	, unsealed(unsealed)
 {
 }
 

@@ -4963,7 +4963,7 @@ TypeId TypeChecker::resolveType(const ScopePtr& scope, const AstType& annotation
 
         return addType(TableTypeVar{
             props, tableIndexer, scope->level,
-            TableState::Sealed // FIXME: probably want a way to annotate other kinds of tables maybe
+            table->unsealed?TableState::Unsealed:TableState::Sealed
         });
     }
     else if (const auto& func = annotation.as<AstTypeFunction>())

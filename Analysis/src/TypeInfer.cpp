@@ -2870,8 +2870,9 @@ TypeId TypeChecker::checkFunctionName(const ScopePtr& scope, AstExpr& funName, T
 
         Name name = indexName->index.value;
 
+        /* hgy29@gideros: this leads to exception when reparsing the same file for update
         if (ttv->props.count(name))
-            return errorRecoveryType(scope);
+            return errorRecoveryType(scope);*/
 
         Property& property = ttv->props[name];
 

@@ -16,9 +16,6 @@
 
 #include <string.h>
 #include <math.h>
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 // Disable c99-designator to avoid the warning in CGOTO dispatch table
 #ifdef __clang__
@@ -304,6 +301,9 @@ inline bool luau_skipstep(uint8_t op)
 {
     return op == LOP_PREPVARARGS || op == LOP_BREAK;
 }
+
+// MAP:                     abcdefghijklmnopqrstuvwxyz
+const char *luau_vectorMap="32????1?0123???23001013012"; //maps XYZW,RGBA,UV,STPQ,IJKL
 
 template<bool SingleStep>
 static void luau_execute(lua_State* L)
@@ -611,19 +611,17 @@ static void luau_execute(lua_State* L)
                     }
                     else if (ttisvector(rb))
                     {
-                        // fast-path: quick case-insensitive comparison with "X"/"Y"/"Z"
+                        // fast-path: quick case-insensitive comparison
                         const char* name = getstr(tsvalue(kv));
-                        int ic = (name[0] | ' ') - 'x';
-
-#if LUA_VECTOR_SIZE == 4
-                        // 'w' is before 'x' in ascii, so ic is -1 when indexing with 'w'
-                        if (ic == -1)
-                            ic = 3;
-#endif
+                        int ic = (name[0] | ' ') - 'a';
+                        ic=((ic>25)?'?':luau_vectorMap[ic])&0x0F;
 
                         if (unsigned(ic) < LUA_VECTOR_SIZE && name[1] == '\0')
                         {
-                            setnvalue(ra, rb->value.v[ic]);
+                        	float v=rb->value.v[ic];
+                        	if ((ic==2)&&isnan(v)) v=0; //Automatic promotion: Z value is 0 if NaN (vec2)
+                        	if ((ic==3)&&isnan(v)) v=1; //Automatic promotion: W or A value is 1 if NaN (vec2 or vec3)
+                            setnvalue(ra, v);
                             VM_NEXT();
                         }
 
@@ -732,6 +730,45 @@ static void luau_execute(lua_State* L)
                         // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                         VM_PATCH_C(pc - 2, L->cachedslot);
                         VM_NEXT();
+                    }
+                    else if (ttisvector(rb))
+                    {
+                        // fast-path: quick case-insensitive comparison
+                        const char* name = getstr(tsvalue(kv));
+                        int ic = (name[0] | ' ') - 'a';
+                        ic=((ic>25)?'?':luau_vectorMap[ic])&0x0F;
+
+                        if (unsigned(ic) < LUA_VECTOR_SIZE && name[1] == '\0' && ttisnumber(ra))
+                        {
+                        	rb->value.v[ic] = nvalue(ra);
+                            VM_NEXT();
+                        }
+
+                        fn = fasttm(L, L->global->mt[LUA_TVECTOR], TM_NEWINDEX);
+
+                        if (fn && ttisfunction(fn) && clvalue(fn)->isC)
+                        {
+                            // note: it's safe to push arguments past top for complicated reasons (see top of the file)
+                            LUAU_ASSERT(L->top + 4 < L->stack + L->stacksize);
+                            StkId top = L->top;
+                            setobj2s(L, top + 0, fn);
+                            setobj2s(L, top + 1, rb);
+                            setobj2s(L, top + 2, kv);
+                            setobj2s(L, top + 3, ra);
+                            L->top = top + 4;
+
+                            L->cachedslot = LUAU_INSN_C(insn);
+                            VM_PROTECT(luau_callTM(L, 3, -1));
+                            // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
+                            VM_PATCH_C(pc - 2, L->cachedslot);
+                            VM_NEXT();
+                        }
+                        else
+                        {
+                            // slow-path, may invoke Lua calls via __index metamethod
+                            VM_PROTECT(luaV_settable(L, rb, kv, ra));
+                            VM_NEXT();
+                        }
                     }
                     else
                     {

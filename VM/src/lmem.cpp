@@ -36,8 +36,10 @@ LUAU_FASTFLAG(LuauGcPagedSweep)
 #endif
 
 #if LUA_VECTOR_SIZE == 4
+#if !defined(__ANDROID__) && !defined(__APPLE__) // Android has several ABIs (x86, x86_64, armeabi-v7a, arm64_v8a) and some won't give the results below. Same goes for OSX/iOS/ATV
 static_assert(sizeof(TValue) == ABISWITCH(24, 24, 24), "size mismatch for value");
 static_assert(sizeof(LuaNode) == ABISWITCH(48, 48, 48), "size mismatch for table entry");
+#endif
 #else
 static_assert(sizeof(TValue) == ABISWITCH(16, 16, 16), "size mismatch for value");
 static_assert(sizeof(LuaNode) == ABISWITCH(32, 32, 32), "size mismatch for table entry");

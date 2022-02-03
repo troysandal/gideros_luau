@@ -1938,7 +1938,6 @@ return target(b@1
 TEST_CASE_FIXTURE(ACFixture, "function_in_assignment_has_parentheses")
 {
     ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-    ScopedFastFlag luauAutocompletePreferToCallFunctions("LuauAutocompletePreferToCallFunctions", true);
 
     check(R"(
 local function bar(a: number) return -a end
@@ -1954,7 +1953,6 @@ local abc = b@1
 TEST_CASE_FIXTURE(ACFixture, "function_result_passed_to_function_has_parentheses")
 {
     ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-    ScopedFastFlag luauAutocompletePreferToCallFunctions("LuauAutocompletePreferToCallFunctions", true);
 
     check(R"(
 local function foo() return 1 end
@@ -2538,10 +2536,6 @@ TEST_CASE("autocomplete_documentation_symbols")
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_ifelse_expressions")
 {
-    ScopedFastFlag sff1{"LuauIfElseExpressionBaseSupport", true};
-    ScopedFastFlag sff2{"LuauIfElseExpressionAnalysisSupport", true};
-
-    {
         check(R"(
 local temp = false
 local even = true;
@@ -2614,7 +2608,6 @@ a = if temp then even elseif true then temp else e@9
         CHECK(ac.entryMap.count("then") == 0);
         CHECK(ac.entryMap.count("else") == 0);
         CHECK(ac.entryMap.count("elseif") == 0);
-    }
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_explicit_type_pack")
@@ -2633,7 +2626,6 @@ local a: A<(number, s@1>
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_first_function_arg_expected_type")
 {
     ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-    ScopedFastFlag luauAutocompleteFirstArg("LuauAutocompleteFirstArg", true);
 
     check(R"(
 local function foo1() return 1 end
@@ -2679,6 +2671,95 @@ local r4 = t:bar1(@4)
     CHECK(ac.entryMap["foo1"].typeCorrect == TypeCorrectKind::CorrectFunctionResult);
     REQUIRE(ac.entryMap.count("foo2"));
     CHECK(ac.entryMap["foo2"].typeCorrect == TypeCorrectKind::None);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_default_type_parameters")
+{
+    ScopedFastFlag luauParseTypeAliasDefaults{"LuauParseTypeAliasDefaults", true};
+
+    check(R"(
+type A<T = @1> = () -> T
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("number"));
+    CHECK(ac.entryMap.count("string"));
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_default_type_pack_parameters")
+{
+    ScopedFastFlag luauParseTypeAliasDefaults{"LuauParseTypeAliasDefaults", true};
+
+    check(R"(
+type A<T... = ...@1> = () -> T
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("number"));
+    CHECK(ac.entryMap.count("string"));
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_oop_implicit_self")
+{
+    ScopedFastFlag flag("LuauMissingFollowACMetatables", true);
+    check(R"(
+--!strict
+local Class = {}
+Class.__index = Class
+type Class = typeof(setmetatable({} :: { x: number }, Class))
+function Class.new(x: number): Class
+	return setmetatable({x = x}, Class)
+end
+function Class.getx(self: Class)
+	return self.x
+end
+function test()
+	local c = Class.new(42)
+	local n = c:@1
+	print(n)
+end
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("getx"));
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_on_string_singletons")
+{
+    ScopedFastFlag sffs[] = {
+        {"LuauParseSingletonTypes", true},
+        {"LuauSingletonTypes", true},
+        {"LuauRefactorTypeVarQuestions", true},
+    };
+
+    check(R"(
+        --!strict
+        local foo: "hello" | "bye" = "hello"
+        foo:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("format"));
+}
+
+TEST_CASE_FIXTURE(ACFixture, "function_in_assignment_has_parentheses_2")
+{
+    ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
+    ScopedFastFlag preferToCallFunctionsForIntersects("PreferToCallFunctionsForIntersects", true);
+
+    check(R"(
+local bar: ((number) -> number) & (number, number) -> number)
+local abc = b@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("bar"));
+    CHECK(ac.entryMap["bar"].parens == ParenthesesRecommendation::CursorInside);
 }
 
 TEST_SUITE_END();

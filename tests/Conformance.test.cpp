@@ -331,8 +331,6 @@ TEST_CASE("UTF8")
 
 TEST_CASE("Coroutine")
 {
-    ScopedFastFlag sff("LuauCoroutineClose", true);
-
     runConformance("coroutine.lua");
 }
 
@@ -366,15 +364,11 @@ TEST_CASE("PCall")
 
 TEST_CASE("Pack")
 {
-    ScopedFastFlag sff{"LuauStrPackUBCastFix", true};
-
     runConformance("tpack.lua");
 }
 
 TEST_CASE("Vector")
 {
-    ScopedFastFlag sff{"LuauIfElseExpressionBaseSupport", true};
-
     lua_CompileOptions copts = {};
     copts.optimizationLevel = 1;
     copts.debugLevel = 1;
@@ -861,15 +855,11 @@ TEST_CASE("ExceptionObject")
 
 TEST_CASE("IfElseExpression")
 {
-    ScopedFastFlag sff{"LuauIfElseExpressionBaseSupport", true};
-
     runConformance("ifelseexpr.lua");
 }
 
 TEST_CASE("TagMethodError")
 {
-    ScopedFastFlag sff{"LuauCcallRestoreFix", true};
-
     runConformance("tmerror.lua", [](lua_State* L) {
         auto* cb = lua_callbacks(L);
 

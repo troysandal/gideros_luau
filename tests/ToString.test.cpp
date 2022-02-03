@@ -338,6 +338,8 @@ TEST_CASE_FIXTURE(Fixture, "toStringDetailed")
 
 TEST_CASE_FIXTURE(Fixture, "toStringDetailed2")
 {
+    ScopedFastFlag sff{"LuauUnsealedTableLiteral", true};
+
     CheckResult result = check(R"(
         local base = {}
         function base:one() return 1 end
@@ -353,7 +355,7 @@ TEST_CASE_FIXTURE(Fixture, "toStringDetailed2")
 
     TypeId tType = requireType("inst");
     ToStringResult r = toStringDetailed(tType);
-    CHECK_EQ("{ @metatable {| __index: { @metatable {| __index: base |}, child } |}, inst }", r.name);
+    CHECK_EQ("{ @metatable { __index: { @metatable { __index: base }, child } }, inst }", r.name);
     CHECK_EQ(0, r.nameMap.typeVars.size());
 
     ToStringOptions opts;
@@ -433,8 +435,6 @@ TEST_CASE_FIXTURE(Fixture, "toString_the_boundTo_table_type_contained_within_a_T
 
 TEST_CASE_FIXTURE(Fixture, "no_parentheses_around_cyclic_function_type_in_union")
 {
-    ScopedFastFlag sff{"LuauOccursCheckOkWithRecursiveFunctions", true};
-
     CheckResult result = check(R"(
         type F = ((() -> number)?) -> F?
         local function f(p) return f end
@@ -448,8 +448,6 @@ TEST_CASE_FIXTURE(Fixture, "no_parentheses_around_cyclic_function_type_in_union"
 
 TEST_CASE_FIXTURE(Fixture, "no_parentheses_around_cyclic_function_type_in_intersection")
 {
-    ScopedFastFlag sff{"LuauOccursCheckOkWithRecursiveFunctions", true};
-
     CheckResult result = check(R"(
         function f() return f end
         local a: ((number) -> ()) & typeof(f)
@@ -498,6 +496,24 @@ TEST_CASE_FIXTURE(Fixture, "toStringNamedFunction_map")
     const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(ty));
 
     CHECK_EQ("map<a, b>(arr: {a}, fn: (a) -> b): {b}", toStringNamedFunction("map", *ftv));
+}
+
+TEST_CASE_FIXTURE(Fixture, "toStringNamedFunction_generic_pack")
+{
+    ScopedFastFlag luauTypeAliasDefaults{"LuauTypeAliasDefaults", true};
+
+    CheckResult result = check(R"(
+        local function f(a: number, b: string) end
+        local function test<T..., U...>(...: T...): U...
+            f(...)
+            return 1, 2, 3
+        end
+    )");
+
+    TypeId ty = requireType("test");
+    const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(ty));
+
+    CHECK_EQ("test<T..., U...>(...: T...): U...", toStringNamedFunction("test", *ftv));
 }
 
 TEST_CASE("toStringNamedFunction_unit_f")

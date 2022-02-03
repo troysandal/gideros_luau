@@ -17,9 +17,6 @@
 
 #include <string.h>
 
-LUAU_FASTFLAGVARIABLE(LuauCcallRestoreFix, false)
-LUAU_FASTFLAG(LuauCoroutineClose)
-
 /*
 ** {======================================================
 ** Error-recovery functions
@@ -151,12 +148,11 @@ l_noret luaD_throw(lua_State* L, int errcode)
 
 static void correctstack(lua_State* L, TValue* oldstack)
 {
-    CallInfo* ci;
-    GCObject* up;
     L->top = (L->top - oldstack) + L->stack;
-    for (up = L->openupval; up != NULL; up = up->gch.next)
-        gco2uv(up)->v = (gco2uv(up)->v - oldstack) + L->stack;
-    for (ci = L->base_ci; ci <= L->ci; ci++)
+    // TODO (FFlagLuauGcPagedSweep): 'next' type will change after removal of the flag and the cast will not be required
+    for (UpVal* up = L->openupval; up != NULL; up = (UpVal*)up->next)
+        up->v = (up->v - oldstack) + L->stack;
+    for (CallInfo* ci = L->base_ci; ci <= L->ci; ci++)
     {
         ci->top = (ci->top - oldstack) + L->stack;
         ci->base = (ci->base - oldstack) + L->stack;
@@ -302,7 +298,7 @@ static void resume(lua_State* L, void* ud)
     {
         // start coroutine
         LUAU_ASSERT(L->ci == L->base_ci && firstArg >= L->base);
-        if (FFlag::LuauCoroutineClose && firstArg == L->base)
+        if (firstArg == L->base)
             luaG_runerror(L, "cannot resume dead coroutine");
 
         if (luau_precall(L, firstArg - 1, LUA_MULTRET) != PCRLUA)
@@ -545,11 +541,8 @@ int luaD_pcall(lua_State* L, Pfunc func, void* u, ptrdiff_t old_top, ptrdiff_t e
         if (!oldactive)
             resetbit(L->stackstate, THREAD_ACTIVEBIT);
 
-        if (FFlag::LuauCcallRestoreFix)
-        {
-            // Restore nCcalls before calling the debugprotectederror callback which may rely on the proper value to have been restored.
-            L->nCcalls = oldnCcalls;
-        }
+        // Restore nCcalls before calling the debugprotectederror callback which may rely on the proper value to have been restored.
+        L->nCcalls = oldnCcalls;
 
         // an error occurred, check if we have a protected error callback
         if (L->global->cb.debugprotectederror)
@@ -564,10 +557,6 @@ int luaD_pcall(lua_State* L, Pfunc func, void* u, ptrdiff_t old_top, ptrdiff_t e
         StkId oldtop = restorestack(L, old_top);
         luaF_close(L, oldtop); /* close eventual pending closures */
         seterrorobj(L, status, oldtop);
-        if (!FFlag::LuauCcallRestoreFix)
-        {
-            L->nCcalls = oldnCcalls;
-        }
         L->ci = restoreci(L, old_ci);
         L->base = L->ci->base;
         restore_stack_limit(L);

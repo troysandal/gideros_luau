@@ -1,6 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
+#include "Luau/DenseHash.h"
 #include "Luau/Predicate.h"
 #include "Luau/Unifiable.h"
 #include "Luau/Variant.h"
@@ -110,16 +111,16 @@ struct PrimitiveTypeVar
 
 // Singleton types https://github.com/Roblox/luau/blob/master/rfcs/syntax-singleton-types.md
 // Types for true and false
-struct BoolSingleton
+struct BooleanSingleton
 {
     bool value;
 
-    bool operator==(const BoolSingleton& rhs) const
+    bool operator==(const BooleanSingleton& rhs) const
     {
         return value == rhs.value;
     }
 
-    bool operator!=(const BoolSingleton& rhs) const
+    bool operator!=(const BooleanSingleton& rhs) const
     {
         return !(*this == rhs);
     }
@@ -144,7 +145,7 @@ struct StringSingleton
 // No type for float singletons, partly because === isn't any equalivalence on floats
 // (NaN != NaN).
 
-using SingletonVariant = Luau::Variant<BoolSingleton, StringSingleton>;
+using SingletonVariant = Luau::Variant<BooleanSingleton, StringSingleton>;
 
 struct SingletonTypeVar
 {
@@ -180,6 +181,18 @@ const T* get(const SingletonTypeVar* stv)
     else
         return nullptr;
 }
+
+struct GenericTypeDefinition
+{
+    TypeId ty;
+    std::optional<TypeId> defaultValue;
+};
+
+struct GenericTypePackDefinition
+{
+    TypePackId tp;
+    std::optional<TypePackId> defaultValue;
+};
 
 struct FunctionArgument
 {
@@ -358,8 +371,8 @@ struct ClassTypeVar
 struct TypeFun
 {
     // These should all be generic
-    std::vector<TypeId> typeParams;
-    std::vector<TypePackId> typePackParams;
+    std::vector<GenericTypeDefinition> typeParams;
+    std::vector<GenericTypePackDefinition> typePackParams;
 
     /** The underlying type.
      *
@@ -369,13 +382,13 @@ struct TypeFun
     TypeId type;
 
     TypeFun() = default;
-    TypeFun(std::vector<TypeId> typeParams, TypeId type)
+    TypeFun(std::vector<GenericTypeDefinition> typeParams, TypeId type)
         : typeParams(std::move(typeParams))
         , type(type)
     {
     }
 
-    TypeFun(std::vector<TypeId> typeParams, std::vector<TypePackId> typePackParams, TypeId type)
+    TypeFun(std::vector<GenericTypeDefinition> typeParams, std::vector<GenericTypePackDefinition> typePackParams, TypeId type)
         : typeParams(std::move(typeParams))
         , typePackParams(std::move(typePackParams))
         , type(type)
@@ -486,6 +499,9 @@ bool maybeGeneric(const TypeId ty);
 
 // Checks if a type is of the form T1|...|Tn where one of the Ti is a singleton
 bool maybeSingleton(TypeId ty);
+
+// Checks if the length operator can be applied on the value of type
+bool hasLength(TypeId ty, DenseHashSet<TypeId>& seen, int* recursionCount);
 
 struct SingletonTypes
 {

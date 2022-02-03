@@ -13,6 +13,7 @@
 #define GCSpropagate 1
 #define GCSpropagateagain 2
 #define GCSatomic 3
+// TODO: remove with FFlagLuauGcPagedSweep
 #define GCSsweepstring 4
 #define GCSsweep 5
 
@@ -112,6 +113,7 @@
             luaC_barrierf(L, obj2gco(p), obj2gco(o)); \
     }
 
+// TODO: remove with FFlagLuauGcForwardMetatableBarrier
 #define luaC_objbarriert(L, t, o) \
     { \
         if (isblack(obj2gco(t)) && iswhite(obj2gco(o))) \

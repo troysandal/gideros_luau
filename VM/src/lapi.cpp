@@ -14,11 +14,13 @@
 
 #include <string.h>
 
+LUAU_FASTFLAGVARIABLE(LuauGcForwardMetatableBarrier, false)
+
 const char* lua_ident = "$Lua: Lua 5.1.4 Copyright (C) 1994-2008 Lua.org, PUC-Rio $\n"
                         "$Authors: R. Ierusalimschy, L. H. de Figueiredo & W. Celes $\n"
                         "$URL: www.lua.org $\n";
 
-const char* luau_ident = "$Luau: Copyright (C) 2019-2021 Roblox Corporation $\n"
+const char* luau_ident = "$Luau: Copyright (C) 2019-2022 Roblox Corporation $\n"
                          "$URL: luau-lang.org $\n";
 
 #define api_checknelems(L, n) api_check(L, (n) <= (L->top - L->base))
@@ -879,7 +881,16 @@ int lua_setmetatable(lua_State* L, int objindex)
             luaG_runerror(L, "Attempt to modify a readonly table");
         hvalue(obj)->metatable = mt;
         if (mt)
-            luaC_objbarriert(L, hvalue(obj), mt);
+        {
+            if (FFlag::LuauGcForwardMetatableBarrier)
+            {
+                luaC_objbarrier(L, hvalue(obj), mt);
+            }
+            else
+            {
+                luaC_objbarriert(L, hvalue(obj), mt);
+            }
+        }
         break;
     }
     case LUA_TUSERDATA:

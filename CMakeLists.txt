@@ -29,6 +29,7 @@ endif()
 if(LUAU_BUILD_TESTS)
     add_executable(Luau.UnitTest)
     add_executable(Luau.Conformance)
+    add_executable(Luau.CLI.Test)
 endif()
 
 if(LUAU_BUILD_WEB)
@@ -78,6 +79,12 @@ target_compile_options(Luau.Ast PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.Analysis PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.VM PRIVATE ${LUAU_OPTIONS})
 
+if (MSVC AND MSVC_VERSION GREATER_EQUAL 1924)
+    # disable partial redundancy elimination which regresses interpreter codegen substantially in VS2022:
+    # https://developercommunity.visualstudio.com/t/performance-regression-on-a-complex-interpreter-lo/1631863
+    set_source_files_properties(VM/src/lvmexecute.cpp PROPERTIES COMPILE_FLAGS /d2ssa-pre-)
+endif()
+
 if(LUAU_BUILD_CLI)
     target_compile_options(Luau.Repl.CLI PRIVATE ${LUAU_OPTIONS})
     target_compile_options(Luau.Analyze.CLI PRIVATE ${LUAU_OPTIONS})
@@ -103,6 +110,17 @@ if(LUAU_BUILD_TESTS)
     target_compile_options(Luau.Conformance PRIVATE ${LUAU_OPTIONS})
     target_include_directories(Luau.Conformance PRIVATE extern)
     target_link_libraries(Luau.Conformance PRIVATE Luau.Analysis Luau.Compiler Luau.VM)
+
+    target_compile_options(Luau.CLI.Test PRIVATE ${LUAU_OPTIONS})
+    target_include_directories(Luau.CLI.Test PRIVATE extern CLI)
+    target_link_libraries(Luau.CLI.Test PRIVATE Luau.Compiler Luau.VM)
+    if(UNIX)
+        find_library(LIBPTHREAD pthread)
+        if (LIBPTHREAD)
+            target_link_libraries(Luau.CLI.Test PRIVATE pthread)
+        endif()
+    endif()
+
 endif()
 
 if(LUAU_BUILD_WEB)

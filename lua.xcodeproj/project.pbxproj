@@ -50,6 +50,10 @@
 		03087B3A277EE070005D6D9B /* lbuiltins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1B277EE070005D6D9B /* lbuiltins.cpp */; };
 		03087B3B277EE070005D6D9B /* ldblib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1C277EE070005D6D9B /* ldblib.cpp */; };
 		032FC7C5278C277400DD298A /* lnumprint.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 032FC7C4278C277400DD298A /* lnumprint.cpp */; };
+		03EBB28D27ABED6800DBF3A4 /* Builtins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28527ABED6800DBF3A4 /* Builtins.cpp */; };
+		03EBB28E27ABED6800DBF3A4 /* ConstantFolding.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */; };
+		03EBB28F27ABED6800DBF3A4 /* ValueTracking.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28B27ABED6800DBF3A4 /* ValueTracking.cpp */; };
+		03EBB29027ABED6800DBF3A4 /* TableShape.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28C27ABED6800DBF3A4 /* TableShape.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -125,6 +129,14 @@
 		03087B1B277EE070005D6D9B /* lbuiltins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lbuiltins.cpp; sourceTree = "<group>"; };
 		03087B1C277EE070005D6D9B /* ldblib.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ldblib.cpp; sourceTree = "<group>"; };
 		032FC7C4278C277400DD298A /* lnumprint.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lnumprint.cpp; sourceTree = "<group>"; };
+		03EBB28527ABED6800DBF3A4 /* Builtins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Builtins.cpp; sourceTree = "<group>"; };
+		03EBB28627ABED6800DBF3A4 /* TableShape.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TableShape.h; sourceTree = "<group>"; };
+		03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ConstantFolding.cpp; sourceTree = "<group>"; };
+		03EBB28827ABED6800DBF3A4 /* ConstantFolding.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ConstantFolding.h; sourceTree = "<group>"; };
+		03EBB28927ABED6800DBF3A4 /* ValueTracking.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ValueTracking.h; sourceTree = "<group>"; };
+		03EBB28A27ABED6800DBF3A4 /* Builtins.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Builtins.h; sourceTree = "<group>"; };
+		03EBB28B27ABED6800DBF3A4 /* ValueTracking.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ValueTracking.cpp; sourceTree = "<group>"; };
+		03EBB28C27ABED6800DBF3A4 /* TableShape.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TableShape.cpp; sourceTree = "<group>"; };
 		5F1183531833B78A00904D46 /* liblua.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = liblua.a; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -157,6 +169,14 @@
 		03087AE3277EE04D005D6D9B /* src */ = {
 			isa = PBXGroup;
 			children = (
+				03EBB28527ABED6800DBF3A4 /* Builtins.cpp */,
+				03EBB28A27ABED6800DBF3A4 /* Builtins.h */,
+				03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */,
+				03EBB28827ABED6800DBF3A4 /* ConstantFolding.h */,
+				03EBB28C27ABED6800DBF3A4 /* TableShape.cpp */,
+				03EBB28627ABED6800DBF3A4 /* TableShape.h */,
+				03EBB28B27ABED6800DBF3A4 /* ValueTracking.cpp */,
+				03EBB28927ABED6800DBF3A4 /* ValueTracking.h */,
 				03087AE4277EE04D005D6D9B /* BytecodeBuilder.cpp */,
 				03087AE5277EE04D005D6D9B /* Compiler.cpp */,
 				03087AE6277EE04D005D6D9B /* PseudoCode.cpp */,
@@ -297,6 +317,7 @@
 				03087B26277EE070005D6D9B /* ludata.cpp in Sources */,
 				03087AE2277EE036005D6D9B /* Parser.cpp in Sources */,
 				03087B2C277EE070005D6D9B /* lmem.cpp in Sources */,
+				03EBB28E27ABED6800DBF3A4 /* ConstantFolding.cpp in Sources */,
 				03087B27277EE070005D6D9B /* ldebug.cpp in Sources */,
 				03087B28277EE070005D6D9B /* lbaselib.cpp in Sources */,
 				03087B33277EE070005D6D9B /* lobject.cpp in Sources */,
@@ -317,6 +338,7 @@
 				03087AEA277EE04D005D6D9B /* PseudoCode.cpp in Sources */,
 				03087B2E277EE070005D6D9B /* lstate.cpp in Sources */,
 				03087ADE277EE036005D6D9B /* StringUtils.cpp in Sources */,
+				03EBB29027ABED6800DBF3A4 /* TableShape.cpp in Sources */,
 				03087B1D277EE070005D6D9B /* lperf.cpp in Sources */,
 				03087ADD277EE036005D6D9B /* Confusables.cpp in Sources */,
 				03087B2F277EE070005D6D9B /* lgc.cpp in Sources */,
@@ -328,10 +350,12 @@
 				03087B2B277EE070005D6D9B /* lstring.cpp in Sources */,
 				03087ADC277EE036005D6D9B /* Ast.cpp in Sources */,
 				03087B24277EE070005D6D9B /* lapi.cpp in Sources */,
+				03EBB28F27ABED6800DBF3A4 /* ValueTracking.cpp in Sources */,
 				03087AE9277EE04D005D6D9B /* Compiler.cpp in Sources */,
 				032FC7C5278C277400DD298A /* lnumprint.cpp in Sources */,
 				03087B3B277EE070005D6D9B /* ldblib.cpp in Sources */,
 				03087B1E277EE070005D6D9B /* ltm.cpp in Sources */,
+				03EBB28D27ABED6800DBF3A4 /* Builtins.cpp in Sources */,
 				03087B2A277EE070005D6D9B /* lutf8lib.cpp in Sources */,
 				03087ADF277EE036005D6D9B /* Location.cpp in Sources */,
 				03087B21277EE070005D6D9B /* lbitlib.cpp in Sources */,

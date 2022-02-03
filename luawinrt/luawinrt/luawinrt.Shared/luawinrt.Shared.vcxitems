@@ -24,10 +24,14 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\Parser.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\StringUtils.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Ast\src\TimeTrace.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\Builtins.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\BytecodeBuilder.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\ConstantFolding.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\Compiler.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\lcode.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\PseudoCode.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\TableShape.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\ValueTracking.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lapi.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\laux.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbaselib.cpp" />

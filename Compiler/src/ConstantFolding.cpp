@@ -2,6 +2,7 @@
 #include "ConstantFolding.h"
 
 #include <math.h>
+#define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
 
 namespace Luau
 {
@@ -57,6 +58,15 @@ static void foldUnary(Constant& result, AstExprUnary::Op op, const Constant& arg
         {
             result.type = Constant::Type_Number;
             result.valueNumber = double(arg.stringLength);
+        }
+        break;
+
+	//GIDEROS
+	case AstExprUnary::BinNot:
+        if (arg.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = ~BINOP(arg.valueNumber);
         }
         break;
 
@@ -179,6 +189,71 @@ static void foldBinary(Constant& result, AstExprBinary::Op op, const Constant& l
         if (la.type != Constant::Type_Unknown)
         {
             result = la.isTruthful() ? la : ra;
+        }
+        break;
+
+	//GIDEROS
+	case AstExprBinary::DivInt:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = trunc(la.valueNumber / ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::MaxOf:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = fmax(la.valueNumber , ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::MinOf:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = fmin(la.valueNumber , ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::BinAnd:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = BINOP(la.valueNumber)&BINOP(ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::BinOr:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = BINOP(la.valueNumber)|BINOP(ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::BinXor:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = BINOP(la.valueNumber)^BINOP(ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::BinShiftR:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = BINOP(la.valueNumber)>>BINOP(ra.valueNumber);
+        }
+        break;
+
+	case AstExprBinary::BinShiftL:
+        if (la.type == Constant::Type_Number && ra.type == Constant::Type_Number)
+        {
+            result.type = Constant::Type_Number;
+            result.valueNumber = BINOP(la.valueNumber)<<BINOP(ra.valueNumber);
         }
         break;
 

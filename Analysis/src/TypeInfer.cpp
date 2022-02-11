@@ -2069,6 +2069,9 @@ ExprResult<TypeId> TypeChecker::checkExpr(const ScopePtr& scope, const AstExprUn
             {
                 if (p->type == PrimitiveTypeVar::String)
                     return {numberType};
+                //GIDEROS: int64 lib converts numbers to int64(userdata) through the length operator
+                if (p->type == PrimitiveTypeVar::Number)
+                    return {anyType}; //hgy29@gideros: We actually know this is an int64, but I don't know yet how to represent this
             }
 
             if (!getTableType(operandType))

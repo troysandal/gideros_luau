@@ -507,6 +507,43 @@ static int tisfrozen(lua_State* L)
     return 1;
 }
 
+static void deepclone(lua_State *L) //Clone table at -1
+{
+	lua_newtable(L); //O,T
+	lua_pushnil(L); //O,T,K
+	while (lua_next(L,-3)) { //O,T,K,V
+		lua_pushvalue(L,-2); //O,T,K,V,K
+		lua_insert(L,-2); //O,T,K,K,V
+		if (lua_type(L,-1)==LUA_TTABLE)
+			deepclone(L);
+		lua_rawset(L,-4); //O,T,K
+	}
+	lua_remove(L,-2); //T
+}
+
+static int tclone(lua_State* L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    int deep=0;
+    if (lua_type(L,2)==LUA_TTABLE) {
+    	deep=lua_toboolean(L,3);
+    	lua_pushvalue(L,2);
+    }
+    else {
+    	deep=lua_toboolean(L,2);
+    	lua_newtable(L);
+    }
+    lua_pushnil(L); //T,K
+    while (lua_next(L,1)) { //T,K,V
+    	lua_pushvalue(L,-2); //T,K,V,K
+    	lua_insert(L,-2); //T,K,K,V
+    	if (deep&&(lua_type(L,-1)==LUA_TTABLE))
+    		deepclone(L);
+    	lua_rawset(L,-4); //T,K
+    }
+    return 1; //T
+}
+
 static const luaL_Reg tab_funcs[] = {
     {"concat", tconcat},
     {"foreach", foreach},
@@ -524,6 +561,7 @@ static const luaL_Reg tab_funcs[] = {
     {"clear", tclear},
     {"freeze", tfreeze},
     {"isfrozen", tisfrozen},
+    {"clone", tclone},
     {NULL, NULL},
 };
 

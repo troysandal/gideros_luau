@@ -122,7 +122,7 @@ namespace Luau
         }
         virtual bool visit(class AstStatIf* node)
         {
-            buf << "SIF_:" << node->hasElse << "\n"; //Follow: Cond, Then, (Else)
+            buf << "SIF_:" << (node->elseLocation&&true) << "\n"; //Follow: Cond, Then, (Else)
             return true;
         }
         virtual bool visit(class AstStatWhile* node)

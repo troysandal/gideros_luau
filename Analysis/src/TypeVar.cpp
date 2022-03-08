@@ -784,7 +784,7 @@ void persist(TypeId ty)
         }
         else if (auto ttv = get<TableTypeVar>(t))
         {
-            LUAU_ASSERT(ttv->state != TableState::Free && ttv->state != TableState::Unsealed);
+            LUAU_ASSERT(ttv->state != TableState::Free);//nico@gideros && ttv->state != TableState::Unsealed);
 
             for (const auto& [_name, prop] : ttv->props)
                 queue.push_back(prop.type);

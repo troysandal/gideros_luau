@@ -309,6 +309,7 @@ static int io_lines (lua_State *L) {
 */
 
 #define LUA_NUMBER_SCAN		"%lf"
+#define LUA_NUMBER_FMT		"%.14g"
 
 static int read_number (lua_State *L, FILE *f) {
   lua_Number d;

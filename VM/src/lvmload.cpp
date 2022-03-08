@@ -152,6 +152,15 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 
         uint8_t version = read<uint8_t>(data, size, offset);
 
+        // 0 means the rest of the bytecode is the error message
+        if (version == 0)
+        {
+            char chunkid[LUA_IDSIZE];
+            luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+            lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
+            return 1;
+        }
+
 		if (FFlag::LuauBytecodeV2Force ? (version != LBC_VERSION_FUTURE) : (version != LBC_VERSION && version != LBC_VERSION_FUTURE))
 		{
 			char chunkid[LUA_IDSIZE];
@@ -161,31 +170,19 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 			return 1;
 		}
 
-		if (FFlag::LuauBytecodeV2Force ? (version != LBC_VERSION_FUTURE) : FFlag::LuauBytecodeV2Read ? (version != LBC_VERSION && version != LBC_VERSION_FUTURE) : (version != LBC_VERSION))
-		{
-			char chunkid[LUA_IDSIZE];
-			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
-			lua_pop(L,1);
-			lua_pushfstring(L, "%s: bytecode version mismatch (expected %d, got %d)", chunkid, FFlag::LuauBytecodeV2Force ? LBC_VERSION_FUTURE : LBC_VERSION, version);
-			return 1;
-		}
-
         unsigned int chunkNameLength = readVarInt(data, size, offset);
         std::string chunkName=std::string(data + offset, chunkNameLength);
         offset += chunkNameLength;
         if (chunkName.size()>0)
         	chunkname=chunkName.c_str();
 
-        // env is 0 for current environment and a stack index otherwise
-        Table* envt = (env == 0) ? L->gt : hvalue(luaA_toobject(L, env));
-
 		// pause GC for the duration of deserialization - some objects we're creating aren't rooted
 		// TODO: if an allocation error happens mid-load, we do not unpause GC!
 		size_t GCthreshold = L->global->GCthreshold;
 		L->global->GCthreshold = SIZE_MAX;
 
-		// env is 0 for current environment and a stack index otherwise
-		Table* envt = (env == 0) ? hvalue(gt(L)) : hvalue(luaA_toobject(L, env));
+        // env is 0 for current environment and a stack index otherwise
+        Table* envt = (env == 0) ? L->gt : hvalue(luaA_toobject(L, env));
 
 		TString* source = luaS_new(L, chunkname);
 
@@ -306,7 +303,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
                 p->p[j] = protos[fid];
             }
 
-            if (FFlag::LuauBytecodeV2Force || (FFlag::LuauBytecodeV2Read && version == LBC_VERSION_FUTURE))
+            if (FFlag::LuauBytecodeV2Force || version == LBC_VERSION_FUTURE)
                 p->linedefined = readVarInt(data, size, offset);
             else
                 p->linedefined = -1;
@@ -377,10 +374,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
         uint32_t mainid = readVarInt(data, size, offset);
         Proto* main = protos[mainid];
 
-        if (FFlag::LuauBytecodeV2Force || version == LBC_VERSION_FUTURE)
-            p->linedefined = readVarInt(data, size, offset);
-        else
-            p->linedefined = -1;
+        luaC_checkthreadsleep(L);
 
         Closure* cl = luaF_newLclosure(L, 0, envt, main);
         setclvalue(L, L->top, cl);

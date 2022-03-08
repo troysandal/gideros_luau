@@ -23,10 +23,9 @@ LUAU_FASTFLAG(DebugLuauFreezeArena)
 LUAU_FASTINTVARIABLE(LuauTypeMaximumStringifierLength, 500)
 LUAU_FASTINTVARIABLE(LuauTableTypeMaximumStringifierLength, 0)
 LUAU_FASTINT(LuauTypeInferRecursionLimit)
-LUAU_FASTFLAG(LuauLengthOnCompositeType)
-LUAU_FASTFLAGVARIABLE(LuauMetatableAreEqualRecursion, false)
-LUAU_FASTFLAGVARIABLE(LuauRefactorTypeVarQuestions, false)
 LUAU_FASTFLAG(LuauErrorRecoveryType)
+LUAU_FASTFLAG(LuauSubtypingAddOptPropsToUnsealedTables)
+LUAU_FASTFLAG(LuauDiscriminableUnions2)
 
 namespace Luau
 {
@@ -145,20 +144,13 @@ bool isNil(TypeId ty)
 
 bool isBoolean(TypeId ty)
 {
-    if (FFlag::LuauRefactorTypeVarQuestions)
-    {
-        if (isPrim(ty, PrimitiveTypeVar::Boolean) || get<BooleanSingleton>(get<SingletonTypeVar>(follow(ty))))
-            return true;
+    if (isPrim(ty, PrimitiveTypeVar::Boolean) || get<BooleanSingleton>(get<SingletonTypeVar>(follow(ty))))
+        return true;
 
-        if (auto utv = get<UnionTypeVar>(follow(ty)))
-            return std::all_of(begin(utv), end(utv), isBoolean);
+    if (auto utv = get<UnionTypeVar>(follow(ty)))
+        return std::all_of(begin(utv), end(utv), isBoolean);
 
-        return false;
-    }
-    else
-    {
-        return isPrim(ty, PrimitiveTypeVar::Boolean);
-    }
+    return false;
 }
 
 bool isNumber(TypeId ty)
@@ -166,21 +158,36 @@ bool isNumber(TypeId ty)
     return isPrim(ty, PrimitiveTypeVar::Number);
 }
 
+// Returns true when ty is a subtype of string
 bool isString(TypeId ty)
 {
-    if (FFlag::LuauRefactorTypeVarQuestions)
+    if (isPrim(ty, PrimitiveTypeVar::String) || get<StringSingleton>(get<SingletonTypeVar>(follow(ty))))
+        return true;
+
+    if (auto utv = get<UnionTypeVar>(follow(ty)))
+        return std::all_of(begin(utv), end(utv), isString);
+
+    return false;
+}
+
+// Returns true when ty is a supertype of string
+bool maybeString(TypeId ty)
+{
+    if (FFlag::LuauSubtypingAddOptPropsToUnsealedTables)
     {
-        if (isPrim(ty, PrimitiveTypeVar::String) || get<StringSingleton>(get<SingletonTypeVar>(follow(ty))))
+        ty = follow(ty);
+    
+        if (isPrim(ty, PrimitiveTypeVar::String) || get<AnyTypeVar>(ty))
             return true;
 
-        if (auto utv = get<UnionTypeVar>(follow(ty)))
-            return std::all_of(begin(utv), end(utv), isString);
+        if (auto utv = get<UnionTypeVar>(ty))
+            return std::any_of(begin(utv), end(utv), maybeString);
 
         return false;
     }
     else
     {
-        return isPrim(ty, PrimitiveTypeVar::String);
+        return isString(ty);
     }
 }
 
@@ -194,45 +201,11 @@ bool isOptional(TypeId ty)
     if (isNil(ty))
         return true;
 
-    if (FFlag::LuauRefactorTypeVarQuestions)
-    {
-        auto utv = get<UnionTypeVar>(follow(ty));
-        if (!utv)
-            return false;
-
-        return std::any_of(begin(utv), end(utv), isNil);
-    }
-    else
-    {
-        std::unordered_set<TypeId> seen;
-        std::deque<TypeId> queue{ty};
-        while (!queue.empty())
-        {
-            TypeId current = follow(queue.front());
-            queue.pop_front();
-
-            if (seen.count(current))
-                continue;
-
-            seen.insert(current);
-
-            if (isNil(current))
-                return true;
-
-            if (auto u = get<UnionTypeVar>(current))
-            {
-                for (TypeId option : u->options)
-                {
-                    if (isNil(option))
-                        return true;
-
-                    queue.push_back(option);
-                }
-            }
-        }
-
+    auto utv = get<UnionTypeVar>(follow(ty));
+    if (!utv)
         return false;
-    }
+
+    return std::any_of(begin(utv), end(utv), isNil);
 }
 
 bool isTableIntersection(TypeId ty)
@@ -263,35 +236,24 @@ std::optional<TypeId> getMetatable(TypeId type)
         return mtType->metatable;
     else if (const ClassTypeVar* classType = get<ClassTypeVar>(type))
         return classType->metatable;
-    else if (FFlag::LuauRefactorTypeVarQuestions)
+    else if (isString(type))
     {
-        if (isString(type))
-        {
-            auto ptv = get<PrimitiveTypeVar>(getSingletonTypes().stringType);
-            LUAU_ASSERT(ptv && ptv->metatable);
-            return ptv->metatable;
-        }
-        else
-            return std::nullopt;
+        auto ptv = get<PrimitiveTypeVar>(getSingletonTypes().stringType);
+        LUAU_ASSERT(ptv && ptv->metatable);
+        return ptv->metatable;
     }
-    else
-    {
-        if (const PrimitiveTypeVar* primitiveType = get<PrimitiveTypeVar>(type); primitiveType && primitiveType->metatable)
-        {
-            LUAU_ASSERT(primitiveType->type == PrimitiveTypeVar::String);
-            return primitiveType->metatable;
-        }
-        else
-            return std::nullopt;
-    }
+
+    return std::nullopt;
 }
 
 const TableTypeVar* getTableType(TypeId type)
 {
+    type = follow(type);
+
     if (const TableTypeVar* ttv = get<TableTypeVar>(type))
         return ttv;
     else if (const MetatableTypeVar* mtv = get<MetatableTypeVar>(type))
-        return get<TableTypeVar>(mtv->table);
+        return get<TableTypeVar>(follow(mtv->table));
     else
         return nullptr;
 }
@@ -308,7 +270,7 @@ const std::string* getName(TypeId type)
     {
         if (mtv->syntheticName)
             return &*mtv->syntheticName;
-        type = mtv->table;
+        type = follow(mtv->table);
     }
 
     if (auto ttv = get<TableTypeVar>(type))
@@ -380,8 +342,6 @@ bool maybeSingleton(TypeId ty)
 
 bool hasLength(TypeId ty, DenseHashSet<TypeId>& seen, int* recursionCount)
 {
-    LUAU_ASSERT(FFlag::LuauLengthOnCompositeType);
-
     RecursionLimiter _rl(recursionCount, FInt::LuauTypeInferRecursionLimit);
 
     ty = follow(ty);
@@ -389,7 +349,8 @@ bool hasLength(TypeId ty, DenseHashSet<TypeId>& seen, int* recursionCount)
     if (seen.contains(ty))
         return true;
 
-    if (isPrim(ty, PrimitiveTypeVar::String) || get<AnyTypeVar>(ty) || get<TableTypeVar>(ty) || get<MetatableTypeVar>(ty))
+    bool isStr = FFlag::LuauDiscriminableUnions2 ? isString(ty) : isPrim(ty, PrimitiveTypeVar::String);
+    if (isStr || get<AnyTypeVar>(ty) || get<TableTypeVar>(ty) || get<MetatableTypeVar>(ty))
         return true;
 
     if (auto uty = get<UnionTypeVar>(ty))
@@ -549,7 +510,7 @@ bool areEqual(SeenSet& seen, const TableTypeVar& lhs, const TableTypeVar& rhs)
 
 static bool areEqual(SeenSet& seen, const MetatableTypeVar& lhs, const MetatableTypeVar& rhs)
 {
-    if (FFlag::LuauMetatableAreEqualRecursion && areSeen(seen, &lhs, &rhs))
+    if (areSeen(seen, &lhs, &rhs))
         return true;
 
     return areEqual(seen, *lhs.table, *rhs.table) && areEqual(seen, *lhs.metatable, *rhs.metatable);
@@ -746,7 +707,7 @@ TypeId SingletonTypes::makeStringMetatable()
         {"sub", {makeFunction(*arena, stringType, {}, {}, {numberType, optionalNumber}, {}, {stringType})}},
         {"upper", {stringToStringType}},
         {"split", {makeFunction(*arena, stringType, {}, {}, {optionalString}, {},
-                      {arena->addType(TableTypeVar{{}, TableIndexer{numberType, stringType}, TypeLevel{}})})}},
+                      {arena->addType(TableTypeVar{{}, TableIndexer{numberType, stringType}, TypeLevel{}, TableState::Sealed})})}},
         {"pack", {arena->addType(FunctionTypeVar{
                      arena->addTypePack(TypePack{{stringType}, anyTypePack}),
                      oneStringPack,
@@ -823,6 +784,8 @@ void persist(TypeId ty)
         }
         else if (auto ttv = get<TableTypeVar>(t))
         {
+            LUAU_ASSERT(ttv->state != TableState::Free && ttv->state != TableState::Unsealed);
+
             for (const auto& [_name, prop] : ttv->props)
                 queue.push_back(prop.type);
 

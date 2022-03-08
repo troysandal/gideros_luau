@@ -641,9 +641,6 @@ TEST_CASE_FIXTURE(Fixture, "transpile_to_string")
 
 TEST_CASE_FIXTURE(Fixture, "transpile_type_alias_default_type_parameters")
 {
-    ScopedFastFlag luauParseTypeAliasDefaults{"LuauParseTypeAliasDefaults", true};
-    ScopedFastFlag luauTypeAliasDefaults{"LuauTypeAliasDefaults", true};
-
     std::string code = R"(
 type Packed<T = string, U = T, V... = ...boolean, W... = (T, U, V...)> = (T, U, V...)->(W...)
 local a: Packed<number>
@@ -651,4 +648,19 @@ local a: Packed<number>
 
     CHECK_EQ(code, transpile(code, {}, true).code);
 }
+
+TEST_CASE_FIXTURE(Fixture, "transpile_singleton_types")
+{
+    ScopedFastFlag luauParseSingletonTypes{"LuauParseSingletonTypes", true};
+
+    std::string code = R"(
+type t1 = 'hello'
+type t2 = true
+type t3 = ''
+type t4 = false
+    )";
+
+    CHECK_EQ(code, transpile(code, {}, true).code);
+}
+
 TEST_SUITE_END();

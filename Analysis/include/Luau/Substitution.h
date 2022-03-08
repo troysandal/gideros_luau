@@ -55,6 +55,8 @@
 namespace Luau
 {
 
+struct TxnLog;
+
 enum class TarjanResult
 {
     TooManyChildren,
@@ -89,14 +91,15 @@ struct Tarjan
 
     int childCount = 0;
 
+    // This should never be null; ensure you initialize it before calling
+    // substitution methods.
+    const TxnLog* log = nullptr;
+
     std::vector<TypeId> edgesTy;
     std::vector<TypePackId> edgesTp;
     std::vector<TarjanWorklistVertex> worklist;
     // This is hot code, so we optimize recursion to a stack.
     TarjanResult loop();
-
-    // Clear the state
-    void clear();
 
     // Find or create the index for a vertex.
     // Return a boolean which is `true` if it's a freshly created index.
@@ -160,7 +163,17 @@ struct FindDirty : Tarjan
 // and replaces them with clean ones.
 struct Substitution : FindDirty
 {
-    ModulePtr currentModule;
+protected:
+    Substitution(const TxnLog* log_, TypeArena* arena)
+        : arena(arena)
+    {
+        log = log_;
+        LUAU_ASSERT(log);
+        LUAU_ASSERT(arena);
+    }
+
+public:
+    TypeArena* arena;
     DenseHashMap<TypeId, TypeId> newTypes{nullptr};
     DenseHashMap<TypePackId, TypePackId> newPacks{nullptr};
 
@@ -186,12 +199,13 @@ struct Substitution : FindDirty
     template<typename T>
     TypeId addType(const T& tv)
     {
-        return currentModule->internalTypes.addType(tv);
+        return arena->addType(tv);
     }
+
     template<typename T>
     TypePackId addTypePack(const T& tp)
     {
-        return currentModule->internalTypes.addTypePack(TypePackVar{tp});
+        return arena->addTypePack(TypePackVar{tp});
     }
 };
 

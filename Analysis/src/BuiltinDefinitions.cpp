@@ -8,6 +8,9 @@
 
 #include <algorithm>
 
+LUAU_FASTFLAG(LuauAssertStripsFalsyTypes)
+LUAU_FASTFLAGVARIABLE(LuauTableCloneType, false)
+
 /** FIXME: Many of these type definitions are not quite completely accurate.
  *
  * Some of them require richer generics than we have.  For instance, we do not yet have a way to talk
@@ -281,8 +284,16 @@ void registerBuiltinTypes(TypeChecker& typeChecker)
     attachMagicFunction(getGlobalBinding(typeChecker, "setmetatable"), magicFunctionSetMetaTable);
     attachMagicFunction(getGlobalBinding(typeChecker, "select"), magicFunctionSelect);
 
-    auto tableLib = getMutable<TableTypeVar>(getGlobalBinding(typeChecker, "table"));
-    attachMagicFunction(tableLib->props["pack"].type, magicFunctionPack);
+    if (TableTypeVar* ttv = getMutable<TableTypeVar>(getGlobalBinding(typeChecker, "table")))
+    {
+        // tabTy is a generic table type which we can't express via declaration syntax yet
+        ttv->props["freeze"] = makeProperty(makeFunction(arena, std::nullopt, {tabTy}, {tabTy}), "@luau/global/table.freeze");
+
+        if (FFlag::LuauTableCloneType)
+            ttv->props["clone"] = makeProperty(makeFunction(arena, std::nullopt, {tabTy}, {tabTy}), "@luau/global/table.clone");
+
+        attachMagicFunction(ttv->props["pack"].type, magicFunctionPack);
+    }
 
     attachMagicFunction(getGlobalBinding(typeChecker, "require"), magicFunctionRequire);
 }
@@ -391,12 +402,41 @@ static std::optional<ExprResult<TypePackId>> magicFunctionAssert(
 {
     auto [paramPack, predicates] = exprResult;
 
-    if (expr.args.size < 1)
+    if (FFlag::LuauAssertStripsFalsyTypes)
+    {
+        TypeArena& arena = typechecker.currentModule->internalTypes;
+
+        auto [head, tail] = flatten(paramPack);
+        if (head.empty() && tail)
+        {
+            std::optional<TypeId> fst = first(*tail);
+            if (!fst)
+                return ExprResult<TypePackId>{paramPack};
+            head.push_back(*fst);
+        }
+
+        typechecker.reportErrors(typechecker.resolve(predicates, scope, true));
+
+        if (head.size() > 0)
+        {
+            std::optional<TypeId> newhead = typechecker.pickTypesFromSense(head[0], true);
+            if (!newhead)
+                head = {typechecker.nilType};
+            else
+                head[0] = *newhead;
+        }
+
+        return ExprResult<TypePackId>{arena.addTypePack(TypePack{std::move(head), tail})};
+    }
+    else
+    {
+        if (expr.args.size < 1)
+            return ExprResult<TypePackId>{paramPack};
+
+        typechecker.reportErrors(typechecker.resolve(predicates, scope, true));
+
         return ExprResult<TypePackId>{paramPack};
-
-    typechecker.reportErrors(typechecker.resolve(predicates, scope, true));
-
-    return ExprResult<TypePackId>{paramPack};
+    }
 }
 
 static std::optional<ExprResult<TypePackId>> magicFunctionPack(

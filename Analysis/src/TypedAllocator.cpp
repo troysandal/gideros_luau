@@ -7,6 +7,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 
 const size_t kPageSize = 4096;
@@ -20,7 +23,6 @@ const size_t kPageSize = sysconf(_SC_PAGESIZE);
 #include <stdlib.h>
 
 LUAU_FASTFLAG(DebugLuauFreezeArena)
-LUAU_FASTFLAGVARIABLE(LuauTypedAllocatorZeroStart, false)
 
 namespace Luau
 {

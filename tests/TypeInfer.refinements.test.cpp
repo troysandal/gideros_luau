@@ -6,9 +6,8 @@
 
 #include "doctest.h"
 
-LUAU_FASTFLAG(LuauDiscriminableUnions)
+LUAU_FASTFLAG(LuauDiscriminableUnions2)
 LUAU_FASTFLAG(LuauWeakEqConstraint)
-LUAU_FASTFLAG(LuauQuantifyInPlace2)
 
 using namespace Luau;
 
@@ -262,7 +261,7 @@ TEST_CASE_FIXTURE(Fixture, "typeguard_only_look_up_types_from_global_scope")
         end
     )");
 
-    if (FFlag::LuauDiscriminableUnions)
+    if (FFlag::LuauDiscriminableUnions2)
     {
         LUAU_REQUIRE_NO_ERRORS(result);
 
@@ -435,7 +434,7 @@ TEST_CASE_FIXTURE(Fixture, "lvalue_is_equal_to_a_term")
 TEST_CASE_FIXTURE(Fixture, "term_is_equal_to_an_lvalue")
 {
     ScopedFastFlag sff[] = {
-        {"LuauDiscriminableUnions", true},
+        {"LuauDiscriminableUnions2", true},
         {"LuauSingletonTypes", true},
     };
 
@@ -485,7 +484,7 @@ TEST_CASE_FIXTURE(Fixture, "lvalue_is_not_nil")
 
 TEST_CASE_FIXTURE(Fixture, "free_type_is_equal_to_an_lvalue")
 {
-    ScopedFastFlag sff{"LuauDiscriminableUnions", true};
+    ScopedFastFlag sff{"LuauDiscriminableUnions2", true};
     ScopedFastFlag sff2{"LuauWeakEqConstraint", true};
 
     CheckResult result = check(R"(
@@ -589,7 +588,7 @@ TEST_CASE_FIXTURE(Fixture, "type_narrow_to_vector")
         end
     )");
 
-    if (FFlag::LuauDiscriminableUnions)
+    if (FFlag::LuauDiscriminableUnions2)
     {
         LUAU_REQUIRE_NO_ERRORS(result);
     }
@@ -939,8 +938,6 @@ TEST_CASE_FIXTURE(Fixture, "type_comparison_ifelse_expression")
 
 TEST_CASE_FIXTURE(Fixture, "correctly_lookup_a_shadowed_local_that_which_was_previously_refined")
 {
-    ScopedFastFlag sff{"LuauLValueAsKey", true};
-
     CheckResult result = check(R"(
         local foo: string? = "hi"
         assert(foo)
@@ -955,8 +952,6 @@ TEST_CASE_FIXTURE(Fixture, "correctly_lookup_a_shadowed_local_that_which_was_pre
 
 TEST_CASE_FIXTURE(Fixture, "correctly_lookup_property_whose_base_was_previously_refined")
 {
-    ScopedFastFlag sff{"LuauLValueAsKey", true};
-
     CheckResult result = check(R"(
         type T = {x: string | number}
         local t: T? = {x = "hi"}
@@ -974,8 +969,6 @@ TEST_CASE_FIXTURE(Fixture, "correctly_lookup_property_whose_base_was_previously_
 
 TEST_CASE_FIXTURE(Fixture, "correctly_lookup_property_whose_base_was_previously_refined2")
 {
-    ScopedFastFlag sff{"LuauLValueAsKey", true};
-
     CheckResult result = check(R"(
         type T = { x: { y: number }? }
 
@@ -993,8 +986,6 @@ TEST_CASE_FIXTURE(Fixture, "correctly_lookup_property_whose_base_was_previously_
 
 TEST_CASE_FIXTURE(Fixture, "apply_refinements_on_astexprindexexpr_whose_subscript_expr_is_constant_string")
 {
-    ScopedFastFlag sff{"LuauRefiLookupFromIndexExpr", true};
-
     CheckResult result = check(R"(
         type T = { [string]: { prop: number }? }
         local t: T = {}
@@ -1010,7 +1001,7 @@ TEST_CASE_FIXTURE(Fixture, "apply_refinements_on_astexprindexexpr_whose_subscrip
 TEST_CASE_FIXTURE(Fixture, "discriminate_from_truthiness_of_x")
 {
     ScopedFastFlag sff[] = {
-        {"LuauDiscriminableUnions", true},
+        {"LuauDiscriminableUnions2", true},
         {"LuauParseSingletonTypes", true},
         {"LuauSingletonTypes", true},
     };
@@ -1036,7 +1027,7 @@ TEST_CASE_FIXTURE(Fixture, "discriminate_from_truthiness_of_x")
 TEST_CASE_FIXTURE(Fixture, "discriminate_tag")
 {
     ScopedFastFlag sff[] = {
-        {"LuauDiscriminableUnions", true},
+        {"LuauDiscriminableUnions2", true},
         {"LuauParseSingletonTypes", true},
         {"LuauSingletonTypes", true},
     };
@@ -1061,22 +1052,6 @@ TEST_CASE_FIXTURE(Fixture, "discriminate_tag")
     CHECK_EQ("Dog", toString(requireTypeAtPosition({9, 33})));
 }
 
-TEST_CASE_FIXTURE(Fixture, "apply_refinements_on_astexprindexexpr_whose_subscript_expr_is_constant_string")
-{
-    ScopedFastFlag sff{"LuauRefiLookupFromIndexExpr", true};
-
-    CheckResult result = check(R"(
-        type T = { [string]: { prop: number }? }
-        local t: T = {}
-
-        if t["hello"] then
-            local foo = t["hello"].prop
-        end
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-}
-
 TEST_CASE_FIXTURE(Fixture, "and_or_peephole_refinement")
 {
     CheckResult result = check(R"(
@@ -1088,10 +1063,77 @@ TEST_CASE_FIXTURE(Fixture, "and_or_peephole_refinement")
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
+TEST_CASE_FIXTURE(Fixture, "narrow_boolean_to_true_or_false")
+{
+    ScopedFastFlag sff[]{
+        {"LuauParseSingletonTypes", true},
+        {"LuauSingletonTypes", true},
+        {"LuauDiscriminableUnions2", true},
+        {"LuauAssertStripsFalsyTypes", true},
+    };
+
+    CheckResult result = check(R"(
+        local function is_true(b: true) end
+        local function is_false(b: false) end
+
+        local function f(x: boolean)
+            if x then
+                is_true(x)
+            else
+                is_false(x)
+            end
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "discriminate_on_properties_of_disjoint_tables_where_that_property_is_true_or_false")
+{
+    ScopedFastFlag sff[]{
+        {"LuauParseSingletonTypes", true},
+        {"LuauSingletonTypes", true},
+        {"LuauDiscriminableUnions2", true},
+        {"LuauAssertStripsFalsyTypes", true},
+    };
+
+    CheckResult result = check(R"(
+        type Ok<T> = { ok: true, value: T }
+        type Err<E> = { ok: false, error: E }
+        type Result<T, E> = Ok<T> | Err<E>
+
+        local function apply<T, E>(t: Result<T, E>, f: (T) -> (), g: (E) -> ())
+            if t.ok then
+                f(t.value)
+            else
+                g(t.error)
+            end
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "refine_a_property_not_to_be_nil_through_an_intersection_table")
+{
+    ScopedFastFlag sff{"LuauDoNotTryToReduce", true};
+
+    CheckResult result = check(R"(
+        type T = {} & {f: ((string) -> string)?}
+        local function f(t: T, x)
+            if t.f then
+                t.f(x)
+            end
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
 TEST_CASE_FIXTURE(RefinementClassFixture, "discriminate_from_isa_of_x")
 {
     ScopedFastFlag sff[] = {
-        {"LuauDiscriminableUnions", true},
+        {"LuauDiscriminableUnions2", true},
         {"LuauParseSingletonTypes", true},
         {"LuauSingletonTypes", true},
     };
@@ -1130,26 +1172,20 @@ TEST_CASE_FIXTURE(RefinementClassFixture, "typeguard_cast_free_table_to_vector")
         end
     )");
 
-    if (FFlag::LuauDiscriminableUnions)
+    if (FFlag::LuauDiscriminableUnions2)
         LUAU_REQUIRE_NO_ERRORS(result);
     else
     {
         LUAU_REQUIRE_ERROR_COUNT(1, result);
 
-        if (FFlag::LuauQuantifyInPlace2)
-            CHECK_EQ("Type '{+ X: a, Y: b, Z: c +}' could not be converted into 'Instance'", toString(result.errors[0]));
-        else
-            CHECK_EQ("Type '{- X: a, Y: b, Z: c -}' could not be converted into 'Instance'", toString(result.errors[0]));
+        CHECK_EQ("Type '{+ X: a, Y: b, Z: c +}' could not be converted into 'Instance'", toString(result.errors[0]));
     }
 
     CHECK_EQ("Vector3", toString(requireTypeAtPosition({5, 28}))); // type(vec) == "vector"
 
     CHECK_EQ("*unknown*", toString(requireTypeAtPosition({7, 28}))); // typeof(vec) == "Instance"
 
-    if (FFlag::LuauQuantifyInPlace2)
-        CHECK_EQ("{+ X: a, Y: b, Z: c +}", toString(requireTypeAtPosition({9, 28}))); // type(vec) ~= "vector" and typeof(vec) ~= "Instance"
-    else
-        CHECK_EQ("{- X: a, Y: b, Z: c -}", toString(requireTypeAtPosition({9, 28}))); // type(vec) ~= "vector" and typeof(vec) ~= "Instance"
+    CHECK_EQ("{+ X: a, Y: b, Z: c +}", toString(requireTypeAtPosition({9, 28}))); // type(vec) ~= "vector" and typeof(vec) ~= "Instance"
 }
 
 TEST_CASE_FIXTURE(RefinementClassFixture, "typeguard_cast_instance_or_vector3_to_vector")

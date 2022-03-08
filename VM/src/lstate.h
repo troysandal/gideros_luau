@@ -5,9 +5,6 @@
 #include "lobject.h"
 #include "ltm.h"
 
-/* table of globals */
-#define gt(L) (&L->l_gt)
-
 /* registry */
 #define registry(L) (&L->global->registry)
 
@@ -80,24 +77,45 @@ typedef struct CallInfo
 
 struct GCCycleStats
 {
+    size_t starttotalsizebytes = 0;
     size_t heapgoalsizebytes = 0;
     size_t heaptriggersizebytes = 0;
 
-    double waittime = 0.0; // time from end of the last cycle to the start of a new one
+    double pausetime = 0.0; // time from end of the last cycle to the start of a new one
 
     double starttimestamp = 0.0;
     double endtimestamp = 0.0;
 
     double marktime = 0.0;
+    double markassisttime = 0.0;
+    double markmaxexplicittime = 0.0;
+    size_t markexplicitsteps = 0;
+    size_t markrequests = 0;
 
     double atomicstarttimestamp = 0.0;
     size_t atomicstarttotalsizebytes = 0;
     double atomictime = 0.0;
 
+    // specific atomic stage parts
+    double atomictimeupval = 0.0;
+    double atomictimeweak = 0.0;
+    double atomictimegray = 0.0;
+    double atomictimeclear = 0.0;
+
     double sweeptime = 0.0;
+    double sweepassisttime = 0.0;
+    double sweepmaxexplicittime = 0.0;
+    size_t sweepexplicitsteps = 0;
+    size_t sweeprequests = 0;
+
+    size_t assistrequests = 0;
+    size_t explicitrequests = 0;
 
     size_t assistwork = 0;
     size_t explicitwork = 0;
+
+    size_t propagatework = 0;
+    size_t propagateagainwork = 0;
 
     size_t endtotalsizebytes = 0;
 };
@@ -145,11 +163,6 @@ typedef struct global_State
     uint8_t gcstate; /* state of garbage collector */
 
 
-    int sweepstrgc;      /* position of sweep in `strt' */
-    // TODO: remove with FFlagLuauGcPagedSweep
-    GCObject* rootgc;    /* list of all collectable objects */
-    // TODO: remove with FFlagLuauGcPagedSweep
-    GCObject** sweepgc;  /* position of sweep in `rootgc' */
     GCObject* gray;      /* list of gray objects */
     GCObject* grayagain; /* list of objects to be traversed atomically */
     GCObject* weak;     /* list of weak tables (to be cleared) */
@@ -176,6 +189,8 @@ typedef struct global_State
     struct Table* mt[LUA_T_COUNT];                   /* metatables for basic types */
     TString* ttname[LUA_T_COUNT];       /* names for basic types */
     TString* tmname[TM_N];             /* array with tag-method names */
+
+    TValue pseudotemp; /* storage for temporary values used in pseudo2addr */
 
     TValue registry; /* registry table, used by lua_ref and LUA_REGISTRYINDEX */
     int registryfree; /* next free slot in registry */
@@ -235,8 +250,7 @@ struct lua_State
     int cachedslot;    /* when table operations or INDEX/NEWINDEX is invoked from Luau, what is the expected slot for lookup? */
 
 
-    TValue l_gt;            /* table of globals */
-    TValue env;             /* temporary place for environments */
+    Table* gt;           /* table of globals */
     UpVal* openupval;    /* list of open upvalues in this stack */
     GCObject* gclist;
 

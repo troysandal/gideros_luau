@@ -7,6 +7,7 @@
 #include "Luau/ToString.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/TypePack.h"
+#include "Luau/Parser.h" // TODO: only needed for autocompleteSource which is deprecated
 
 #include <algorithm>
 #include <unordered_set>
@@ -14,9 +15,8 @@
 
 LUAU_FASTFLAG(LuauUseCommittingTxnLog)
 LUAU_FASTFLAGVARIABLE(LuauAutocompleteAvoidMutation, false);
-LUAU_FASTFLAGVARIABLE(LuauCompleteBrokenStringParams, false);
 LUAU_FASTFLAGVARIABLE(LuauMissingFollowACMetatables, false);
-LUAU_FASTFLAGVARIABLE(PreferToCallFunctionsForIntersects, false);
+LUAU_FASTFLAGVARIABLE(LuauIfElseExprFixCompletionIssue, false);
 
 static const std::unordered_set<std::string> kStatementStartingKeywords = {
     "while", "if", "local", "repeat", "function", "do", "for", "return", "break", "continue", "type", "export"};
@@ -235,10 +235,10 @@ static TypeCorrectKind checkTypeCorrectKind(const Module& module, TypeArena* typ
 {
     ty = follow(ty);
 
-    auto canUnify = [&typeArena, &module](TypeId subTy, TypeId superTy) {
+    auto canUnify = [&typeArena](TypeId subTy, TypeId superTy) {
         InternalErrorReporter iceReporter;
         UnifierSharedState unifierState(&iceReporter);
-        Unifier unifier(typeArena, Mode::Strict, module.getModuleScope(), Location(), Variance::Covariant, unifierState);
+        Unifier unifier(typeArena, Mode::Strict, Location(), Variance::Covariant, unifierState);
 
         if (FFlag::LuauAutocompleteAvoidMutation && !FFlag::LuauUseCommittingTxnLog)
         {
@@ -271,55 +271,34 @@ static TypeCorrectKind checkTypeCorrectKind(const Module& module, TypeArena* typ
 
     TypeId expectedType = follow(*typeAtPosition);
 
-    if (FFlag::PreferToCallFunctionsForIntersects)
-    {
-        auto checkFunctionType = [&canUnify, &expectedType](const FunctionTypeVar* ftv) {
-            auto [retHead, retTail] = flatten(ftv->retType);
+    auto checkFunctionType = [&canUnify, &expectedType](const FunctionTypeVar* ftv) {
+        auto [retHead, retTail] = flatten(ftv->retType);
 
-            if (!retHead.empty() && canUnify(retHead.front(), expectedType))
+        if (!retHead.empty() && canUnify(retHead.front(), expectedType))
+            return true;
+
+        // We might only have a variadic tail pack, check if the element is compatible
+        if (retTail)
+        {
+            if (const VariadicTypePack* vtp = get<VariadicTypePack>(follow(*retTail)); vtp && canUnify(vtp->ty, expectedType))
                 return true;
-
-            // We might only have a variadic tail pack, check if the element is compatible
-            if (retTail)
-            {
-                if (const VariadicTypePack* vtp = get<VariadicTypePack>(follow(*retTail)); vtp && canUnify(vtp->ty, expectedType))
-                    return true;
-            }
-
-            return false;
-        };
-
-        // We also want to suggest functions that return compatible result
-        if (const FunctionTypeVar* ftv = get<FunctionTypeVar>(ty); ftv && checkFunctionType(ftv))
-        {
-            return TypeCorrectKind::CorrectFunctionResult;
         }
-        else if (const IntersectionTypeVar* itv = get<IntersectionTypeVar>(ty))
-        {
-            for (TypeId id : itv->parts)
-            {
-                if (const FunctionTypeVar* ftv = get<FunctionTypeVar>(id); ftv && checkFunctionType(ftv))
-                {
-                    return TypeCorrectKind::CorrectFunctionResult;
-                }
-            }
-        }
-    }
-    else
+
+        return false;
+    };
+
+    // We also want to suggest functions that return compatible result
+    if (const FunctionTypeVar* ftv = get<FunctionTypeVar>(ty); ftv && checkFunctionType(ftv))
     {
-        // We also want to suggest functions that return compatible result
-        if (const FunctionTypeVar* ftv = get<FunctionTypeVar>(ty))
+        return TypeCorrectKind::CorrectFunctionResult;
+    }
+    else if (const IntersectionTypeVar* itv = get<IntersectionTypeVar>(ty))
+    {
+        for (TypeId id : itv->parts)
         {
-            auto [retHead, retTail] = flatten(ftv->retType);
-
-            if (!retHead.empty() && canUnify(retHead.front(), expectedType))
-                return TypeCorrectKind::CorrectFunctionResult;
-
-            // We might only have a variadic tail pack, check if the element is compatible
-            if (retTail)
+            if (const FunctionTypeVar* ftv = get<FunctionTypeVar>(id); ftv && checkFunctionType(ftv))
             {
-                if (const VariadicTypePack* vtp = get<VariadicTypePack>(follow(*retTail)); vtp && canUnify(vtp->ty, expectedType))
-                    return TypeCorrectKind::CorrectFunctionResult;
+                return TypeCorrectKind::CorrectFunctionResult;
             }
         }
     }
@@ -380,7 +359,7 @@ static void autocompleteProps(const Module& module, TypeArena* typeArena, TypeId
         {
             // We are walking up the class hierarchy, so if we encounter a property that we have
             // already populated, it takes precedence over the property we found just now.
-            if (result.count(name) == 0 && name != Parser::errorName)
+            if (result.count(name) == 0 && name != kParseNameError)
             {
                 Luau::TypeId type = Luau::follow(prop.type);
                 TypeCorrectKind typeCorrect = indexType == PropIndexType::Key ? TypeCorrectKind::Correct
@@ -948,9 +927,12 @@ AutocompleteEntryMap autocompleteTypeNames(const Module& module, Position positi
             }
         }
 
-        for (size_t i = 0; i < node->returnAnnotation.types.size; i++)
+        if (!node->returnAnnotation)
+            return result;
+
+        for (size_t i = 0; i < node->returnAnnotation->types.size; i++)
         {
-            AstType* ret = node->returnAnnotation.types.data[i];
+            AstType* ret = node->returnAnnotation->types.data[i];
 
             if (ret->location.containsClosed(position))
             {
@@ -965,7 +947,7 @@ AutocompleteEntryMap autocompleteTypeNames(const Module& module, Position positi
             }
         }
 
-        if (AstTypePack* retTp = node->returnAnnotation.tailType)
+        if (AstTypePack* retTp = node->returnAnnotation->tailType)
         {
             if (auto variadic = retTp->as<AstTypePackVariadic>())
             {
@@ -1136,7 +1118,7 @@ static AutocompleteEntryMap autocompleteStatement(
         AstNode* parent = ancestry.rbegin()[1];
         if (AstStatIf* statIf = parent->as<AstStatIf>())
         {
-            if (!statIf->elsebody || (statIf->hasElse && statIf->elseLocation.containsClosed(position)))
+            if (!statIf->elsebody || (statIf->elseLocation && statIf->elseLocation->containsClosed(position)))
             {
                 result.emplace("else", AutocompleteEntry{AutocompleteEntryKind::Keyword});
                 result.emplace("elseif", AutocompleteEntry{AutocompleteEntryKind::Keyword});
@@ -1164,14 +1146,20 @@ static AutocompleteEntryMap autocompleteStatement(
     return result;
 }
 
-// Returns true if completions were generated (completions will be inserted into 'outResult')
-// Returns false if no completions were generated
+// Returns true iff `node` was handled by this function (completions, if any, are returned in `outResult`)
 static bool autocompleteIfElseExpression(
     const AstNode* node, const std::vector<AstNode*>& ancestry, const Position& position, AutocompleteEntryMap& outResult)
 {
     AstNode* parent = ancestry.size() >= 2 ? ancestry.rbegin()[1] : nullptr;
     if (!parent)
         return false;
+
+    if (FFlag::LuauIfElseExprFixCompletionIssue && node->is<AstExprIfElse>())
+    {
+        // Don't try to complete when the current node is an if-else expression (i.e. only try to complete when the node is a child of an if-else
+        // expression.
+        return true;
+    }
 
     AstExprIfElse* ifElseExpr = parent->as<AstExprIfElse>();
     if (!ifElseExpr || ifElseExpr->condition->location.containsClosed(position))
@@ -1310,7 +1298,7 @@ static std::optional<AutocompleteEntryMap> autocompleteStringParams(const Source
         return std::nullopt;
     }
 
-    if (!nodes.back()->is<AstExprConstantString>() && (!FFlag::LuauCompleteBrokenStringParams || !nodes.back()->is<AstExprError>()))
+    if (!nodes.back()->is<AstExprConstantString>() && !nodes.back()->is<AstExprError>())
     {
         return std::nullopt;
     }
@@ -1408,8 +1396,8 @@ static AutocompleteResult autocomplete(const SourceModule& sourceModule, const M
     }
     else if (auto typeReference = node->as<AstTypeReference>())
     {
-        if (typeReference->hasPrefix)
-            return {autocompleteModuleTypes(*module, position, typeReference->prefix.value), finder.ancestry};
+        if (typeReference->prefix)
+            return {autocompleteModuleTypes(*module, position, typeReference->prefix->value), finder.ancestry};
         else
             return {autocompleteTypeNames(*module, position, finder.ancestry), finder.ancestry};
     }
@@ -1419,9 +1407,9 @@ static AutocompleteResult autocomplete(const SourceModule& sourceModule, const M
     }
     else if (AstStatLocal* statLocal = node->as<AstStatLocal>())
     {
-        if (statLocal->vars.size == 1 && (!statLocal->hasEqualsSign || position < statLocal->equalsSignLocation.begin))
+        if (statLocal->vars.size == 1 && (!statLocal->equalsSignLocation || position < statLocal->equalsSignLocation->begin))
             return {{{"function", AutocompleteEntry{AutocompleteEntryKind::Keyword}}}, finder.ancestry};
-        else if (statLocal->hasEqualsSign && position >= statLocal->equalsSignLocation.end)
+        else if (statLocal->equalsSignLocation && position >= statLocal->equalsSignLocation->end)
             return {autocompleteExpression(sourceModule, *module, typeChecker, typeArena, finder.ancestry, position), finder.ancestry};
         else
             return {};
@@ -1449,7 +1437,7 @@ static AutocompleteResult autocomplete(const SourceModule& sourceModule, const M
         if (!statForIn->hasIn || position <= statForIn->inLocation.begin)
         {
             AstLocal* lastName = statForIn->vars.data[statForIn->vars.size - 1];
-            if (lastName->name == Parser::errorName || lastName->location.containsClosed(position))
+            if (lastName->name == kParseNameError || lastName->location.containsClosed(position))
             {
                 // Here we are either working with a missing binding (as would be the case in a bare "for" keyword) or
                 // the cursor is still touching a binding name.  The user is still typing a new name, so we should not offer
@@ -1499,7 +1487,7 @@ static AutocompleteResult autocomplete(const SourceModule& sourceModule, const M
     else if (AstStatWhile* statWhile = extractStat<AstStatWhile>(finder.ancestry); statWhile && !statWhile->hasDo)
         return {{{"do", AutocompleteEntry{AutocompleteEntryKind::Keyword}}}, finder.ancestry};
 
-    else if (AstStatIf* statIf = node->as<AstStatIf>(); statIf && !statIf->hasElse)
+    else if (AstStatIf* statIf = node->as<AstStatIf>(); statIf && !statIf->elseLocation.has_value())
     {
         return {{{"else", AutocompleteEntry{AutocompleteEntryKind::Keyword}}, {"elseif", AutocompleteEntry{AutocompleteEntryKind::Keyword}}},
             finder.ancestry};
@@ -1508,11 +1496,11 @@ static AutocompleteResult autocomplete(const SourceModule& sourceModule, const M
     {
         if (statIf->condition->is<AstExprError>())
             return {autocompleteExpression(sourceModule, *module, typeChecker, typeArena, finder.ancestry, position), finder.ancestry};
-        else if (!statIf->hasThen || statIf->thenLocation.containsClosed(position))
+        else if (!statIf->thenLocation || statIf->thenLocation->containsClosed(position))
             return {{{"then", AutocompleteEntry{AutocompleteEntryKind::Keyword}}}, finder.ancestry};
     }
     else if (AstStatIf* statIf = extractStat<AstStatIf>(finder.ancestry);
-             statIf && (!statIf->hasThen || statIf->thenLocation.containsClosed(position)))
+             statIf && (!statIf->thenLocation || statIf->thenLocation->containsClosed(position)))
         return {{{"then", AutocompleteEntry{AutocompleteEntryKind::Keyword}}}, finder.ancestry};
     else if (AstStatRepeat* statRepeat = node->as<AstStatRepeat>(); statRepeat && statRepeat->condition->is<AstExprError>())
         return {autocompleteExpression(sourceModule, *module, typeChecker, typeArena, finder.ancestry, position), finder.ancestry};
@@ -1612,6 +1600,7 @@ AutocompleteResult autocomplete(Frontend& frontend, const ModuleName& moduleName
 
 OwningAutocompleteResult autocompleteSource(Frontend& frontend, std::string_view source, Position position, StringCompletionCallback callback)
 {
+    // TODO: Remove #include "Luau/Parser.h" with this function
     auto sourceModule = std::make_unique<SourceModule>();
     ParseOptions parseOptions;
     parseOptions.captureComments = true;

@@ -1,5 +1,4 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
-#include "Luau/Parser.h"
 #include "Luau/TypeInfer.h"
 
 #include "Fixture.h"
@@ -9,7 +8,6 @@
 #include <algorithm>
 
 LUAU_FASTFLAG(LuauEqConstraint)
-LUAU_FASTFLAG(LuauQuantifyInPlace2)
 
 using namespace Luau;
 
@@ -41,16 +39,6 @@ TEST_CASE_FIXTURE(Fixture, "typeguard_inference_incomplete")
         end
     )";
 
-    const std::string old_expected = R"(
-        function f(a:{fn:()->(free,free...)}): ()
-            if type(a) == 'boolean'then
-                local a1:boolean=a
-            elseif a.fn()then
-                local a2:{fn:()->(free,free...)}=a
-            end
-        end
-    )";
-
     const std::string expected = R"(
         function f(a:{fn:()->(a,b...)}): ()
             if type(a) == 'boolean'then
@@ -61,10 +49,7 @@ TEST_CASE_FIXTURE(Fixture, "typeguard_inference_incomplete")
         end
     )";
 
-    if (FFlag::LuauQuantifyInPlace2)
-        CHECK_EQ(expected, decorateWithTypes(code));
-    else
-        CHECK_EQ(old_expected, decorateWithTypes(code));
+    CHECK_EQ(expected, decorateWithTypes(code));
 }
 
 TEST_CASE_FIXTURE(Fixture, "xpcall_returns_what_f_returns")
@@ -134,59 +119,6 @@ TEST_CASE_FIXTURE(Fixture, "setmetatable_constrains_free_type_into_free_table")
     REQUIRE(tm);
     CHECK_EQ("{-  -}", toString(tm->wantedType));
     CHECK_EQ("number", toString(tm->givenType));
-}
-
-TEST_CASE_FIXTURE(Fixture, "pass_a_union_of_tables_to_a_function_that_requires_a_table")
-{
-    CheckResult result = check(R"(
-        local a: {x: number, y: number, [any]: any} | {y: number}
-
-        function f(t)
-            t.y = 1
-            return t
-        end
-
-        local b = f(a)
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-
-    // :(
-    // Should be the same as the type of a
-    REQUIRE_EQ("{| y: number |}", toString(requireType("b")));
-}
-
-TEST_CASE_FIXTURE(Fixture, "pass_a_union_of_tables_to_a_function_that_requires_a_table_2")
-{
-    CheckResult result = check(R"(
-        local a: {y: number} | {x: number, y: number, [any]: any}
-
-        function f(t)
-            t.y = 1
-            return t
-        end
-
-        local b = f(a)
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-
-    // :(
-    // Should be the same as the type of a
-    REQUIRE_EQ("{| [any]: any, x: number, y: number |}", toString(requireType("b")));
-}
-
-TEST_CASE_FIXTURE(Fixture, "normal_conditional_expression_has_refinements")
-{
-    CheckResult result = check(R"(
-        local foo: {x: number}? = nil
-        local bar = foo and foo.x -- TODO: Geez. We are inferring the wrong types here. Should be 'number?'.
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-
-    // Binary and/or return types are straight up wrong. JIRA: CLI-40300
-    CHECK_EQ("boolean | number", toString(requireType("bar")));
 }
 
 // Luau currently doesn't yet know how to allow assignments when the binding was refined.
@@ -275,7 +207,7 @@ TEST_CASE_FIXTURE(Fixture, "lvalue_equals_another_lvalue_with_no_overlap")
 // Just needs to fully support equality refinement. Which is annoying without type states.
 TEST_CASE_FIXTURE(Fixture, "discriminate_from_x_not_equal_to_nil")
 {
-    ScopedFastFlag sff{"LuauDiscriminableUnions", true};
+    ScopedFastFlag sff{"LuauDiscriminableUnions2", true};
 
     CheckResult result = check(R"(
         type T = {x: string, y: number} | {x: nil, y: nil}
@@ -571,25 +503,6 @@ TEST_CASE_FIXTURE(Fixture, "bail_early_on_typescript_port_of_Result_type" * doct
     }
 }
 
-TEST_CASE_FIXTURE(Fixture, "table_subtyping_shouldn't_add_optional_properties_to_sealed_tables")
-{
-    CheckResult result = check(R"(
-        --!strict
-        local function setNumber(t: { p: number? }, x:number) t.p = x end
-        local function getString(t: { p: string? }):string return t.p or "" end
-        -- This shouldn't type-check!
-        local function oh(x:number): string
-          local t: {} = {}
-          setNumber(t, x)
-          return getString(t)
-        end
-        local s: string = oh(37)
-    )");
-
-    // Really this should return an error, but it doesn't
-    LUAU_REQUIRE_NO_ERRORS(result);
-}
-
 // Should be in TypeInfer.tables.test.cpp
 // It's unsound to instantiate tables containing generic methods,
 // since mutating properties means table properties should be invariant.
@@ -614,19 +527,71 @@ TEST_CASE_FIXTURE(Fixture, "invariant_table_properties_means_instantiating_table
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
-TEST_CASE_FIXTURE(Fixture, "self_recursive_instantiated_param")
+TEST_CASE_FIXTURE(Fixture, "do_not_ice_when_trying_to_pick_first_of_generic_type_pack")
 {
-    // Mutability in type function application right now can create strange recursive types
-    // TODO: instantiation right now is problematic, in this example should either leave the Table type alone
-    // or it should rename the type to 'Self' so that the result will be 'Self<Table>'
+    ScopedFastFlag sff[]{
+        {"LuauReturnAnyInsteadOfICE", true},
+    };
+
+    // In-place quantification causes these types to have the wrong types but only because of nasty interaction with prototyping.
+    // The type of f is initially () -> free1...
+    // Then the prototype iterator advances, and checks the function expression assigned to g, which has the type () -> free2...
+    // In the body it calls f and returns what f() returns. This binds free2... with free1..., causing f and g to have same types.
+    // We then quantify g, leaving it with the final type <a...>() -> a...
+    // Because free1... and free2... were bound, in combination with in-place quantification, f's return type was also turned into a...
+    // Then the check iterator catches up, and checks the body of f, and attempts to quantify it too.
+    // Alas, one of the requirements for quantification is that a type must contain free types. () -> a... has no free types.
+    // Thus the quantification for f was no-op, which explains why f does not have any type parameters.
+    // Calling f() will attempt to instantiate the function type, which turns generics in type binders into to free types.
+    // However, instantiations only converts generics contained within the type binders of a function, so instantiation was also no-op.
+    // Which means that calling f() simply returned a... rather than an instantiation of it. And since the call site was not in tail position,
+    // picking first element in a... triggers an ICE because calls returning generic packs are unexpected.
     CheckResult result = check(R"(
-type Table = { a: number }
-type Self<T> = T
-local a: Self<Table>
+        local function f() end
+
+        local g = function() return f() end
+
+        local x = (f()) -- should error: no return values to assign from the call to f
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
-    CHECK_EQ(toString(requireType("a")), "Table<Table>");
+
+    // f and g should have the type () -> ()
+    CHECK_EQ("() -> (a...)", toString(requireType("f")));
+    CHECK_EQ("<a...>() -> (a...)", toString(requireType("g")));
+    CHECK_EQ("any", toString(requireType("x"))); // any is returned instead of ICE for now
+}
+
+TEST_CASE_FIXTURE(Fixture, "specialization_binds_with_prototypes_too_early")
+{
+    CheckResult result = check(R"(
+        local function id(x) return x end
+        local n2n: (number) -> number = id
+        local s2s: (string) -> string = id
+    )");
+
+    LUAU_REQUIRE_ERRORS(result); // Should not have any errors.
+}
+
+TEST_CASE_FIXTURE(Fixture, "weird_fail_to_unify_type_pack")
+{
+    CheckResult result = check(R"(
+        local function f() return end
+        local g = function() return f() end
+    )");
+
+    LUAU_REQUIRE_ERRORS(result); // Should not have any errors.
+}
+
+TEST_CASE_FIXTURE(Fixture, "weird_fail_to_unify_variadic_pack")
+{
+    CheckResult result = check(R"(
+        --!strict
+        local function f(...) return ... end
+        local g = function(...) return f(...) end
+    )");
+
+    LUAU_REQUIRE_ERRORS(result); // Should not have any errors.
 }
 
 TEST_SUITE_END();

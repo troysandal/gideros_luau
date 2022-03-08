@@ -241,4 +241,9 @@ private:
     bool readNames;
 };
 
+inline bool isSpace(char ch)
+{
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\v' || ch == '\f';
+}
+
 } // namespace Luau

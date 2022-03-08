@@ -106,7 +106,7 @@
 #endif
 
 #ifndef LUAI_GCSTEPSIZE
-#define LUAI_GCSTEPSIZE 1  /* GC runs every KB of memory allocation */
+#define LUAI_GCSTEPSIZE 1 /* GC runs every KB of memory allocation */
 #endif
 
 /* LUA_MINSTACK is the guaranteed number of Lua stack slots available to a C function */

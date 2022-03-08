@@ -12,7 +12,6 @@
 #include <string.h>
 #include <stdio.h>
 
-LUAU_FASTFLAG(LuauBytecodeV2Read)
 LUAU_FASTFLAG(LuauBytecodeV2Force)
 
 static const char* getfuncname(Closure* f);
@@ -96,7 +95,7 @@ static int getlinedefined(Proto* p)
 {
     if (FFlag::LuauBytecodeV2Force)
         return p->linedefined;
-    else if (FFlag::LuauBytecodeV2Read && p->linedefined >= 0)
+    else if (p->linedefined >= 0)
         return p->linedefined;
     else
         return luaG_getline(p, 0);
@@ -168,6 +167,11 @@ static int auxgetinfo(lua_State* L, const char* what, lua_Debug* ar, Closure* f,
         }
     }
     return status;
+}
+
+int lua_stackdepth(lua_State* L)
+{
+    return int(L->ci - L->base_ci);
 }
 
 int lua_getinfo(lua_State* L, int level, const char* what, lua_Debug* ar)
@@ -421,7 +425,7 @@ static void getcoverage(Proto* p, int depth, int* buffer, size_t size, void* con
     }
 
     const char* debugname = p->debugname ? getstr(p->debugname) : NULL;
-    int linedefined = luaG_getline(p, 0);
+    int linedefined = getlinedefined(p);
 
     callback(context, debugname, linedefined, depth, buffer, size);
 

@@ -5,7 +5,6 @@
 #include "Luau/Error.h"
 #include "Luau/Module.h"
 #include "Luau/Symbol.h"
-#include "Luau/Parser.h"
 #include "Luau/Substitution.h"
 #include "Luau/TxnLog.h"
 #include "Luau/TypePack.h"
@@ -32,11 +31,21 @@ bool doesCallError(const AstExprCall* call);
 bool hasBreak(AstStat* node);
 const AstStat* getFallthrough(const AstStat* node);
 
+struct UnifierOptions;
 struct Unifier;
 
 // A substitution which replaces generic types in a given set by free types.
 struct ReplaceGenerics : Substitution
 {
+    ReplaceGenerics(
+        const TxnLog* log, TypeArena* arena, TypeLevel level, const std::vector<TypeId>& generics, const std::vector<TypePackId>& genericPacks)
+        : Substitution(log, arena)
+        , level(level)
+        , generics(generics)
+        , genericPacks(genericPacks)
+    {
+    }
+
     TypeLevel level;
     std::vector<TypeId> generics;
     std::vector<TypePackId> genericPacks;
@@ -50,21 +59,14 @@ struct ReplaceGenerics : Substitution
 // A substitution which replaces generic functions by monomorphic functions
 struct Instantiation : Substitution
 {
-    TypeLevel level;
-    ReplaceGenerics replaceGenerics;
-    bool ignoreChildren(TypeId ty) override;
-    bool isDirty(TypeId ty) override;
-    bool isDirty(TypePackId tp) override;
-    TypeId clean(TypeId ty) override;
-    TypePackId clean(TypePackId tp) override;
-};
+    Instantiation(const TxnLog* log, TypeArena* arena, TypeLevel level)
+        : Substitution(log, arena)
+        , level(level)
+    {
+    }
 
-// A substitution which replaces free types by generic types.
-struct Quantification : Substitution
-{
     TypeLevel level;
-    std::vector<TypeId> generics;
-    std::vector<TypePackId> genericPacks;
+    bool ignoreChildren(TypeId ty) override;
     bool isDirty(TypeId ty) override;
     bool isDirty(TypePackId tp) override;
     TypeId clean(TypeId ty) override;
@@ -74,6 +76,13 @@ struct Quantification : Substitution
 // A substitution which replaces free types by any
 struct Anyification : Substitution
 {
+    Anyification(TypeArena* arena, TypeId anyType, TypePackId anyTypePack)
+        : Substitution(TxnLog::empty(), arena)
+        , anyType(anyType)
+        , anyTypePack(anyTypePack)
+    {
+    }
+
     TypeId anyType;
     TypePackId anyTypePack;
     bool isDirty(TypeId ty) override;
@@ -85,6 +94,13 @@ struct Anyification : Substitution
 // A substitution which replaces the type parameters of a type function by arguments
 struct ApplyTypeFunction : Substitution
 {
+    ApplyTypeFunction(TypeArena* arena, TypeLevel level)
+        : Substitution(TxnLog::empty(), arena)
+        , level(level)
+        , encounteredForwardedType(false)
+    {
+    }
+
     TypeLevel level;
     bool encounteredForwardedType;
     std::unordered_map<TypeId, TypeId> typeArguments;
@@ -101,6 +117,11 @@ struct GenericTypeDefinitions
 {
     std::vector<GenericTypeDefinition> genericTypes;
     std::vector<GenericTypePackDefinition> genericPacks;
+};
+
+struct HashBoolNamePair
+{
+    size_t operator()(const std::pair<bool, Name>& pair) const;
 };
 
 // All TypeVars are retained via Environment::typeVars.  All TypeIds
@@ -207,6 +228,7 @@ struct TypeChecker
      * Treat any failures as type errors in the final typecheck report.
      */
     bool unify(TypeId subTy, TypeId superTy, const Location& location);
+    bool unify(TypeId subTy, TypeId superTy, const Location& location, const UnifierOptions& options);
     bool unify(TypePackId subTy, TypePackId superTy, const Location& location, CountMismatch::Context ctx = CountMismatch::Context::Arg);
 
     /** Attempt to unify the types.
@@ -262,7 +284,7 @@ public:
      *     {method: ({method: (<CYCLE>) -> a}) -> a}
      *
      */
-    TypeId instantiate(const ScopePtr& scope, TypeId ty, Location location);
+    TypeId instantiate(const ScopePtr& scope, TypeId ty, Location location, const TxnLog* log = TxnLog::empty());
 
     // Replace any free types or type packs by `any`.
     // This is used when exporting types from modules, to make sure free types don't leak.
@@ -308,9 +330,15 @@ private:
     TypeId singletonType(bool value);
     TypeId singletonType(std::string value);
 
+    TypeIdPredicate mkTruthyPredicate(bool sense);
+
     // Returns nullopt if the predicate filters down the TypeId to 0 options.
     std::optional<TypeId> filterMap(TypeId type, TypeIdPredicate predicate);
 
+public:
+    std::optional<TypeId> pickTypesFromSense(TypeId type, bool sense);
+
+private:
     TypeId unionOfTypes(TypeId a, TypeId b, const Location& location, bool unifyFreeTypes = true);
 
     // ex
@@ -340,7 +368,7 @@ private:
 
     // Note: `scope` must be a fresh scope.
     GenericTypeDefinitions createGenericTypes(const ScopePtr& scope, std::optional<TypeLevel> levelOpt, const AstNode& node,
-        const AstArray<AstGenericType>& genericNames, const AstArray<AstGenericTypePack>& genericPackNames);
+        const AstArray<AstGenericType>& genericNames, const AstArray<AstGenericTypePack>& genericPackNames, bool useCache = false);
 
 public:
     ErrorVec resolve(const PredicateVec& predicates, const ScopePtr& scope, bool sense);
@@ -349,7 +377,6 @@ private:
     void refineLValue(const LValue& lvalue, RefinementMap& refis, const ScopePtr& scope, TypeIdPredicate predicate);
 
     std::optional<TypeId> resolveLValue(const ScopePtr& scope, const LValue& lvalue);
-    std::optional<TypeId> DEPRECATED_resolveLValue(const ScopePtr& scope, const LValue& lvalue);
     std::optional<TypeId> resolveLValue(const RefinementMap& refis, const ScopePtr& scope, const LValue& lvalue);
 
     void resolve(const PredicateVec& predicates, ErrorVec& errVec, RefinementMap& refis, const ScopePtr& scope, bool sense, bool fromOr = false);
@@ -381,11 +408,6 @@ public:
     ModulePtr currentModule;
     ModuleName currentModuleName;
 
-    Instantiation instantiation;
-    Quantification quantification;
-    Anyification anyification;
-    ApplyTypeFunction applyTypeFunction;
-
     std::function<void(const ModuleName&, const ScopePtr&)> prepareModuleScope;
     InternalErrorReporter* iceHandler;
 
@@ -405,6 +427,12 @@ public:
 private:
     int checkRecursionCount = 0;
     int recursionCount = 0;
+
+    /**
+     * We use this to avoid doing second-pass analysis of type aliases that are duplicates. We record a pair
+     * (exported, name) to properly deal with the case where the two duplicates do not have the same export status.
+     */
+    DenseHashSet<std::pair<bool, Name>, HashBoolNamePair> duplicateTypeAliases;
 };
 
 // Unit test hook

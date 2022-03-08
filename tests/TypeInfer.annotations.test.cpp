@@ -1,6 +1,5 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/BuiltinDefinitions.h"
-#include "Luau/Parser.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/TypeVar.h"
 
@@ -209,8 +208,6 @@ TEST_CASE_FIXTURE(Fixture, "as_expr_does_not_propagate_type_info")
 
 TEST_CASE_FIXTURE(Fixture, "as_expr_is_bidirectional")
 {
-    ScopedFastFlag sff{"LuauBidirectionalAsExpr", true};
-
     CheckResult result = check(R"(
         local a = 55 :: number?
         local b = a :: number
@@ -224,7 +221,6 @@ TEST_CASE_FIXTURE(Fixture, "as_expr_is_bidirectional")
 
 TEST_CASE_FIXTURE(Fixture, "as_expr_warns_on_unrelated_cast")
 {
-    ScopedFastFlag sff{"LuauBidirectionalAsExpr", true};
     ScopedFastFlag sff2{"LuauErrorRecoveryType", true};
 
     CheckResult result = check(R"(

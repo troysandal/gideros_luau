@@ -1,13 +1,10 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
-#include "Luau/Parser.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/BuiltinDefinitions.h"
 
 #include "Fixture.h"
 
 #include "doctest.h"
-
-LUAU_FASTFLAG(LuauFixTonumberReturnType)
 
 using namespace Luau;
 
@@ -850,11 +847,8 @@ TEST_CASE_FIXTURE(Fixture, "tonumber_returns_optional_number_type")
         local b: number = tonumber('asdf')
     )");
 
-    if (FFlag::LuauFixTonumberReturnType)
-    {
-        LUAU_REQUIRE_ERROR_COUNT(1, result);
-        CHECK_EQ("Type 'number?' could not be converted into 'number'", toString(result.errors[0]));
-    }
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ("Type 'number?' could not be converted into 'number'", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "tonumber_returns_optional_number_type2")
@@ -887,6 +881,84 @@ TEST_CASE_FIXTURE(Fixture, "dont_add_definitions_to_persistent_types")
     REQUIRE(gType);
     REQUIRE(!gType->persistent);
     REQUIRE(gtv->definition);
+}
+
+TEST_CASE_FIXTURE(Fixture, "assert_removes_falsy_types")
+{
+    ScopedFastFlag sff[]{
+        {"LuauAssertStripsFalsyTypes", true},
+        {"LuauDiscriminableUnions2", true},
+    };
+
+    CheckResult result = check(R"(
+        local function f(x: (number | boolean)?)
+            return assert(x)
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ("((boolean | number)?) -> number | true", toString(requireType("f")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "assert_removes_falsy_types_even_from_type_pack_tail_but_only_for_the_first_type")
+{
+    ScopedFastFlag sff[]{
+        {"LuauAssertStripsFalsyTypes", true},
+        {"LuauDiscriminableUnions2", true},
+    };
+
+    CheckResult result = check(R"(
+        local function f(...: number?)
+            return assert(...)
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ("(...number?) -> (number, ...number?)", toString(requireType("f")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "assert_returns_false_and_string_iff_it_knows_the_first_argument_cannot_be_truthy")
+{
+    ScopedFastFlag sff[]{
+        {"LuauAssertStripsFalsyTypes", true},
+        {"LuauDiscriminableUnions2", true},
+    };
+
+    CheckResult result = check(R"(
+        local function f(x: nil)
+            return assert(x, "hmm")
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ("(nil) -> nil", toString(requireType("f")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "table_freeze_is_generic")
+{
+    CheckResult result = check(R"(
+        local t1: {a: number} = {a = 42}
+        local t2: {b: string} = {b = "hello"}
+        local t3: {boolean} = {false, true}
+
+        local tf1 = table.freeze(t1)
+        local tf2 = table.freeze(t2)
+        local tf3 = table.freeze(t3)
+
+        local a = tf1.a
+        local b = tf2.b
+        local c = tf3[2]
+
+        local d = tf1.b
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ("Key 'b' not found in table '{| a: number |}'", toString(result.errors[0]));
+
+    CHECK_EQ("number", toString(requireType("a")));
+    CHECK_EQ("string", toString(requireType("b")));
+    CHECK_EQ("boolean", toString(requireType("c")));
+    CHECK_EQ("*unknown*", toString(requireType("d")));
 }
 
 TEST_SUITE_END();

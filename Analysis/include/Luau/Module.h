@@ -6,14 +6,12 @@
 #include "Luau/TypedAllocator.h"
 #include "Luau/ParseOptions.h"
 #include "Luau/Error.h"
-#include "Luau/Parser.h"
+#include "Luau/ParseResult.h"
 
 #include <memory>
 #include <vector>
 #include <unordered_map>
 #include <optional>
-
-LUAU_FASTFLAG(LuauPrepopulateUnionOptionsBeforeAllocation)
 
 namespace Luau
 {
@@ -37,8 +35,8 @@ struct SourceModule
 
     AstStatBlock* root = nullptr;
     std::optional<Mode> mode;
-    uint64_t ignoreLints = 0;
 
+    std::vector<HotComment> hotcomments;
     std::vector<Comment> commentLocations;
 
     SourceModule()
@@ -60,11 +58,8 @@ struct TypeArena
     template<typename T>
     TypeId addType(T tv)
     {
-        if (FFlag::LuauPrepopulateUnionOptionsBeforeAllocation)
-        {
-            if constexpr (std::is_same_v<T, UnionTypeVar>)
-                LUAU_ASSERT(tv.options.size() >= 2);
-        }
+        if constexpr (std::is_same_v<T, UnionTypeVar>)
+            LUAU_ASSERT(tv.options.size() >= 2);
 
         return addTV(TypeVar(std::move(tv)));
     }

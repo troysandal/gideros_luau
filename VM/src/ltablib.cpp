@@ -2,12 +2,15 @@
 // This code is based on Lua 5.x implementation licensed under MIT License; see lua_LICENSE.txt for details
 #include "lualib.h"
 
+#include "lapi.h"
 #include "lstate.h"
 #include "ltable.h"
 #include "lstring.h"
 #include "lgc.h"
 #include "ldebug.h"
 #include "lvm.h"
+
+LUAU_FASTFLAGVARIABLE(LuauTableClone, false)
 
 static int foreachi(lua_State* L)
 {
@@ -524,6 +527,7 @@ static void deepclone(lua_State *L) //Clone table at -1
 static int tclone(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
+    luaL_argcheck(L, !luaL_getmetafield(L, 1, "__metatable"), 1, "table has a protected metatable");
     int deep=0;
     if (lua_type(L,2)==LUA_TTABLE) {
     	deep=lua_toboolean(L,3);
@@ -531,6 +535,16 @@ static int tclone(lua_State* L)
     }
     else {
     	deep=lua_toboolean(L,2);
+        if (FFlag::LuauTableClone&&(!deep)) {
+        	//Fast Path, use luau infra
+            Table* tt = luaH_clone(L, hvalue(L->base));
+
+            TValue v;
+            sethvalue(L, &v, tt);
+            luaA_pushobject(L, &v);
+
+            return 1;
+        }
     	lua_newtable(L);
     }
     lua_pushnil(L); //T,K

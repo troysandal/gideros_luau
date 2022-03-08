@@ -2,7 +2,6 @@
 
 #include "Luau/AstQuery.h"
 #include "Luau/BuiltinDefinitions.h"
-#include "Luau/Parser.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/TypeVar.h"
@@ -2429,21 +2428,6 @@ TEST_CASE_FIXTURE(Fixture, "should_be_able_to_infer_this_without_stack_overflowi
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
-TEST_CASE_FIXTURE(Fixture, "x_or_y_forces_both_x_and_y_to_be_of_same_type_if_either_is_free")
-{
-    CheckResult result = check(R"(
-        local function f(x, y) return x or y end
-
-        local x = f(1, 2)
-        local y = f(3, "foo")
-    )");
-
-    LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ(*requireType("x"), *typeChecker.numberType);
-
-    CHECK_EQ(result.errors[0], (TypeError{Location{{4, 23}, {4, 28}}, TypeMismatch{typeChecker.numberType, typeChecker.stringType}}));
-}
-
 TEST_CASE_FIXTURE(Fixture, "inferring_hundreds_of_self_calls_should_not_suffocate_memory")
 {
     CheckResult result = check(R"(
@@ -4060,6 +4044,49 @@ type t0<t32> = any
     CHECK(ttv->instantiatedTypeParams.empty());
 }
 
+TEST_CASE_FIXTURE(Fixture, "instantiate_table_cloning_2")
+{
+    ScopedFastFlag sff{"LuauOnlyMutateInstantiatedTables", true};
+
+    CheckResult result = check(R"(
+type X<T> = T
+type K = X<typeof(math)>
+)");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    std::optional<TypeId> ty = requireType("math");
+    REQUIRE(ty);
+
+    const TableTypeVar* ttv = get<TableTypeVar>(*ty);
+    REQUIRE(ttv);
+    CHECK(ttv->instantiatedTypeParams.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "instantiate_table_cloning_3")
+{
+    ScopedFastFlag sff{"LuauOnlyMutateInstantiatedTables", true};
+
+    CheckResult result = check(R"(
+type X<T> = T
+local a = {}
+a.x = 4
+local b: X<typeof(a)>
+a.y = 5
+local c: X<typeof(a)>
+c = b
+)");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    std::optional<TypeId> ty = requireType("a");
+    REQUIRE(ty);
+
+    const TableTypeVar* ttv = get<TableTypeVar>(*ty);
+    REQUIRE(ttv);
+    CHECK(ttv->instantiatedTypeParams.empty());
+}
+
 TEST_CASE_FIXTURE(Fixture, "bound_free_table_export_is_ok")
 {
     CheckResult result = check(R"(
@@ -4079,6 +4106,21 @@ end
 return m
 )");
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "self_recursive_instantiated_param")
+{
+    ScopedFastFlag sff{"LuauOnlyMutateInstantiatedTables", true};
+
+    // Mutability in type function application right now can create strange recursive types
+    CheckResult result = check(R"(
+type Table = { a: number }
+type Self<T> = T
+local a: Self<Table>
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ(toString(requireType("a")), "Table");
 }
 
 TEST_CASE_FIXTURE(Fixture, "no_persistent_typelevel_change")
@@ -4509,7 +4551,7 @@ f(function(x) print(x) end)
 }
 
 TEST_CASE_FIXTURE(Fixture, "infer_generic_function_function_argument")
-{        
+{
     ScopedFastFlag sff{"LuauUnsealedTableLiteral", true};
 
     CheckResult result = check(R"(
@@ -4669,8 +4711,6 @@ a = setmetatable(a, { __call = function(x) end })
 
 TEST_CASE_FIXTURE(Fixture, "infer_through_group_expr")
 {
-    ScopedFastFlag luauGroupExpectedType{"LuauGroupExpectedType", true};
-
     CheckResult result = check(R"(
 local function f(a: (number, number) -> number) return a(1, 3) end
 f(((function(a, b) return a + b end)))
@@ -4750,21 +4790,14 @@ local a = if false then "a" elseif false then "b" else "c"
 
 TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions_type_union")
 {
-    ScopedFastFlag sff3{"LuauIfElseBranchTypeUnion", true};
+    CheckResult result = check(R"(local a: number? = if true then 42 else nil)");
 
-    {
-        CheckResult result = check(R"(local a: number? = if true then 42 else nil)");
-
-        LUAU_REQUIRE_NO_ERRORS(result);
-        CHECK_EQ(toString(requireType("a"), {true}), "number?");
-    }
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ(toString(requireType("a"), {true}), "number?");
 }
 
 TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions_expected_type_1")
 {
-    ScopedFastFlag luauIfElseExpectedType2{"LuauIfElseExpectedType2", true};
-    ScopedFastFlag luauIfElseBranchTypeUnion{"LuauIfElseBranchTypeUnion", true};
-
     CheckResult result = check(R"(
 type X = {number | string}
 local a: X = if true then {"1", 2, 3} else {4, 5, 6}
@@ -4776,9 +4809,6 @@ local a: X = if true then {"1", 2, 3} else {4, 5, 6}
 
 TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions_expected_type_2")
 {
-    ScopedFastFlag luauIfElseExpectedType2{"LuauIfElseExpectedType2", true};
-    ScopedFastFlag luauIfElseBranchTypeUnion{ "LuauIfElseBranchTypeUnion", true };
-
     CheckResult result = check(R"(
 local a: number? = if true then 1 else nil
 )");
@@ -4788,8 +4818,6 @@ local a: number? = if true then 1 else nil
 
 TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions_expected_type_3")
 {
-    ScopedFastFlag luauIfElseExpectedType2{"LuauIfElseExpectedType2", true};
-
     CheckResult result = check(R"(
 local function times<T>(n: any, f: () -> T)
     local result: {T} = {}
@@ -5012,16 +5040,14 @@ local b: B = a
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ(
-        toString(result.errors[0]), R"(Type '(number, number) -> (number, string)' could not be converted into '(number, number) -> (number, boolean)'
+    CHECK_EQ(toString(result.errors[0]),
+        R"(Type '(number, number) -> (number, string)' could not be converted into '(number, number) -> (number, boolean)'
 caused by:
   Return #2 type is not compatible. Type 'string' could not be converted into 'boolean')");
 }
 
 TEST_CASE_FIXTURE(Fixture, "prop_access_on_any_with_other_options")
 {
-    ScopedFastFlag sff{"LuauLValueAsKey", true};
-
     CheckResult result = check(R"(
         local function f(thing: any | string)
             local foo = thing.SomeRandomKey
@@ -5075,8 +5101,6 @@ end
 
 TEST_CASE_FIXTURE(Fixture, "recursive_metatable_crash")
 {
-    ScopedFastFlag luauMetatableAreEqualRecursion{"LuauMetatableAreEqualRecursion", true};
-
     CheckResult result = check(R"(
 local function getIt()
     local y
@@ -5093,8 +5117,6 @@ local c = a or b
 
 TEST_CASE_FIXTURE(Fixture, "bound_typepack_promote")
 {
-    ScopedFastFlag luauCommittingTxnLogFreeTpPromote{"LuauCommittingTxnLogFreeTpPromote", true};
-
     // No assertions should trigger
     check(R"(
 local function p()
@@ -5118,6 +5140,219 @@ function on()
     h(t)
 end
     )");
+}
+
+TEST_CASE_FIXTURE(Fixture, "cli_50041_committing_txnlog_in_apollo_client_error")
+{
+    ScopedFastFlag committingTxnLog{"LuauUseCommittingTxnLog", true};
+    ScopedFastFlag subtypingVariance{"LuauTableSubtypingVariance2", true};
+
+    CheckResult result = check(R"(
+        --!strict
+        --!nolint
+
+        type FieldSpecifier = {
+            fieldName: string,
+        }
+
+        type ReadFieldOptions = FieldSpecifier & { from: number? }
+
+        type Policies = {
+            getStoreFieldName: (self: Policies, fieldSpec: FieldSpecifier) -> string,
+        }
+
+        local Policies = {}
+
+        local function foo(p: Policies)
+        end
+
+        function Policies:getStoreFieldName(specifier: FieldSpecifier): string
+            return ""
+        end
+
+        function Policies:readField(options: ReadFieldOptions)
+            local _ = self:getStoreFieldName(options)
+            --[[
+                Type error:
+                TypeError { "MainModule", Location { { line = 25, col = 16 }, { line = 25, col = 20 } }, TypeMismatch { Policies, {- getStoreFieldName: (tp1) -> (a, b...) -} } }
+            ]]
+            foo(self)
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "do_not_modify_imported_types")
+{
+    fileResolver.source["game/A"] = R"(
+export type Type = { unrelated: boolean }
+return {}
+    )";
+
+    fileResolver.source["game/B"] = R"(
+local types = require(game.A)
+type Type = types.Type
+local x: Type = {}
+function x:Destroy(): () end
+    )";
+
+    CheckResult result = frontend.check("game/B");
+    LUAU_REQUIRE_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "do_not_modify_imported_types_2")
+{
+    ScopedFastFlag immutableTypes{"LuauImmutableTypes", true};
+
+    fileResolver.source["game/A"] = R"(
+export type Type = { x: { a: number } }
+return {}
+    )";
+
+    fileResolver.source["game/B"] = R"(
+local types = require(game.A)
+type Type = types.Type
+local x: Type = { x = { a = 2 } }
+type Rename = typeof(x.x)
+    )";
+
+    CheckResult result = frontend.check("game/B");
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "do_not_modify_imported_types_3")
+{
+    ScopedFastFlag immutableTypes{"LuauImmutableTypes", true};
+
+    fileResolver.source["game/A"] = R"(
+local y = setmetatable({}, {})
+export type Type = { x: typeof(y) }
+return { x = y }
+    )";
+
+    fileResolver.source["game/B"] = R"(
+local types = require(game.A)
+type Type = types.Type
+local x: Type = types
+type Rename = typeof(x.x)
+    )";
+
+    CheckResult result = frontend.check("game/B");
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "indexing_on_string_singletons")
+{
+    ScopedFastFlag sff[]{
+        {"LuauDiscriminableUnions2", true},
+        {"LuauSingletonTypes", true},
+    };
+
+    CheckResult result = check(R"(
+        local a: string = "hi"
+        if a == "hi" then
+            local x = a:byte()
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ(R"("hi")", toString(requireTypeAtPosition({3, 22})));
+}
+
+TEST_CASE_FIXTURE(Fixture, "indexing_on_union_of_string_singletons")
+{
+    ScopedFastFlag sff[]{
+        {"LuauDiscriminableUnions2", true},
+        {"LuauSingletonTypes", true},
+    };
+
+    CheckResult result = check(R"(
+        local a: string = "hi"
+        if a == "hi" or a == "bye" then
+            local x = a:byte()
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ(R"("bye" | "hi")", toString(requireTypeAtPosition({3, 22})));
+}
+
+TEST_CASE_FIXTURE(Fixture, "taking_the_length_of_string_singleton")
+{
+    ScopedFastFlag sff[]{
+        {"LuauDiscriminableUnions2", true},
+        {"LuauSingletonTypes", true},
+    };
+
+    CheckResult result = check(R"(
+        local a: string = "hi"
+        if a == "hi" then
+            local x = #a
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ(R"("hi")", toString(requireTypeAtPosition({3, 23})));
+}
+
+TEST_CASE_FIXTURE(Fixture, "taking_the_length_of_union_of_string_singleton")
+{
+    ScopedFastFlag sff[]{
+        {"LuauDiscriminableUnions2", true},
+        {"LuauSingletonTypes", true},
+    };
+
+    CheckResult result = check(R"(
+        local a: string = "hi"
+        if a == "hi" or a == "bye" then
+            local x = #a
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ(R"("bye" | "hi")", toString(requireTypeAtPosition({3, 23})));
+}
+
+/*
+ * When we add new properties to an unsealed table, we should do a level check and promote the property type to be at
+ * the level of the table.
+ */
+TEST_CASE_FIXTURE(Fixture, "inferred_properties_of_a_table_should_start_with_the_same_TypeLevel_of_that_table")
+{
+    CheckResult result = check(R"(
+        --!strict
+        local T = {}
+
+        local function f(prop)
+            T[1] = {
+                prop = prop,
+            }
+        end
+
+        local function g()
+            local l = T[1].prop
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "global_singleton_types_are_sealed")
+{
+    CheckResult result = check(R"(
+local function f(x: string)
+    local p = x:split('a')
+    p = table.pack(table.unpack(p, 1, #p - 1))
+    return p
+end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
 }
 
 TEST_SUITE_END();

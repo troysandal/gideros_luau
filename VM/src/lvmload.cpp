@@ -14,7 +14,6 @@
 #include <string.h>
 #include <string>
 
-LUAU_FASTFLAGVARIABLE(LuauBytecodeV2Read, true)
 LUAU_FASTFLAGVARIABLE(LuauBytecodeV2Force, false)
 
 // TODO: RAII deallocation doesn't work for longjmp builds if a memory error happens
@@ -118,12 +117,12 @@ static void resolveImportSafe(lua_State* L, Table* env, TValue* k, uint32_t id)
             // note: we call getimport with nil propagation which means that accesses to table chains like A.B.C will resolve in nil
             // this is technically not necessary but it reduces the number of exceptions when loading scripts that rely on getfenv/setfenv for global
             // injection
-            luaV_getimport(L, hvalue(gt(L)), self->k, self->id, /* propagatenil= */ true);
+            luaV_getimport(L, L->gt, self->k, self->id, /* propagatenil= */ true);
         }
     };
 
     ResolveImport ri = {k, id};
-    if (hvalue(gt(L))->safeenv)
+    if (L->gt->safeenv)
     {
         // luaD_pcall will make sure that if any C/Lua calls during import resolution fail, the thread state is restored back
         int oldTop = lua_gettop(L);
@@ -153,13 +152,12 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 
         uint8_t version = read<uint8_t>(data, size, offset);
 
-		// 0 means the rest of the bytecode is the error message
-		if (version == 0)
+		if (FFlag::LuauBytecodeV2Force ? (version != LBC_VERSION_FUTURE) : (version != LBC_VERSION && version != LBC_VERSION_FUTURE))
 		{
 			char chunkid[LUA_IDSIZE];
 			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
-			lua_pop(L,1);
-			lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
+			lua_pushfstring(L, "%s: bytecode version mismatch (expected %d, got %d)", chunkid,
+				FFlag::LuauBytecodeV2Force ? LBC_VERSION_FUTURE : LBC_VERSION, version);
 			return 1;
 		}
 
@@ -177,6 +175,9 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
         offset += chunkNameLength;
         if (chunkName.size()>0)
         	chunkname=chunkName.c_str();
+
+        // env is 0 for current environment and a stack index otherwise
+        Table* envt = (env == 0) ? L->gt : hvalue(luaA_toobject(L, env));
 
 		// pause GC for the duration of deserialization - some objects we're creating aren't rooted
 		// TODO: if an allocation error happens mid-load, we do not unpause GC!
@@ -376,7 +377,10 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
         uint32_t mainid = readVarInt(data, size, offset);
         Proto* main = protos[mainid];
 
-        luaC_checkthreadsleep(L);
+        if (FFlag::LuauBytecodeV2Force || version == LBC_VERSION_FUTURE)
+            p->linedefined = readVarInt(data, size, offset);
+        else
+            p->linedefined = -1;
 
         Closure* cl = luaF_newLclosure(L, 0, envt, main);
         setclvalue(L, L->top, cl);

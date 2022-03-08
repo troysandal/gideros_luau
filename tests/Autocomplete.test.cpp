@@ -1,7 +1,6 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/Autocomplete.h"
 #include "Luau/BuiltinDefinitions.h"
-#include "Luau/Parser.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/TypeVar.h"
 #include "Luau/VisitTypeVar.h"
@@ -16,6 +15,7 @@
 LUAU_FASTFLAG(LuauTraceTypesInNonstrictMode2)
 LUAU_FASTFLAG(LuauSetMetatableDoesNotTimeTravel)
 LUAU_FASTFLAG(LuauUseCommittingTxnLog)
+LUAU_FASTFLAG(LuauTableCloneType)
 
 using namespace Luau;
 
@@ -263,7 +263,7 @@ TEST_CASE_FIXTURE(ACFixture, "get_member_completions")
 
     auto ac = autocomplete('1');
 
-    CHECK_EQ(16, ac.entryMap.size());
+    CHECK_EQ(FFlag::LuauTableCloneType ? 17 : 16, ac.entryMap.size());
     CHECK(ac.entryMap.count("find"));
     CHECK(ac.entryMap.count("pack"));
     CHECK(!ac.entryMap.count("math"));
@@ -2236,7 +2236,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocompleteSource")
 
     auto ac = autocompleteSource(frontend, source, Position{1, 24}, nullCallback).result;
 
-    CHECK_EQ(16, ac.entryMap.size());
+    CHECK_EQ(FFlag::LuauTableCloneType ? 17 : 16, ac.entryMap.size());
     CHECK(ac.entryMap.count("find"));
     CHECK(ac.entryMap.count("pack"));
     CHECK(!ac.entryMap.count("math"));
@@ -2536,7 +2536,7 @@ TEST_CASE("autocomplete_documentation_symbols")
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_ifelse_expressions")
 {
-        check(R"(
+    check(R"(
 local temp = false
 local even = true;
 local a = true
@@ -2551,63 +2551,84 @@ a = if temp then even elseif true then temp e@8
 a = if temp then even elseif true then temp else e@9
         )");
 
-        auto ac = autocomplete('1');
-        CHECK(ac.entryMap.count("temp"));
-        CHECK(ac.entryMap.count("true"));
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    auto ac = autocomplete('1');
+    CHECK(ac.entryMap.count("temp"));
+    CHECK(ac.entryMap.count("true"));
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
 
-        ac = autocomplete('2');
-        CHECK(ac.entryMap.count("temp") == 0);
-        CHECK(ac.entryMap.count("true") == 0);
-        CHECK(ac.entryMap.count("then"));
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    ac = autocomplete('2');
+    CHECK(ac.entryMap.count("temp") == 0);
+    CHECK(ac.entryMap.count("true") == 0);
+    CHECK(ac.entryMap.count("then"));
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
 
-        ac = autocomplete('3');
-        CHECK(ac.entryMap.count("even"));
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    ac = autocomplete('3');
+    CHECK(ac.entryMap.count("even"));
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
 
-        ac = autocomplete('4');
-        CHECK(ac.entryMap.count("even") == 0);
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else"));
-        CHECK(ac.entryMap.count("elseif"));
+    ac = autocomplete('4');
+    CHECK(ac.entryMap.count("even") == 0);
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else"));
+    CHECK(ac.entryMap.count("elseif"));
 
-        ac = autocomplete('5');
-        CHECK(ac.entryMap.count("temp"));
-        CHECK(ac.entryMap.count("true"));
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    ac = autocomplete('5');
+    CHECK(ac.entryMap.count("temp"));
+    CHECK(ac.entryMap.count("true"));
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
 
-        ac = autocomplete('6');
-        CHECK(ac.entryMap.count("temp") == 0);
-        CHECK(ac.entryMap.count("true") == 0);
-        CHECK(ac.entryMap.count("then"));
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    ac = autocomplete('6');
+    CHECK(ac.entryMap.count("temp") == 0);
+    CHECK(ac.entryMap.count("true") == 0);
+    CHECK(ac.entryMap.count("then"));
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
 
-        ac = autocomplete('7');
-        CHECK(ac.entryMap.count("temp"));
-        CHECK(ac.entryMap.count("true"));
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    ac = autocomplete('7');
+    CHECK(ac.entryMap.count("temp"));
+    CHECK(ac.entryMap.count("true"));
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
 
-        ac = autocomplete('8');
-        CHECK(ac.entryMap.count("even") == 0);
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else"));
-        CHECK(ac.entryMap.count("elseif"));
+    ac = autocomplete('8');
+    CHECK(ac.entryMap.count("even") == 0);
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else"));
+    CHECK(ac.entryMap.count("elseif"));
 
-        ac = autocomplete('9');
-        CHECK(ac.entryMap.count("then") == 0);
-        CHECK(ac.entryMap.count("else") == 0);
-        CHECK(ac.entryMap.count("elseif") == 0);
+    ac = autocomplete('9');
+    CHECK(ac.entryMap.count("then") == 0);
+    CHECK(ac.entryMap.count("else") == 0);
+    CHECK(ac.entryMap.count("elseif") == 0);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_else_regression")
+{
+    ScopedFastFlag FFlagLuauIfElseExprFixCompletionIssue("LuauIfElseExprFixCompletionIssue", true);
+    check(R"(
+local abcdef = 0;
+local temp = false
+local even = true;
+local a
+a = if temp then even else@1
+a = if temp then even else @2
+a = if temp then even else abc@3
+        )");
+
+    auto ac = autocomplete('1');
+    CHECK(ac.entryMap.count("else") == 0);
+    ac = autocomplete('2');
+    CHECK(ac.entryMap.count("else") == 0);
+    ac = autocomplete('3');
+    CHECK(ac.entryMap.count("abcdef"));
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_explicit_type_pack")
@@ -2675,8 +2696,6 @@ local r4 = t:bar1(@4)
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_default_type_parameters")
 {
-    ScopedFastFlag luauParseTypeAliasDefaults{"LuauParseTypeAliasDefaults", true};
-
     check(R"(
 type A<T = @1> = () -> T
     )");
@@ -2689,8 +2708,6 @@ type A<T = @1> = () -> T
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_default_type_pack_parameters")
 {
-    ScopedFastFlag luauParseTypeAliasDefaults{"LuauParseTypeAliasDefaults", true};
-
     check(R"(
 type A<T... = ...@1> = () -> T
     )");
@@ -2732,7 +2749,6 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_on_string_singletons")
     ScopedFastFlag sffs[] = {
         {"LuauParseSingletonTypes", true},
         {"LuauSingletonTypes", true},
-        {"LuauRefactorTypeVarQuestions", true},
     };
 
     check(R"(
@@ -2749,7 +2765,6 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_on_string_singletons")
 TEST_CASE_FIXTURE(ACFixture, "function_in_assignment_has_parentheses_2")
 {
     ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-    ScopedFastFlag preferToCallFunctionsForIntersects("PreferToCallFunctionsForIntersects", true);
 
     check(R"(
 local bar: ((number) -> number) & (number, number) -> number)

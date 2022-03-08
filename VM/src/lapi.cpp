@@ -14,7 +14,7 @@
 
 #include <string.h>
 
-LUAU_FASTFLAGVARIABLE(LuauGcForwardMetatableBarrier, false)
+LUAU_FASTFLAG(LuauGcAdditionalStats)
 
 const char* lua_ident = "$Lua: Lua 5.1.4 Copyright (C) 1994-2008 Lua.org, PUC-Rio $\n"
                         "$Authors: R. Ierusalimschy, L. H. de Figueiredo & W. Celes $\n"
@@ -36,12 +36,9 @@ const char* luau_ident = "$Luau: Copyright (C) 2019-2022 Roblox Corporation $\n"
 static Table* getcurrenv(lua_State* L)
 {
     if (L->ci == L->base_ci)  /* no enclosing function? */
-        return hvalue(gt(L)); /* use global table as environment */
+        return L->gt;         /* use global table as environment */
     else
-    {
-        Closure* func = curr_func(L);
-        return func->env;
-    }
+        return curr_func(L)->env;
 }
 
 static LUAU_NOINLINE TValue* pseudo2addr(lua_State* L, int idx)
@@ -53,11 +50,14 @@ static LUAU_NOINLINE TValue* pseudo2addr(lua_State* L, int idx)
         return registry(L);
     case LUA_ENVIRONINDEX:
     {
-        sethvalue(L, &L->env, getcurrenv(L));
-        return &L->env;
+        sethvalue(L, &L->global->pseudotemp, getcurrenv(L));
+        return &L->global->pseudotemp;
     }
     case LUA_GLOBALSINDEX:
-        return gt(L);
+    {
+        sethvalue(L, &L->global->pseudotemp, L->gt);
+        return &L->global->pseudotemp;
+    }
     default:
     {
         Closure* func = curr_func(L);
@@ -236,6 +236,11 @@ void lua_replace(lua_State* L, int idx)
         api_check(L, ttistable(L->top - 1));
         func->env = hvalue(L->top - 1);
         luaC_barrier(L, func, L->top - 1);
+    }
+    else if (idx == LUA_GLOBALSINDEX)
+    {
+        api_check(L, ttistable(L->top - 1));
+        L->gt = hvalue(L->top - 1);
     }
     else
     {
@@ -664,16 +669,16 @@ int lua_pushthread(lua_State* L)
 ** get functions (Lua -> stack)
 */
 
-void lua_gettable(lua_State* L, int idx)
+int lua_gettable(lua_State* L, int idx)
 {
     luaC_checkthreadsleep(L);
     StkId t = index2addr(L, idx);
     api_checkvalidindex(L, t);
     luaV_gettable(L, t, L->top - 1, L->top - 1);
-    return;
+    return ttype(L->top - 1);
 }
 
-void lua_getfield(lua_State* L, int idx, const char* k)
+int lua_getfield(lua_State* L, int idx, const char* k)
 {
     luaC_checkthreadsleep(L);
     StkId t = index2addr(L, idx);
@@ -682,10 +687,10 @@ void lua_getfield(lua_State* L, int idx, const char* k)
     setsvalue(L, &key, luaS_new(L, k));
     luaV_gettable(L, t, &key, L->top);
     api_incr_top(L);
-    return;
+    return ttype(L->top - 1);
 }
 
-void lua_rawgetfield(lua_State* L, int idx, const char* k)
+int lua_rawgetfield(lua_State* L, int idx, const char* k)
 {
     luaC_checkthreadsleep(L);
     StkId t = index2addr(L, idx);
@@ -694,26 +699,26 @@ void lua_rawgetfield(lua_State* L, int idx, const char* k)
     setsvalue(L, &key, luaS_new(L, k));
     setobj2s(L, L->top, luaH_getstr(hvalue(t), tsvalue(&key)));
     api_incr_top(L);
-    return;
+    return ttype(L->top - 1);
 }
 
-void lua_rawget(lua_State* L, int idx)
+int lua_rawget(lua_State* L, int idx)
 {
     luaC_checkthreadsleep(L);
     StkId t = index2addr(L, idx);
     api_check(L, ttistable(t));
     setobj2s(L, L->top - 1, luaH_get(hvalue(t), L->top - 1));
-    return;
+    return ttype(L->top - 1);
 }
 
-void lua_rawgeti(lua_State* L, int idx, int n)
+int lua_rawgeti(lua_State* L, int idx, int n)
 {
     luaC_checkthreadsleep(L);
     StkId t = index2addr(L, idx);
     api_check(L, ttistable(t));
     setobj2s(L, L->top, luaH_getnum(hvalue(t), n));
     api_incr_top(L);
-    return;
+    return ttype(L->top - 1);
 }
 
 void lua_createtable(lua_State* L, int narray, int nrec)
@@ -793,7 +798,7 @@ void lua_getfenv(lua_State* L, int idx)
         sethvalue(L, L->top, clvalue(o)->env);
         break;
     case LUA_TTHREAD:
-        setobj2s(L, L->top, gt(thvalue(o)));
+        sethvalue(L, L->top, thvalue(o)->gt);
         break;
     default:
         setnilvalue(L->top);
@@ -881,16 +886,7 @@ int lua_setmetatable(lua_State* L, int objindex)
             luaG_runerror(L, "Attempt to modify a readonly table");
         hvalue(obj)->metatable = mt;
         if (mt)
-        {
-            if (FFlag::LuauGcForwardMetatableBarrier)
-            {
-                luaC_objbarrier(L, hvalue(obj), mt);
-            }
-            else
-            {
-                luaC_objbarriert(L, hvalue(obj), mt);
-            }
-        }
+            luaC_objbarrier(L, hvalue(obj), mt);
         break;
     }
     case LUA_TUSERDATA:
@@ -924,7 +920,7 @@ int lua_setfenv(lua_State* L, int idx)
         clvalue(o)->env = hvalue(L->top - 1);
         break;
     case LUA_TTHREAD:
-        sethvalue(L, gt(thvalue(o)), hvalue(L->top - 1));
+        thvalue(o)->gt = hvalue(L->top - 1);
         break;
     default:
         res = 0;
@@ -1074,6 +1070,8 @@ int lua_gc(lua_State* L, int what, int data)
             g->GCthreshold = 0;
 
         bool waspaused = g->gcstate == GCSpause;
+        double startmarktime = g->gcstats.currcycle.marktime;
+        double startsweeptime = g->gcstats.currcycle.sweeptime;
 
         // track how much work the loop will actually perform
         size_t actualwork = 0;
@@ -1088,6 +1086,31 @@ int lua_gc(lua_State* L, int what, int data)
             {            /* end of cycle? */
                 res = 1; /* signal it */
                 break;
+            }
+        }
+
+        if (FFlag::LuauGcAdditionalStats)
+        {
+            // record explicit step statistics
+            GCCycleStats* cyclestats = g->gcstate == GCSpause ? &g->gcstats.lastcycle : &g->gcstats.currcycle;
+
+            double totalmarktime = cyclestats->marktime - startmarktime;
+            double totalsweeptime = cyclestats->sweeptime - startsweeptime;
+
+            if (totalmarktime > 0.0)
+            {
+                cyclestats->markexplicitsteps++;
+
+                if (totalmarktime > cyclestats->markmaxexplicittime)
+                    cyclestats->markmaxexplicittime = totalmarktime;
+            }
+
+            if (totalsweeptime > 0.0)
+            {
+                cyclestats->sweepexplicitsteps++;
+
+                if (totalsweeptime > cyclestats->sweepmaxexplicittime)
+                    cyclestats->sweepmaxexplicittime = totalsweeptime;
             }
         }
 
@@ -1302,6 +1325,18 @@ void lua_setuserdatadtor(lua_State* L, int tag, void (*dtor)(void*))
 {
     api_check(L, unsigned(tag) < LUA_UTAG_LIMIT);
     L->global->udatagc[tag] = dtor;
+}
+
+LUA_API void lua_clonefunction(lua_State* L, int idx)
+{
+    StkId p = index2addr(L, idx);
+    api_check(L, isLfunction(p));
+
+    luaC_checkthreadsleep(L);
+
+    Closure* cl = clvalue(p);
+    Closure* newcl = luaF_newLclosure(L, 0, L->gt, cl->l.p);
+    setclvalue(L, L->top - 1, newcl);
 }
 
 lua_Callbacks* lua_callbacks(lua_State* L)

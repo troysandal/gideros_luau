@@ -44,7 +44,7 @@ typedef int (*lua_Continuation)(lua_State* L, int status);
 ** prototype for memory-allocation functions
 */
 
-typedef void* (*lua_Alloc)(lua_State* L, void* ud, void* ptr, size_t osize, size_t nsize);
+typedef void* (*lua_Alloc)(void* ud, void* ptr, size_t osize, size_t nsize);
 
 /* non-return type */
 #define l_noret void LUA_NORETURN
@@ -178,11 +178,11 @@ LUA_API int lua_pushthread(lua_State* L);
 /*
 ** get functions (Lua -> stack)
 */
-LUA_API void lua_gettable(lua_State* L, int idx);
-LUA_API void lua_getfield(lua_State* L, int idx, const char* k);
-LUA_API void lua_rawgetfield(lua_State* L, int idx, const char* k);
-LUA_API void lua_rawget(lua_State* L, int idx);
-LUA_API void lua_rawgeti(lua_State* L, int idx, int n);
+LUA_API int lua_gettable(lua_State* L, int idx);
+LUA_API int lua_getfield(lua_State* L, int idx, const char* k);
+LUA_API int lua_rawgetfield(lua_State* L, int idx, const char* k);
+LUA_API int lua_rawget(lua_State* L, int idx);
+LUA_API int lua_rawgeti(lua_State* L, int idx, int n);
 LUA_API void lua_createtable(lua_State* L, int narr, int nrec);
 
 LUA_API void lua_setreadonly(lua_State* L, int idx, int enabled);
@@ -265,6 +265,8 @@ LUA_API double lua_clock();
 
 LUA_API void lua_setuserdatadtor(lua_State* L, int tag, void (*dtor)(void*));
 
+LUA_API void lua_clonefunction(lua_State* L, int idx);
+
 /*
 ** reference system, can be used to pin objects
 */
@@ -324,6 +326,7 @@ typedef struct lua_Debug lua_Debug; /* activation record */
 /* Functions to be called by the debugger in specific events */
 typedef void (*lua_Hook)(lua_State* L, lua_Debug* ar);
 
+LUA_API int lua_stackdepth(lua_State* L);
 LUA_API int lua_getinfo(lua_State* L, int level, const char* what, lua_Debug* ar);
 LUA_API int lua_getargument(lua_State* L, int level, int n);
 LUA_API const char* lua_getlocal(lua_State* L, int level, int n);

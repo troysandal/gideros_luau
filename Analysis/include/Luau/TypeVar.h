@@ -298,7 +298,7 @@ struct TableTypeVar
 
     TableTypeVar() = default;
     explicit TableTypeVar(TableState state, TypeLevel level);
-    TableTypeVar(const Props& props, const std::optional<TableIndexer>& indexer, TypeLevel level, TableState state = TableState::Unsealed);
+    TableTypeVar(const Props& props, const std::optional<TableIndexer>& indexer, TypeLevel level, TableState state);
 
     Props props;
     std::optional<TableIndexer> indexer;
@@ -449,9 +449,6 @@ struct TypeVar final
     std::optional<std::string> documentationSymbol;
 
     // Pointer to the type arena that allocated this type.
-    // Do not depend on the value of this under any circumstances. This is for
-    // debugging purposes only. This is only set in debug builds; it is nullptr
-    // in all other environments.
     TypeArena* owningArena = nullptr;
 
     bool operator==(const TypeVar& rhs) const;
@@ -479,6 +476,9 @@ bool isThread(TypeId ty);
 bool isOptional(TypeId ty);
 bool isTableIntersection(TypeId ty);
 bool isOverloadedFunction(TypeId ty);
+
+// True when string is a subtype of ty
+bool maybeString(TypeId ty);
 
 std::optional<TypeId> getMetatable(TypeId type);
 TableTypeVar* getMutableTableType(TypeId type);

@@ -1,6 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/TxnLog.h"
 
+#include "Luau/ToString.h"
 #include "Luau/TypePack.h"
 
 #include <algorithm>
@@ -60,24 +61,104 @@ void DEPRECATED_TxnLog::concat(DEPRECATED_TxnLog rhs)
 
 bool DEPRECATED_TxnLog::haveSeen(TypeId lhs, TypeId rhs)
 {
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    const std::pair<TypeId, TypeId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
-    return (sharedSeen->end() != std::find(sharedSeen->begin(), sharedSeen->end(), sortedPair));
+    return haveSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
 }
 
 void DEPRECATED_TxnLog::pushSeen(TypeId lhs, TypeId rhs)
 {
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    const std::pair<TypeId, TypeId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
-    sharedSeen->push_back(sortedPair);
+    pushSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
 }
 
 void DEPRECATED_TxnLog::popSeen(TypeId lhs, TypeId rhs)
 {
+    popSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+bool DEPRECATED_TxnLog::haveSeen(TypePackId lhs, TypePackId rhs)
+{
+    return haveSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+void DEPRECATED_TxnLog::pushSeen(TypePackId lhs, TypePackId rhs)
+{
+    pushSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+void DEPRECATED_TxnLog::popSeen(TypePackId lhs, TypePackId rhs)
+{
+    popSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+bool DEPRECATED_TxnLog::haveSeen(TypeOrPackId lhs, TypeOrPackId rhs)
+{
     LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    const std::pair<TypeId, TypeId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
+    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
+    return (sharedSeen->end() != std::find(sharedSeen->begin(), sharedSeen->end(), sortedPair));
+}
+
+void DEPRECATED_TxnLog::pushSeen(TypeOrPackId lhs, TypeOrPackId rhs)
+{
+    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
+    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
+    sharedSeen->push_back(sortedPair);
+}
+
+void DEPRECATED_TxnLog::popSeen(TypeOrPackId lhs, TypeOrPackId rhs)
+{
+    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
+    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     LUAU_ASSERT(sortedPair == sharedSeen->back());
     sharedSeen->pop_back();
+}
+
+const std::string nullPendingResult = "<nullptr>";
+
+std::string toString(PendingType* pending)
+{
+    if (pending == nullptr)
+        return nullPendingResult;
+
+    return toString(pending->pending);
+}
+
+std::string dump(PendingType* pending)
+{
+    if (pending == nullptr)
+    {
+        printf("%s\n", nullPendingResult.c_str());
+        return nullPendingResult;
+    }
+
+    ToStringOptions opts;
+    opts.exhaustive = true;
+    opts.functionTypeArguments = true;
+    std::string result = toString(pending->pending, opts);
+    printf("%s\n", result.c_str());
+    return result;
+}
+
+std::string toString(PendingTypePack* pending)
+{
+    if (pending == nullptr)
+        return nullPendingResult;
+
+    return toString(pending->pending);
+}
+
+std::string dump(PendingTypePack* pending)
+{
+    if (pending == nullptr)
+    {
+        printf("%s\n", nullPendingResult.c_str());
+        return nullPendingResult;
+    }
+
+    ToStringOptions opts;
+    opts.exhaustive = true;
+    opts.functionTypeArguments = true;
+    std::string result = toString(pending->pending, opts);
+    printf("%s\n", result.c_str());
+    return result;
 }
 
 static const TxnLog emptyLog;
@@ -136,9 +217,39 @@ TxnLog TxnLog::inverse()
 
 bool TxnLog::haveSeen(TypeId lhs, TypeId rhs) const
 {
+    return haveSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+void TxnLog::pushSeen(TypeId lhs, TypeId rhs)
+{
+    pushSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+void TxnLog::popSeen(TypeId lhs, TypeId rhs)
+{
+    popSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+bool TxnLog::haveSeen(TypePackId lhs, TypePackId rhs) const
+{
+    return haveSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+void TxnLog::pushSeen(TypePackId lhs, TypePackId rhs)
+{
+    pushSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+void TxnLog::popSeen(TypePackId lhs, TypePackId rhs)
+{
+    popSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
+}
+
+bool TxnLog::haveSeen(TypeOrPackId lhs, TypeOrPackId rhs) const
+{
     LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
 
-    const std::pair<TypeId, TypeId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
+    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     if (sharedSeen->end() != std::find(sharedSeen->begin(), sharedSeen->end(), sortedPair))
     {
         return true;
@@ -152,19 +263,19 @@ bool TxnLog::haveSeen(TypeId lhs, TypeId rhs) const
     return false;
 }
 
-void TxnLog::pushSeen(TypeId lhs, TypeId rhs)
+void TxnLog::pushSeen(TypeOrPackId lhs, TypeOrPackId rhs)
 {
     LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
 
-    const std::pair<TypeId, TypeId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
+    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     sharedSeen->push_back(sortedPair);
 }
 
-void TxnLog::popSeen(TypeId lhs, TypeId rhs)
+void TxnLog::popSeen(TypeOrPackId lhs, TypeOrPackId rhs)
 {
     LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
 
-    const std::pair<TypeId, TypeId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
+    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     LUAU_ASSERT(sortedPair == sharedSeen->back());
     sharedSeen->pop_back();
 }
@@ -199,7 +310,9 @@ PendingTypePack* TxnLog::queue(TypePackId tp)
 
 PendingType* TxnLog::pending(TypeId ty) const
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
+    // This function will technically work if `this` is nullptr, but this
+    // indicates a bug, so we explicitly assert.
+    LUAU_ASSERT(static_cast<const void*>(this) != nullptr);
 
     for (const TxnLog* current = this; current; current = current->parent)
     {
@@ -212,7 +325,9 @@ PendingType* TxnLog::pending(TypeId ty) const
 
 PendingTypePack* TxnLog::pending(TypePackId tp) const
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
+    // This function will technically work if `this` is nullptr, but this
+    // indicates a bug, so we explicitly assert.
+    LUAU_ASSERT(static_cast<const void*>(this) != nullptr);
 
     for (const TxnLog* current = this; current; current = current->parent)
     {
@@ -225,8 +340,6 @@ PendingTypePack* TxnLog::pending(TypePackId tp) const
 
 PendingType* TxnLog::replace(TypeId ty, TypeVar replacement)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     PendingType* newTy = queue(ty);
     newTy->pending = replacement;
     return newTy;
@@ -234,8 +347,6 @@ PendingType* TxnLog::replace(TypeId ty, TypeVar replacement)
 
 PendingTypePack* TxnLog::replace(TypePackId tp, TypePackVar replacement)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     PendingTypePack* newTp = queue(tp);
     newTp->pending = replacement;
     return newTp;
@@ -243,7 +354,6 @@ PendingTypePack* TxnLog::replace(TypePackId tp, TypePackVar replacement)
 
 PendingType* TxnLog::bindTable(TypeId ty, std::optional<TypeId> newBoundTo)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
     LUAU_ASSERT(get<TableTypeVar>(ty));
 
     PendingType* newTy = queue(ty);
@@ -255,7 +365,6 @@ PendingType* TxnLog::bindTable(TypeId ty, std::optional<TypeId> newBoundTo)
 
 PendingType* TxnLog::changeLevel(TypeId ty, TypeLevel newLevel)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
     LUAU_ASSERT(get<FreeTypeVar>(ty) || get<TableTypeVar>(ty) || get<FunctionTypeVar>(ty));
 
     PendingType* newTy = queue(ty);
@@ -278,7 +387,6 @@ PendingType* TxnLog::changeLevel(TypeId ty, TypeLevel newLevel)
 
 PendingTypePack* TxnLog::changeLevel(TypePackId tp, TypeLevel newLevel)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
     LUAU_ASSERT(get<FreeTypePack>(tp));
 
     PendingTypePack* newTp = queue(tp);
@@ -292,7 +400,6 @@ PendingTypePack* TxnLog::changeLevel(TypePackId tp, TypeLevel newLevel)
 
 PendingType* TxnLog::changeIndexer(TypeId ty, std::optional<TableIndexer> indexer)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
     LUAU_ASSERT(get<TableTypeVar>(ty));
 
     PendingType* newTy = queue(ty);
@@ -306,8 +413,6 @@ PendingType* TxnLog::changeIndexer(TypeId ty, std::optional<TableIndexer> indexe
 
 std::optional<TypeLevel> TxnLog::getLevel(TypeId ty) const
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     if (FreeTypeVar* ftv = getMutable<FreeTypeVar>(ty))
         return ftv->level;
     else if (TableTypeVar* ttv = getMutable<TableTypeVar>(ty); ttv && (ttv->state == TableState::Free || ttv->state == TableState::Generic))
@@ -318,10 +423,8 @@ std::optional<TypeLevel> TxnLog::getLevel(TypeId ty) const
     return std::nullopt;
 }
 
-TypeId TxnLog::follow(TypeId ty)
+TypeId TxnLog::follow(TypeId ty) const
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     return Luau::follow(ty, [this](TypeId ty) {
         PendingType* state = this->pending(ty);
 
@@ -337,8 +440,6 @@ TypeId TxnLog::follow(TypeId ty)
 
 TypePackId TxnLog::follow(TypePackId tp) const
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     return Luau::follow(tp, [this](TypePackId tp) {
         PendingTypePack* state = this->pending(tp);
 

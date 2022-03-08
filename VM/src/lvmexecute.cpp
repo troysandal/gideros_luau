@@ -41,7 +41,7 @@
 
 // When calling luau_callTM, we usually push the arguments to the top of the stack.
 // This is safe to do for complicated reasons:
-// - stack guarantees 1 + EXTRA_STACK room beyond stack_last (see luaD_reallocstack)
+// - stack guarantees EXTRA_STACK room beyond stack_last (see luaD_reallocstack)
 // - stack reallocation copies values past stack_last
 
 // All external function calls that can cause stack realloc or Lua calls have to be wrapped in VM_PROTECT
@@ -688,14 +688,9 @@ static void luau_execute(lua_State* L)
                         VM_PROTECT_PC(); // set may fail
 
                         TValue* res = luaH_setstr(L, h, tsvalue(kv));
-
-                        if (res != luaO_nilobject)
-                        {
-                            int cachedslot = gval2slot(h, res);
-                            // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
-                            VM_PATCH_C(pc - 2, cachedslot);
-                        }
-
+                        int cachedslot = gval2slot(h, res);
+                        // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
+                        VM_PATCH_C(pc - 2, cachedslot);
                         setobj(L, res, ra);
                         luaC_barriert(L, h, ra);
                         VM_NEXT();

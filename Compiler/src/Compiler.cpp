@@ -20,8 +20,7 @@
 #endif
 #define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
 
-LUAU_FASTFLAGVARIABLE(LuauCompileTableIndexOpt, false)
-LUAU_FASTFLAG(LuauCompileSelectBuiltin)
+LUAU_FASTFLAG(LuauCompileSelectBuiltin2)
 
 namespace Luau
 {
@@ -277,7 +276,7 @@ struct Compiler
 
     void compileExprSelectVararg(AstExprCall* expr, uint8_t target, uint8_t targetCount, bool targetTop, bool multRet, uint8_t regs)
     {
-        LUAU_ASSERT(FFlag::LuauCompileSelectBuiltin);
+        LUAU_ASSERT(FFlag::LuauCompileSelectBuiltin2);
         LUAU_ASSERT(targetCount == 1);
         LUAU_ASSERT(!expr->self);
         LUAU_ASSERT(expr->args.size == 2 && expr->args.data[1]->is<AstExprVarargs>());
@@ -301,6 +300,9 @@ struct Compiler
         // note, these instructions are normally not executed and are used as a fallback for FASTCALL
         // we can't use TempTop variant here because we need to make sure the arguments we already computed aren't overwritten
         compileExprTemp(expr->func, regs);
+
+        if (argreg != regs + 1)
+            bytecode.emitABC(LOP_MOVE, uint8_t(regs + 1), argreg, 0);
 
         bytecode.emitABC(LOP_GETVARARGS, uint8_t(regs + 2), 0, 0);
 
@@ -416,7 +418,7 @@ struct Compiler
 
         if (bfid == LBF_SELECT_VARARG)
         {
-            LUAU_ASSERT(FFlag::LuauCompileSelectBuiltin);
+            LUAU_ASSERT(FFlag::LuauCompileSelectBuiltin2);
             // Optimization: compile select(_, ...) as FASTCALL1; the builtin will read variadic arguments directly
             // note: for now we restrict this to single-return expressions since our runtime code doesn't deal with general cases
             if (multRet == false && targetCount == 1 && expr->args.size == 2 && expr->args.data[1]->is<AstExprVarargs>())
@@ -1228,18 +1230,9 @@ struct Compiler
                 const AstExprTable::Item& item = expr->items.data[i];
                 LUAU_ASSERT(item.key); // no list portion => all items have keys
 
-                if (FFlag::LuauCompileTableIndexOpt)
-                {
-                    const Constant* ckey = constants.find(item.key);
+                const Constant* ckey = constants.find(item.key);
 
-                    indexSize += (ckey && ckey->type == Constant::Type_Number && ckey->valueNumber == double(indexSize + 1));
-                }
-                else
-                {
-                    AstExprConstantNumber* ckey = item.key->as<AstExprConstantNumber>();
-
-                    indexSize += (ckey && ckey->value == double(indexSize + 1));
-                }
+                indexSize += (ckey && ckey->type == Constant::Type_Number && ckey->valueNumber == double(indexSize + 1));
             }
 
             // we only perform the optimization if we don't have any other []-keys
@@ -1341,43 +1334,10 @@ struct Compiler
             {
                 RegScope rsi(this);
 
-                if (FFlag::LuauCompileTableIndexOpt)
-                {
-                    LValue lv = compileLValueIndex(reg, key, rsi);
-                    uint8_t rv = compileExprAuto(value, rsi);
+                LValue lv = compileLValueIndex(reg, key, rsi);
+                uint8_t rv = compileExprAuto(value, rsi);
 
-                    compileAssign(lv, rv);
-                }
-                else
-                {
-                    // Optimization: use SETTABLEKS/SETTABLEN for literal keys, this happens often as part of usual table construction syntax
-                    if (AstExprConstantString* ckey = key->as<AstExprConstantString>())
-                    {
-                        BytecodeBuilder::StringRef cname = sref(ckey->value);
-                        int32_t cid = bytecode.addConstantString(cname);
-                        if (cid < 0)
-                            CompileError::raise(expr->location, "Exceeded constant limit; simplify the code to compile");
-
-                        uint8_t rv = compileExprAuto(value, rsi);
-
-                        bytecode.emitABC(LOP_SETTABLEKS, rv, reg, uint8_t(BytecodeBuilder::getStringHash(cname)));
-                        bytecode.emitAux(cid);
-                    }
-                    else if (AstExprConstantNumber* ckey = key->as<AstExprConstantNumber>();
-                             ckey && ckey->value >= 1 && ckey->value <= 256 && double(int(ckey->value)) == ckey->value)
-                    {
-                        uint8_t rv = compileExprAuto(value, rsi);
-
-                        bytecode.emitABC(LOP_SETTABLEN, rv, reg, uint8_t(int(ckey->value) - 1));
-                    }
-                    else
-                    {
-                        uint8_t rk = compileExprAuto(key, rsi);
-                        uint8_t rv = compileExprAuto(value, rsi);
-
-                        bytecode.emitABC(LOP_SETTABLE, rv, reg, rk);
-                    }
-                }
+                compileAssign(lv, rv);
             }
             // items without a key are set using SETLIST so that we can initialize large arrays quickly
             else
@@ -1485,8 +1445,7 @@ struct Compiler
             uint8_t rt = compileExprAuto(expr->expr, rs);
             uint8_t i = uint8_t(int(cv->valueNumber) - 1);
 
-            if (FFlag::LuauCompileTableIndexOpt)
-                setDebugLine(expr->index);
+            setDebugLine(expr->index);
 
             bytecode.emitABC(LOP_GETTABLEN, target, rt, i);
         }
@@ -1499,8 +1458,7 @@ struct Compiler
             if (cid < 0)
                 CompileError::raise(expr->location, "Exceeded constant limit; simplify the code to compile");
 
-            if (FFlag::LuauCompileTableIndexOpt)
-                setDebugLine(expr->index);
+            setDebugLine(expr->index);
 
             bytecode.emitABC(LOP_GETTABLEKS, target, rt, uint8_t(BytecodeBuilder::getStringHash(iname)));
             bytecode.emitAux(cid);
@@ -1899,8 +1857,7 @@ struct Compiler
 
     void compileLValueUse(const LValue& lv, uint8_t reg, bool set)
     {
-        if (FFlag::LuauCompileTableIndexOpt)
-            setDebugLine(lv.location);
+        setDebugLine(lv.location);
 
         switch (lv.kind)
         {

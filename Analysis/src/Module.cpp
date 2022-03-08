@@ -12,11 +12,9 @@
 #include <algorithm>
 
 LUAU_FASTFLAGVARIABLE(DebugLuauFreezeArena, false)
-LUAU_FASTFLAGVARIABLE(DebugLuauTrackOwningArena, false)
+LUAU_FASTFLAGVARIABLE(DebugLuauTrackOwningArena, false) // Remove with FFlagLuauImmutableTypes
 LUAU_FASTINTVARIABLE(LuauTypeCloneRecursionLimit, 300)
-LUAU_FASTFLAG(LuauTypeAliasDefaults)
-
-LUAU_FASTFLAGVARIABLE(LuauPrepopulateUnionOptionsBeforeAllocation, false)
+LUAU_FASTFLAG(LuauImmutableTypes)
 
 namespace Luau
 {
@@ -66,7 +64,7 @@ TypeId TypeArena::addTV(TypeVar&& tv)
 {
     TypeId allocated = typeVars.allocate(std::move(tv));
 
-    if (FFlag::DebugLuauTrackOwningArena)
+    if (FFlag::DebugLuauTrackOwningArena || FFlag::LuauImmutableTypes)
         asMutable(allocated)->owningArena = this;
 
     return allocated;
@@ -76,7 +74,7 @@ TypeId TypeArena::freshType(TypeLevel level)
 {
     TypeId allocated = typeVars.allocate(FreeTypeVar{level});
 
-    if (FFlag::DebugLuauTrackOwningArena)
+    if (FFlag::DebugLuauTrackOwningArena || FFlag::LuauImmutableTypes)
         asMutable(allocated)->owningArena = this;
 
     return allocated;
@@ -86,7 +84,7 @@ TypePackId TypeArena::addTypePack(std::initializer_list<TypeId> types)
 {
     TypePackId allocated = typePacks.allocate(TypePack{std::move(types)});
 
-    if (FFlag::DebugLuauTrackOwningArena)
+    if (FFlag::DebugLuauTrackOwningArena || FFlag::LuauImmutableTypes)
         asMutable(allocated)->owningArena = this;
 
     return allocated;
@@ -96,7 +94,7 @@ TypePackId TypeArena::addTypePack(std::vector<TypeId> types)
 {
     TypePackId allocated = typePacks.allocate(TypePack{std::move(types)});
 
-    if (FFlag::DebugLuauTrackOwningArena)
+    if (FFlag::DebugLuauTrackOwningArena || FFlag::LuauImmutableTypes)
         asMutable(allocated)->owningArena = this;
 
     return allocated;
@@ -106,7 +104,7 @@ TypePackId TypeArena::addTypePack(TypePack tp)
 {
     TypePackId allocated = typePacks.allocate(std::move(tp));
 
-    if (FFlag::DebugLuauTrackOwningArena)
+    if (FFlag::DebugLuauTrackOwningArena || FFlag::LuauImmutableTypes)
         asMutable(allocated)->owningArena = this;
 
     return allocated;
@@ -116,7 +114,7 @@ TypePackId TypeArena::addTypePack(TypePackVar tp)
 {
     TypePackId allocated = typePacks.allocate(std::move(tp));
 
-    if (FFlag::DebugLuauTrackOwningArena)
+    if (FFlag::DebugLuauTrackOwningArena || FFlag::LuauImmutableTypes)
         asMutable(allocated)->owningArena = this;
 
     return allocated;
@@ -379,28 +377,14 @@ void TypeCloner::operator()(const AnyTypeVar& t)
 
 void TypeCloner::operator()(const UnionTypeVar& t)
 {
-    if (FFlag::LuauPrepopulateUnionOptionsBeforeAllocation)
-    {
-        std::vector<TypeId> options;
-        options.reserve(t.options.size());
+    std::vector<TypeId> options;
+    options.reserve(t.options.size());
 
-        for (TypeId ty : t.options)
-            options.push_back(clone(ty, dest, seenTypes, seenTypePacks, cloneState));
+    for (TypeId ty : t.options)
+        options.push_back(clone(ty, dest, seenTypes, seenTypePacks, cloneState));
 
-        TypeId result = dest.addType(UnionTypeVar{std::move(options)});
-        seenTypes[typeId] = result;
-    }
-    else
-    {
-        TypeId result = dest.addType(UnionTypeVar{});
-        seenTypes[typeId] = result;
-
-        UnionTypeVar* option = getMutable<UnionTypeVar>(result);
-        LUAU_ASSERT(option != nullptr);
-
-        for (TypeId ty : t.options)
-            option->options.push_back(clone(ty, dest, seenTypes, seenTypePacks, cloneState));
-    }
+    TypeId result = dest.addType(UnionTypeVar{std::move(options)});
+    seenTypes[typeId] = result;
 }
 
 void TypeCloner::operator()(const IntersectionTypeVar& t)
@@ -454,8 +438,16 @@ TypeId clone(TypeId typeId, TypeArena& dest, SeenTypes& seenTypes, SeenTypePacks
         TypeCloner cloner{dest, typeId, seenTypes, seenTypePacks, cloneState};
         Luau::visit(cloner, typeId->ty); // Mutates the storage that 'res' points into.
 
-        // TODO: Make this work when the arena of 'res' might be frozen
-        asMutable(res)->documentationSymbol = typeId->documentationSymbol;
+        if (FFlag::LuauImmutableTypes)
+        {
+            // Persistent types are not being cloned and we get the original type back which might be read-only
+            if (!res->persistent)
+                asMutable(res)->documentationSymbol = typeId->documentationSymbol;
+        }
+        else
+        {
+            asMutable(res)->documentationSymbol = typeId->documentationSymbol;
+        }
     }
 
     return res;
@@ -470,7 +462,7 @@ TypeFun clone(const TypeFun& typeFun, TypeArena& dest, SeenTypes& seenTypes, See
         TypeId ty = clone(param.ty, dest, seenTypes, seenTypePacks, cloneState);
         std::optional<TypeId> defaultValue;
 
-        if (FFlag::LuauTypeAliasDefaults && param.defaultValue)
+        if (param.defaultValue)
             defaultValue = clone(*param.defaultValue, dest, seenTypes, seenTypePacks, cloneState);
 
         result.typeParams.push_back({ty, defaultValue});
@@ -481,7 +473,7 @@ TypeFun clone(const TypeFun& typeFun, TypeArena& dest, SeenTypes& seenTypes, See
         TypePackId tp = clone(param.tp, dest, seenTypes, seenTypePacks, cloneState);
         std::optional<TypePackId> defaultValue;
 
-        if (FFlag::LuauTypeAliasDefaults && param.defaultValue)
+        if (param.defaultValue)
             defaultValue = clone(*param.defaultValue, dest, seenTypes, seenTypePacks, cloneState);
 
         result.typePackParams.push_back({tp, defaultValue});

@@ -1,5 +1,4 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
-#include "Luau/Parser.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/TypeVar.h"
@@ -7,8 +6,6 @@
 #include "Fixture.h"
 
 #include "doctest.h"
-
-LUAU_FASTFLAG(LuauQuantifyInPlace2);
 
 using namespace Luau;
 
@@ -20,7 +17,7 @@ struct TryUnifyFixture : Fixture
     ScopePtr globalScope{new Scope{arena.addTypePack({TypeId{}})}};
     InternalErrorReporter iceHandler;
     UnifierSharedState unifierState{&iceHandler};
-    Unifier state{&arena, Mode::Strict, globalScope, Location{}, Variance::Covariant, unifierState};
+    Unifier state{&arena, Mode::Strict, Location{}, Variance::Covariant, unifierState};
 };
 
 TEST_SUITE_BEGIN("TryUnifyTests");
@@ -168,10 +165,7 @@ TEST_CASE_FIXTURE(TryUnifyFixture, "typepack_unification_should_trim_free_tails"
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    if (FFlag::LuauQuantifyInPlace2)
-        CHECK_EQ("(number) -> boolean", toString(requireType("f")));
-    else
-        CHECK_EQ("(number) -> (boolean)", toString(requireType("f")));
+    CHECK_EQ("(number) -> boolean", toString(requireType("f")));
 }
 
 TEST_CASE_FIXTURE(TryUnifyFixture, "variadic_type_pack_unification")
@@ -258,6 +252,34 @@ TEST_CASE_FIXTURE(TryUnifyFixture, "free_tail_is_grown_properly")
 
     ErrorVec unifyErrors = state.canUnify(numberAndFreeTail, threeNumbers);
     CHECK(unifyErrors.size() == 0);
+}
+
+TEST_CASE_FIXTURE(TryUnifyFixture, "recursive_metatable_getmatchtag")
+{
+    TypeVar redirect{FreeTypeVar{TypeLevel{}}};
+    TypeVar table{TableTypeVar{}};
+    TypeVar metatable{MetatableTypeVar{&redirect, &table}};
+    redirect = BoundTypeVar{&metatable}; // Now we have a metatable that is recursive on the table type
+    TypeVar variant{UnionTypeVar{{&metatable, typeChecker.numberType}}};
+
+    state.tryUnify(&metatable, &variant);
+}
+
+TEST_CASE_FIXTURE(TryUnifyFixture, "cli_50320_follow_in_any_unification")
+{
+    ScopedFastFlag sffs[] = {
+        {"LuauUseCommittingTxnLog", true},
+        {"LuauFollowWithCommittingTxnLogInAnyUnification", true},
+    };
+
+    TypePackVar free{FreeTypePack{TypeLevel{}}};
+    TypePackVar target{TypePack{}};
+
+    TypeVar func{FunctionTypeVar{&free, &free}};
+
+    state.tryUnify(&free, &target);
+    // Shouldn't assert or error.
+    state.tryUnify(&func, typeChecker.anyType);
 }
 
 TEST_SUITE_END();

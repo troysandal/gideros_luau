@@ -105,6 +105,7 @@
 #define ABISWITCH(x64, ms32, gcc32) (sizeof(void*) == 8 ? x64 : ms32)
 #endif
 
+#if 0 //nico@gideros: Those tests are invalid on some platforms, disable them
 #if LUA_VECTOR_SIZE == 4
 #if !defined(__ANDROID__) && !defined(__APPLE__) // Android has several ABIs (x86, x86_64, armeabi-v7a, arm64_v8a) and some won't give the results below. Same goes for OSX/iOS/ATV
 static_assert(sizeof(TValue) == ABISWITCH(24, 24, 24), "size mismatch for value");
@@ -118,6 +119,7 @@ static_assert(sizeof(LuaNode) == ABISWITCH(32, 32, 32), "size mismatch for table
 static_assert(offsetof(TString, data) == ABISWITCH(24, 20, 20), "size mismatch for string header");
 static_assert(offsetof(Udata, data) == ABISWITCH(16, 16, 12), "size mismatch for userdata header");
 static_assert(sizeof(Table) == ABISWITCH(48, 32, 32), "size mismatch for table header");
+#endif
 
 const size_t kSizeClasses = LUA_SIZECLASSES;
 const size_t kMaxSmallSize = 512;

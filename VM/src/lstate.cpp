@@ -236,6 +236,7 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
     g->gcstats = GCStats();
     g->printfunc = NULL;
     g->printfuncdata = NULL;
+    g->closing = 0;
   
     if (luaD_rawrunprotected(L, f_luaopen, NULL) != 0)
     {
@@ -248,6 +249,7 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
 
 void lua_close(lua_State* L)
 {
+	L->global->closing=1;
     L = L->global->mainthread; /* only the main thread can be closed */
     luaF_close(L, L->stack);   /* close all upvalues for this thread */
     close_state(L);
@@ -268,3 +270,9 @@ void lua_setprintfunc(lua_State* L, lua_PrintFunc printfunc, void* data)
 	L->global->printfunc = printfunc;
 	L->global->printfuncdata = data;
 }
+
+LUA_API int lua_isclosing(lua_State *L)
+{
+	return L->global->closing;
+}
+

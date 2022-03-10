@@ -209,6 +209,7 @@ typedef struct global_State
     //GIDEROS
     lua_PrintFunc printfunc;
     void* printfuncdata;
+    int closing; //Set when the context is being closed
 
 } global_State;
 // clang-format on

@@ -1150,6 +1150,11 @@ int lua_gc(lua_State* L, int what, int data)
     return res;
 }
 
+void lua_postgc(lua_State* L, int (*dtor)(lua_State *L,void*),void *data)
+{
+    luaC_addpostgc(L,dtor,data);
+}
+
 /*
 ** miscellaneous functions
 */

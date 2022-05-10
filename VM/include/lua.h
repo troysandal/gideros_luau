@@ -248,6 +248,7 @@ enum lua_GCOp
 };
 
 LUA_API int lua_gc(lua_State* L, int what, int data);
+LUA_API void lua_postgc(lua_State* L, int (*dtor)(lua_State *L,void*),void *data);
 
 /*
 ** miscellaneous functions

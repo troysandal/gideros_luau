@@ -139,3 +139,5 @@ LUAI_FUNC void luaC_dump(lua_State* L, void* file, const char* (*categoryName)(l
 LUAI_FUNC int64_t luaC_allocationrate(lua_State* L);
 LUAI_FUNC void luaC_wakethread(lua_State* L);
 LUAI_FUNC const char* luaC_statename(int state);
+LUAI_FUNC void luaC_postgc(lua_State *L);
+LUAI_FUNC void luaC_addpostgc(lua_State *L,int (*dtor)(lua_State *L,void*),void *data);

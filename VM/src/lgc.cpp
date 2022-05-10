@@ -551,6 +551,8 @@ void luaC_freeall(lua_State* L)
 
     luaM_visitgco(L, L, deletegco);
 
+    luaC_postgc(L);
+
     for (int i = 0; i < g->strt.size; i++) /* free all string lists */
         LUAU_ASSERT(g->strt.hash[i] == NULL);
 
@@ -929,6 +931,7 @@ void luaC_step(lua_State* L, bool assist)
     }
 
     GC_INTERRUPT(lastgcstate);
+    luaC_postgc(L);
 }
 
 void luaC_fullgc(lua_State* L)
@@ -986,6 +989,26 @@ void luaC_fullgc(lua_State* L)
 
     g->gcstats.currcycle.heapgoalsizebytes = heapgoalsizebytes;
     g->gcstats.currcycle.heaptriggersizebytes = g->GCthreshold;
+
+    luaC_postgc(L);
+}
+
+void luaC_postgc(lua_State *L)
+{
+    global_State* g = L->global;
+    std::vector<global_State::gc_Destructor> dlist=g->destructors;
+    g->destructors.clear();
+    for (auto it=dlist.begin();it!=dlist.end();it++)
+        it->dtor(L,it->data);
+}
+
+void luaC_addpostgc(lua_State *L,int (*dtor)(lua_State *L,void*),void *data)
+{
+    global_State* g = L->global;
+    global_State::gc_Destructor d;
+    d.dtor=dtor;
+    d.data=data;
+    g->destructors.push_back(d);
 }
 
 void luaC_barrierupval(lua_State* L, GCObject* v)

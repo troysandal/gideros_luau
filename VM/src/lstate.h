@@ -4,6 +4,7 @@
 
 #include "lobject.h"
 #include "ltm.h"
+#include <vector>
 
 /* registry */
 #define registry(L) (&L->global->registry)
@@ -211,6 +212,11 @@ typedef struct global_State
     void* printfuncdata;
     int closing; //Set when the context is being closed
 
+    struct gc_Destructor {
+        int (*dtor)(lua_State *L,void*);
+        void *data;
+    };
+    std::vector<gc_Destructor> destructors;
 } global_State;
 // clang-format on
 

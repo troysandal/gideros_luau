@@ -104,6 +104,7 @@ static void close_state(lua_State* L)
     LUAU_ASSERT(g->memcatbytes[0] == sizeof(LG));
     for (int i = 1; i < LUA_MEMORY_CATEGORIES; i++)
         LUAU_ASSERT(g->memcatbytes[i] == 0);
+    g->destructors.clear();
     (*g->frealloc)(g->ud, L, sizeof(LG), 0);
 }
 
@@ -237,6 +238,7 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
     g->printfunc = NULL;
     g->printfuncdata = NULL;
     g->closing = 0;
+    new (&g->destructors) std::vector<global_State::gc_Destructor>;
   
     if (luaD_rawrunprotected(L, f_luaopen, NULL) != 0)
     {

@@ -10,7 +10,7 @@
 #include "ldebug.h"
 #include "lvm.h"
 
-LUAU_FASTFLAGVARIABLE(LuauTableClone, false)
+LUAU_FASTFLAGVARIABLE(LuauTableClone, true)
 
 static int foreachi(lua_State* L)
 {

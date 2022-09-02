@@ -24,6 +24,7 @@ namespace Luau
 {
 
 struct TypeArena;
+struct Scope;
 
 /**
  * There are three kinds of type variables:
@@ -83,6 +84,24 @@ using Tags = std::vector<std::string>;
 
 using ModuleName = std::string;
 
+/** A TypeVar that cannot be computed.
+ *
+ * BlockedTypeVars essentially serve as a way to encode partial ordering on the
+ * constraint graph. Until a BlockedTypeVar is unblocked by its owning
+ * constraint, nothing at all can be said about it. Constraints that need to
+ * process a BlockedTypeVar cannot be dispatched.
+ *
+ * Whenever a BlockedTypeVar is added to the graph, we also record a constraint
+ * that will eventually unblock it.
+ */
+struct BlockedTypeVar
+{
+    BlockedTypeVar();
+    int index;
+
+    static int nextIndex;
+};
+
 struct PrimitiveTypeVar
 {
     enum Type
@@ -107,6 +126,24 @@ struct PrimitiveTypeVar
         , metatable(metatable)
     {
     }
+};
+
+struct ConstrainedTypeVar
+{
+    explicit ConstrainedTypeVar(TypeLevel level)
+        : level(level)
+    {
+    }
+
+    explicit ConstrainedTypeVar(TypeLevel level, const std::vector<TypeId>& parts)
+        : parts(parts)
+        , level(level)
+    {
+    }
+
+    std::vector<TypeId> parts;
+    TypeLevel level;
+    Scope* scope = nullptr;
 };
 
 // Singleton types https://github.com/Roblox/luau/blob/master/rfcs/syntax-singleton-types.md
@@ -186,12 +223,16 @@ struct GenericTypeDefinition
 {
     TypeId ty;
     std::optional<TypeId> defaultValue;
+
+    bool operator==(const GenericTypeDefinition& rhs) const;
 };
 
 struct GenericTypePackDefinition
 {
     TypePackId tp;
     std::optional<TypePackId> defaultValue;
+
+    bool operator==(const GenericTypePackDefinition& rhs) const;
 };
 
 struct FunctionArgument
@@ -212,42 +253,44 @@ struct FunctionDefinition
 // TODO: Do we actually need this? We'll find out later if we can delete this.
 // Does not exactly belong in TypeVar.h, but this is the only way to appease the compiler.
 template<typename T>
-struct ExprResult
+struct WithPredicate
 {
     T type;
     PredicateVec predicates;
 };
 
-using MagicFunction = std::function<std::optional<ExprResult<TypePackId>>(
-    struct TypeChecker&, const std::shared_ptr<struct Scope>&, const class AstExprCall&, ExprResult<TypePackId>)>;
+using MagicFunction = std::function<std::optional<WithPredicate<TypePackId>>(
+    struct TypeChecker&, const std::shared_ptr<struct Scope>&, const class AstExprCall&, WithPredicate<TypePackId>)>;
 
 struct FunctionTypeVar
 {
     // Global monomorphic function
-    FunctionTypeVar(TypePackId argTypes, TypePackId retType, std::optional<FunctionDefinition> defn = {}, bool hasSelf = false);
+    FunctionTypeVar(TypePackId argTypes, TypePackId retTypes, std::optional<FunctionDefinition> defn = {}, bool hasSelf = false);
 
     // Global polymorphic function
-    FunctionTypeVar(std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes, TypePackId retType,
+    FunctionTypeVar(std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes, TypePackId retTypes,
         std::optional<FunctionDefinition> defn = {}, bool hasSelf = false);
 
     // Local monomorphic function
-    FunctionTypeVar(TypeLevel level, TypePackId argTypes, TypePackId retType, std::optional<FunctionDefinition> defn = {}, bool hasSelf = false);
+    FunctionTypeVar(TypeLevel level, TypePackId argTypes, TypePackId retTypes, std::optional<FunctionDefinition> defn = {}, bool hasSelf = false);
 
     // Local polymorphic function
-    FunctionTypeVar(TypeLevel level, std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes, TypePackId retType,
+    FunctionTypeVar(TypeLevel level, std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes, TypePackId retTypes,
         std::optional<FunctionDefinition> defn = {}, bool hasSelf = false);
 
     TypeLevel level;
+    Scope* scope = nullptr;
     /// These should all be generic
     std::vector<TypeId> generics;
     std::vector<TypePackId> genericPacks;
     TypePackId argTypes;
     std::vector<std::optional<FunctionArgument>> argNames;
-    TypePackId retType;
+    TypePackId retTypes;
     std::optional<FunctionDefinition> definition;
     MagicFunction magicFunction = nullptr; // Function pointer, can be nullptr.
     bool hasSelf;
     Tags tags;
+    bool hasNoGenerics = false;
 };
 
 enum class TableState
@@ -305,19 +348,22 @@ struct TableTypeVar
 
     TableState state = TableState::Unsealed;
     TypeLevel level;
+    Scope* scope = nullptr;
     std::optional<std::string> name;
 
     // Sometimes we throw a type on a name to make for nicer error messages, but without creating any entry in the type namespace
     // We need to know which is which when we stringify types.
     std::optional<std::string> syntheticName;
 
-    std::map<Name, Location> methodDefinitionLocations;
     std::vector<TypeId> instantiatedTypeParams;
     std::vector<TypePackId> instantiatedTypePackParams;
     ModuleName definitionModuleName;
 
     std::optional<TypeId> boundTo;
     Tags tags;
+
+    // Methods of this table that have an untyped self will use the same shared self type.
+    std::optional<TypeId> selfTy;
 };
 
 // Represents a metatable attached to a table typevar. Somewhat analogous to a bound typevar.
@@ -355,15 +401,17 @@ struct ClassTypeVar
     std::optional<TypeId> metatable; // metaclass?
     Tags tags;
     std::shared_ptr<ClassUserData> userData;
+    ModuleName definitionModuleName;
 
-    ClassTypeVar(
-        Name name, Props props, std::optional<TypeId> parent, std::optional<TypeId> metatable, Tags tags, std::shared_ptr<ClassUserData> userData)
+    ClassTypeVar(Name name, Props props, std::optional<TypeId> parent, std::optional<TypeId> metatable, Tags tags,
+        std::shared_ptr<ClassUserData> userData, ModuleName definitionModuleName)
         : name(name)
         , props(props)
         , parent(parent)
         , metatable(metatable)
         , tags(tags)
         , userData(userData)
+        , definitionModuleName(definitionModuleName)
     {
     }
 };
@@ -382,6 +430,12 @@ struct TypeFun
     TypeId type;
 
     TypeFun() = default;
+
+    explicit TypeFun(TypeId ty)
+        : type(ty)
+    {
+    }
+
     TypeFun(std::vector<GenericTypeDefinition> typeParams, TypeId type)
         : typeParams(std::move(typeParams))
         , type(type)
@@ -394,6 +448,27 @@ struct TypeFun
         , type(type)
     {
     }
+
+    bool operator==(const TypeFun& rhs) const;
+};
+
+/** Represents a pending type alias instantiation.
+ *
+ * In order to afford (co)recursive type aliases, we need to reason about a
+ * partially-complete instantiation. This requires encoding more information in
+ * a type variable than a BlockedTypeVar affords, hence this. Each
+ * PendingExpansionTypeVar has a corresponding TypeAliasExpansionConstraint
+ * enqueued in the solver to convert it to an actual instantiated type
+ */
+struct PendingExpansionTypeVar
+{
+    PendingExpansionTypeVar(TypeFun fn, std::vector<TypeId> typeArguments, std::vector<TypePackId> packArguments);
+    TypeFun fn;
+    std::vector<TypeId> typeArguments;
+    std::vector<TypePackId> packArguments;
+    size_t index;
+
+    static size_t nextIndex;
 };
 
 // Anything!  All static checking is off.
@@ -416,10 +491,20 @@ struct LazyTypeVar
     std::function<TypeId()> thunk;
 };
 
+struct UnknownTypeVar
+{
+};
+
+struct NeverTypeVar
+{
+};
+
 using ErrorTypeVar = Unifiable::Error;
 
-using TypeVariant = Unifiable::Variant<TypeId, PrimitiveTypeVar, SingletonTypeVar, FunctionTypeVar, TableTypeVar, MetatableTypeVar, ClassTypeVar,
-    AnyTypeVar, UnionTypeVar, IntersectionTypeVar, LazyTypeVar>;
+using TypeVariant =
+    Unifiable::Variant<TypeId, PrimitiveTypeVar, ConstrainedTypeVar, BlockedTypeVar, PendingExpansionTypeVar, SingletonTypeVar, FunctionTypeVar,
+        TableTypeVar, MetatableTypeVar, ClassTypeVar, AnyTypeVar, UnionTypeVar, IntersectionTypeVar, LazyTypeVar, UnknownTypeVar, NeverTypeVar>;
+
 
 struct TypeVar final
 {
@@ -436,7 +521,16 @@ struct TypeVar final
     TypeVar(const TypeVariant& ty, bool persistent)
         : ty(ty)
         , persistent(persistent)
+        , normal(persistent) // We assume that all persistent types are irreducable.
     {
+    }
+
+    // Re-assignes the content of the type, but doesn't change the owning arena and can't make type persistent.
+    void reassign(const TypeVar& rhs)
+    {
+        ty = rhs.ty;
+        normal = rhs.normal;
+        documentationSymbol = rhs.documentationSymbol;
     }
 
     TypeVariant ty;
@@ -445,6 +539,10 @@ struct TypeVar final
     // Global type bindings are immutable but are reused many times.
     // Persistent TypeVars do not get cloned.
     bool persistent = false;
+
+    // Normalization sets this for types that are fully normalized.
+    // This implies that they are transitively immutable.
+    bool normal = false;
 
     std::optional<std::string> documentationSymbol;
 
@@ -456,9 +554,11 @@ struct TypeVar final
 
     TypeVar& operator=(const TypeVariant& rhs);
     TypeVar& operator=(TypeVariant&& rhs);
+
+    TypeVar& operator=(const TypeVar& rhs);
 };
 
-using SeenSet = std::set<std::pair<void*, void*>>;
+using SeenSet = std::set<std::pair<const void*, const void*>>;
 bool areEqual(SeenSet& seen, const TypeVar& lhs, const TypeVar& rhs);
 
 // Follow BoundTypeVars until we get to something real
@@ -488,6 +588,9 @@ const TableTypeVar* getTableType(TypeId type);
 // Returns nullptr if the type has no name.
 const std::string* getName(TypeId type);
 
+// Returns name of the module where type was defined if type has that information
+std::optional<ModuleName> getDefinitionModuleName(TypeId type);
+
 // Checks whether a union contains all types of another union.
 bool isSubset(const UnionTypeVar& super, const UnionTypeVar& sub);
 
@@ -510,10 +613,15 @@ struct SingletonTypes
     const TypeId stringType;
     const TypeId booleanType;
     const TypeId threadType;
+    const TypeId trueType;
+    const TypeId falseType;
     const TypeId anyType;
-    const TypeId optionalNumberType;
+    const TypeId unknownType;
+    const TypeId neverType;
 
     const TypePackId anyTypePack;
+    const TypePackId neverTypePack;
+    const TypePackId uninhabitableTypePack;
 
     SingletonTypes();
     ~SingletonTypes();
@@ -539,6 +647,8 @@ void persist(TypePackId tp);
 
 const TypeLevel* getLevel(TypeId ty);
 TypeLevel* getMutableLevel(TypeId ty);
+
+std::optional<TypeLevel> getLevel(TypePackId tp);
 
 const Property* lookupClassProp(const ClassTypeVar* cls, const Name& name);
 bool isSubclass(const ClassTypeVar* cls, const ClassTypeVar* parent);
@@ -567,12 +677,30 @@ T* getMutable(TypeId tv)
     return get_if<T>(&asMutable(tv)->ty);
 }
 
-/* Traverses the UnionTypeVar yielding each TypeId.
- * If the iterator encounters a nested UnionTypeVar, it will instead yield each TypeId within.
- *
- * Beware: the iterator does not currently filter for unique TypeIds. This may change in the future.
+const std::vector<TypeId>& getTypes(const UnionTypeVar* utv);
+const std::vector<TypeId>& getTypes(const IntersectionTypeVar* itv);
+const std::vector<TypeId>& getTypes(const ConstrainedTypeVar* ctv);
+
+template<typename T>
+struct TypeIterator;
+
+using UnionTypeVarIterator = TypeIterator<UnionTypeVar>;
+UnionTypeVarIterator begin(const UnionTypeVar* utv);
+UnionTypeVarIterator end(const UnionTypeVar* utv);
+
+using IntersectionTypeVarIterator = TypeIterator<IntersectionTypeVar>;
+IntersectionTypeVarIterator begin(const IntersectionTypeVar* itv);
+IntersectionTypeVarIterator end(const IntersectionTypeVar* itv);
+
+using ConstrainedTypeVarIterator = TypeIterator<ConstrainedTypeVar>;
+ConstrainedTypeVarIterator begin(const ConstrainedTypeVar* ctv);
+ConstrainedTypeVarIterator end(const ConstrainedTypeVar* ctv);
+
+/* Traverses the type T yielding each TypeId.
+ * If the iterator encounters a nested type T, it will instead yield each TypeId within.
  */
-struct UnionTypeVarIterator
+template<typename T>
+struct TypeIterator
 {
     using value_type = Luau::TypeId;
     using pointer = value_type*;
@@ -580,32 +708,118 @@ struct UnionTypeVarIterator
     using difference_type = size_t;
     using iterator_category = std::input_iterator_tag;
 
-    explicit UnionTypeVarIterator(const UnionTypeVar* utv);
+    explicit TypeIterator(const T* t)
+    {
+        LUAU_ASSERT(t);
 
-    UnionTypeVarIterator& operator++();
-    UnionTypeVarIterator operator++(int);
-    bool operator!=(const UnionTypeVarIterator& rhs);
-    bool operator==(const UnionTypeVarIterator& rhs);
+        const std::vector<TypeId>& types = getTypes(t);
+        if (!types.empty())
+            stack.push_front({t, 0});
 
-    const TypeId& operator*();
+        seen.insert(t);
+        descend();
+    }
 
-    friend UnionTypeVarIterator end(const UnionTypeVar* utv);
+    TypeIterator<T>& operator++()
+    {
+        advance();
+        descend();
+        return *this;
+    }
+
+    TypeIterator<T> operator++(int)
+    {
+        TypeIterator<T> copy = *this;
+        ++copy;
+        return copy;
+    }
+
+    bool operator==(const TypeIterator<T>& rhs) const
+    {
+        if (!stack.empty() && !rhs.stack.empty())
+            return stack.front() == rhs.stack.front();
+
+        return stack.empty() && rhs.stack.empty();
+    }
+
+    bool operator!=(const TypeIterator<T>& rhs) const
+    {
+        return !(*this == rhs);
+    }
+
+    const TypeId& operator*()
+    {
+        descend();
+
+        LUAU_ASSERT(!stack.empty());
+
+        auto [t, currentIndex] = stack.front();
+        LUAU_ASSERT(t);
+
+        const std::vector<TypeId>& types = getTypes(t);
+        LUAU_ASSERT(currentIndex < types.size());
+
+        const TypeId& ty = types[currentIndex];
+        LUAU_ASSERT(!get<T>(follow(ty)));
+
+        return ty;
+    }
+
+    // Normally, we'd have `begin` and `end` be a template but there's too much trouble
+    // with templates portability in this area, so not worth it. Thanks MSVC.
+    friend UnionTypeVarIterator end(const UnionTypeVar*);
+    friend IntersectionTypeVarIterator end(const IntersectionTypeVar*);
+    friend ConstrainedTypeVarIterator end(const ConstrainedTypeVar*);
 
 private:
-    UnionTypeVarIterator() = default;
+    TypeIterator() = default;
 
-    // (UnionTypeVar* utv, size_t currentIndex)
-    using SavedIterInfo = std::pair<const UnionTypeVar*, size_t>;
+    // (T* t, size_t currentIndex)
+    using SavedIterInfo = std::pair<const T*, size_t>;
 
     std::deque<SavedIterInfo> stack;
-    std::unordered_set<const UnionTypeVar*> seen; // Only needed to protect the iterator from hanging the thread.
+    std::unordered_set<const T*> seen; // Only needed to protect the iterator from hanging the thread.
 
-    void advance();
-    void descend();
+    void advance()
+    {
+        while (!stack.empty())
+        {
+            auto& [t, currentIndex] = stack.front();
+            ++currentIndex;
+
+            const std::vector<TypeId>& types = getTypes(t);
+            if (currentIndex >= types.size())
+                stack.pop_front();
+            else
+                break;
+        }
+    }
+
+    void descend()
+    {
+        while (!stack.empty())
+        {
+            auto [current, currentIndex] = stack.front();
+            const std::vector<TypeId>& types = getTypes(current);
+            if (auto inner = get<T>(follow(types[currentIndex])))
+            {
+                // If we're about to descend into a cyclic type, we should skip over this.
+                // Ideally this should never happen, but alas it does from time to time. :(
+                if (seen.find(inner) != seen.end())
+                    advance();
+                else
+                {
+                    seen.insert(inner);
+                    stack.push_front({inner, 0});
+                }
+
+                continue;
+            }
+
+            break;
+        }
+    }
 };
-
-UnionTypeVarIterator begin(const UnionTypeVar* utv);
-UnionTypeVarIterator end(const UnionTypeVar* utv);
 
 using TypeIdPredicate = std::function<std::optional<TypeId>(TypeId)>;
 std::vector<TypeId> filterMap(TypeId type, TypeIdPredicate predicate);

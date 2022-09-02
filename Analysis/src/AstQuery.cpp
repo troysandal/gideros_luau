@@ -17,6 +17,104 @@ namespace Luau
 namespace
 {
 
+
+struct AutocompleteNodeFinder : public AstVisitor
+{
+    const Position pos;
+    std::vector<AstNode*> ancestry;
+
+    explicit AutocompleteNodeFinder(Position pos, AstNode* root)
+        : pos(pos)
+    {
+    }
+
+    bool visit(AstExpr* expr) override
+    {
+        if (expr->location.begin < pos && pos <= expr->location.end)
+        {
+            ancestry.push_back(expr);
+            return true;
+        }
+        return false;
+    }
+
+    bool visit(AstStat* stat) override
+    {
+        if (stat->location.begin < pos && pos <= stat->location.end)
+        {
+            ancestry.push_back(stat);
+            return true;
+        }
+        return false;
+    }
+
+    bool visit(AstType* type) override
+    {
+        if (type->location.begin < pos && pos <= type->location.end)
+        {
+            ancestry.push_back(type);
+            return true;
+        }
+        return false;
+    }
+
+    bool visit(AstTypeError* type) override
+    {
+        // For a missing type, match the whole range including the start position
+        if (type->isMissing && type->location.containsClosed(pos))
+        {
+            ancestry.push_back(type);
+            return true;
+        }
+        return false;
+    }
+
+    bool visit(class AstTypePack* typePack) override
+    {
+        return true;
+    }
+
+    bool visit(AstStatBlock* block) override
+    {
+        // If ancestry is empty, we are inspecting the root of the AST.  Its extent is considered to be infinite.
+        if (ancestry.empty())
+        {
+            ancestry.push_back(block);
+            return true;
+        }
+
+        // AstExprIndexName nodes are nested outside-in, so we want the outermost node in the case of nested nodes.
+        // ex foo.bar.baz is represented in the AST as IndexName{ IndexName {foo, bar}, baz}
+        if (!ancestry.empty() && ancestry.back()->is<AstExprIndexName>())
+            return false;
+
+        // Type annotation error might intersect the block statement when the function header is being written,
+        // annotation takes priority
+        if (!ancestry.empty() && ancestry.back()->is<AstTypeError>())
+            return false;
+
+        // If the cursor is at the end of an expression or type and simultaneously at the beginning of a block,
+        // the expression or type wins out.
+        // The exception to this is if we are in a block under an AstExprFunction.  In this case, we consider the position to
+        // be within the block.
+        if (block->location.begin == pos && !ancestry.empty())
+        {
+            if (ancestry.back()->asExpr() && !ancestry.back()->is<AstExprFunction>())
+                return false;
+
+            if (ancestry.back()->asType())
+                return false;
+        }
+
+        if (block->location.begin <= pos && pos <= block->location.end)
+        {
+            ancestry.push_back(block);
+            return true;
+        }
+        return false;
+    }
+};
+
 struct FindNode : public AstVisitor
 {
     const Position pos;
@@ -71,9 +169,11 @@ struct FindFullAncestry final : public AstVisitor
 {
     std::vector<AstNode*> nodes;
     Position pos;
+    Position documentEnd;
 
-    explicit FindFullAncestry(Position pos)
+    explicit FindFullAncestry(Position pos, Position documentEnd)
         : pos(pos)
+        , documentEnd(documentEnd)
     {
     }
 
@@ -84,17 +184,38 @@ struct FindFullAncestry final : public AstVisitor
             nodes.push_back(node);
             return true;
         }
+
+        // Edge case: If we ask for the node at the position that is the very end of the document
+        // return the innermost AST element that ends at that position.
+
+        if (node->location.end == documentEnd && pos >= documentEnd)
+        {
+            nodes.push_back(node);
+            return true;
+        }
+
         return false;
     }
 };
 
 } // namespace
 
+std::vector<AstNode*> findAncestryAtPositionForAutocomplete(const SourceModule& source, Position pos)
+{
+    AutocompleteNodeFinder finder{pos, source.root};
+    source.root->visit(&finder);
+    return finder.ancestry;
+}
+
 std::vector<AstNode*> findAstAncestryOfPosition(const SourceModule& source, Position pos)
 {
-    FindFullAncestry finder(pos);
+    const Position end = source.root->location.end;
+    if (pos > end)
+        pos = end;
+
+    FindFullAncestry finder(pos, end);
     source.root->visit(&finder);
-    return std::move(finder.nodes);
+    return finder.nodes;
 }
 
 AstNode* findNodeAtPosition(const SourceModule& source, Position pos)
@@ -193,7 +314,7 @@ std::optional<Binding> findBindingAtPosition(const Module& module, const SourceM
         auto iter = currentScope->bindings.find(name);
         if (iter != currentScope->bindings.end() && iter->second.location.begin <= pos)
         {
-            /* Ignore this binding if we're inside its definition. e.g. local abc = abc -- Will take the definition of abc from outer scope */
+            // Ignore this binding if we're inside its definition. e.g. local abc = abc -- Will take the definition of abc from outer scope
             std::optional<AstStatLocal*> bindingStatement = findBindingLocalStatement(source, iter->second);
             if (!bindingStatement || !(*bindingStatement)->location.contains(pos))
                 return iter->second;

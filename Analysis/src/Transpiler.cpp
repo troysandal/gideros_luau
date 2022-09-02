@@ -205,20 +205,6 @@ struct Printer
         }
     }
 
-    void visualizeWithSelf(AstExpr& expr, bool self)
-    {
-        if (!self)
-            return visualize(expr);
-
-        AstExprIndexName* func = expr.as<AstExprIndexName>();
-        LUAU_ASSERT(func);
-
-        visualize(*func->expr);
-        writer.symbol(":");
-        advance(func->indexLocation.begin);
-        writer.identifier(func->index.value);
-    }
-
     void visualizeTypePackAnnotation(const AstTypePack& annotation, bool forVarArg)
     {
         advance(annotation.location.begin);
@@ -366,7 +352,7 @@ struct Printer
         }
         else if (const auto& a = expr.as<AstExprCall>())
         {
-            visualizeWithSelf(*a->func, a->self);
+            visualize(*a->func);
             writer.symbol("(");
 
             bool first = true;
@@ -385,7 +371,7 @@ struct Printer
         else if (const auto& a = expr.as<AstExprIndexName>())
         {
             visualize(*a->expr);
-            writer.symbol(".");
+            writer.symbol(std::string(1, a->op));
             writer.write(a->index.value);
         }
         else if (const auto& a = expr.as<AstExprIndexExpr>())
@@ -541,6 +527,28 @@ struct Printer
             visualize(*a->trueExpr);
             writer.keyword("else");
             visualize(*a->falseExpr);
+        }
+        else if (const auto& a = expr.as<AstExprInterpString>())
+        {
+            writer.symbol("`");
+
+            size_t index = 0;
+
+            for (const auto& string : a->strings)
+            {
+                writer.write(escape(std::string_view(string.data, string.size), /* escapeForInterpString = */ true));
+
+                if (index < a->expressions.size)
+                {
+                    writer.symbol("{");
+                    visualize(*a->expressions.data[index]);
+                    writer.symbol("}");
+                }
+
+                index++;
+            }
+
+            writer.symbol("`");
         }
         else if (const auto& a = expr.as<AstExprError>())
         {
@@ -783,7 +791,7 @@ struct Printer
         else if (const auto& a = program.as<AstStatFunction>())
         {
             writer.keyword("function");
-            visualizeWithSelf(*a->name, a->func->self != nullptr);
+            visualize(*a->name);
             visualizeFunctionBody(*a->func);
         }
         else if (const auto& a = program.as<AstStatLocalFunction>())
@@ -1042,31 +1050,42 @@ struct Printer
         }
         else if (const auto& a = typeAnnotation.as<AstTypeTable>())
         {
-            CommaSeparatorInserter comma(writer);
+            AstTypeReference* indexType = a->indexer ? a->indexer->indexType->as<AstTypeReference>() : nullptr;
 
-            writer.symbol("{");
-
-            for (std::size_t i = 0; i < a->props.size; ++i)
+            if (a->props.size == 0 && indexType && indexType->name == "number")
             {
-                comma();
-                advance(a->props.data[i].location.begin);
-                writer.identifier(a->props.data[i].name.value);
-                if (a->props.data[i].type)
-                {
-                    writer.symbol(":");
-                    visualizeTypeAnnotation(*a->props.data[i].type);
-                }
-            }
-            if (a->indexer)
-            {
-                comma();
-                writer.symbol("[");
-                visualizeTypeAnnotation(*a->indexer->indexType);
-                writer.symbol("]");
-                writer.symbol(":");
+                writer.symbol("{");
                 visualizeTypeAnnotation(*a->indexer->resultType);
+                writer.symbol("}");
             }
-            writer.symbol("}");
+            else
+            {
+                CommaSeparatorInserter comma(writer);
+
+                writer.symbol("{");
+
+                for (std::size_t i = 0; i < a->props.size; ++i)
+                {
+                    comma();
+                    advance(a->props.data[i].location.begin);
+                    writer.identifier(a->props.data[i].name.value);
+                    if (a->props.data[i].type)
+                    {
+                        writer.symbol(":");
+                        visualizeTypeAnnotation(*a->props.data[i].type);
+                    }
+                }
+                if (a->indexer)
+                {
+                    comma();
+                    writer.symbol("[");
+                    visualizeTypeAnnotation(*a->indexer->indexType);
+                    writer.symbol("]");
+                    writer.symbol(":");
+                    visualizeTypeAnnotation(*a->indexer->resultType);
+                }
+                writer.symbol("}");
+            }
         }
         else if (auto a = typeAnnotation.as<AstTypeTypeof>())
         {

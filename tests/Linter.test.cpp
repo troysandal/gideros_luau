@@ -43,6 +43,20 @@ TEST_CASE_FIXTURE(Fixture, "DeprecatedGlobal")
     CHECK_EQ(result.warnings[0].text, "Global 'Wait' is deprecated, use 'wait' instead");
 }
 
+TEST_CASE_FIXTURE(Fixture, "DeprecatedGlobalNoReplacement")
+{
+    ScopedFastFlag sff{"LuauLintFixDeprecationMessage", true};
+
+    // Normally this would be defined externally, so hack it in for testing
+    const char* deprecationReplacementString = "";
+    addGlobalBinding(typeChecker, "Version", Binding{typeChecker.anyType, {}, true, deprecationReplacementString});
+
+    LintResult result = lintTyped("Version()");
+
+    REQUIRE_EQ(result.warnings.size(), 1);
+    CHECK_EQ(result.warnings[0].text, "Global 'Version' is deprecated");
+}
+
 TEST_CASE_FIXTURE(Fixture, "PlaceholderRead")
 {
     LintResult result = lint(R"(
@@ -75,7 +89,7 @@ _ = 6
     CHECK_EQ(result.warnings.size(), 0);
 }
 
-TEST_CASE_FIXTURE(Fixture, "BuiltinGlobalWrite")
+TEST_CASE_FIXTURE(BuiltinsFixture, "BuiltinGlobalWrite")
 {
     LintResult result = lint(R"(
 math = {}
@@ -309,7 +323,7 @@ print(arg)
     CHECK_EQ(result.warnings[0].text, "Variable 'arg' shadows previous declaration at line 2");
 }
 
-TEST_CASE_FIXTURE(Fixture, "LocalShadowGlobal")
+TEST_CASE_FIXTURE(BuiltinsFixture, "LocalShadowGlobal")
 {
     LintResult result = lint(R"(
 local math = math
@@ -606,81 +620,26 @@ TEST_CASE_FIXTURE(Fixture, "UnknownType")
     TypeId instanceType = typeChecker.globalTypes.addType(instanceTable);
     TypeFun instanceTypeFun{{}, instanceType};
 
-    ClassTypeVar::Props enumItemProps{
-        {"EnumType", {typeChecker.anyType}},
-    };
-
-    ClassTypeVar enumItemClass{"EnumItem", enumItemProps, std::nullopt, std::nullopt, {}, {}};
-    TypeId enumItemType = typeChecker.globalTypes.addType(enumItemClass);
-    TypeFun enumItemTypeFun{{}, enumItemType};
-
-    ClassTypeVar normalIdClass{"NormalId", {}, enumItemType, std::nullopt, {}, {}};
-    TypeId normalIdType = typeChecker.globalTypes.addType(normalIdClass);
-    TypeFun normalIdTypeFun{{}, normalIdType};
-
-    // Normally this would be defined externally, so hack it in for testing
-    addGlobalBinding(typeChecker, "game", typeChecker.anyType, "@test");
-    addGlobalBinding(typeChecker, "typeof", typeChecker.anyType, "@test");
     typeChecker.globalScope->exportedTypeBindings["Part"] = instanceTypeFun;
-    typeChecker.globalScope->exportedTypeBindings["Workspace"] = instanceTypeFun;
-    typeChecker.globalScope->exportedTypeBindings["RunService"] = instanceTypeFun;
-    typeChecker.globalScope->exportedTypeBindings["Instance"] = instanceTypeFun;
-    typeChecker.globalScope->exportedTypeBindings["ColorSequence"] = TypeFun{{}, typeChecker.anyType};
-    typeChecker.globalScope->exportedTypeBindings["EnumItem"] = enumItemTypeFun;
-    typeChecker.globalScope->importedTypeBindings["Enum"] = {{"NormalId", normalIdTypeFun}};
-    freeze(typeChecker.globalTypes);
 
     LintResult result = lint(R"(
-local _e01 = game:GetService("Foo")
-local _e02 = game:GetService("NormalId")
-local _e03 = game:FindService("table")
-local _e04 = type(game) == "Part"
-local _e05 = type(game) == "NormalId"
-local _e06 = typeof(game) == "Bar"
-local _e07 = typeof(game) == "Part"
-local _e08 = typeof(game) == "vector"
-local _e09 = typeof(game) == "NormalId"
-local _e10 = game:IsA("ColorSequence")
-local _e11 = game:IsA("Enum.NormalId")
-local _e12 = game:FindFirstChildWhichIsA("function")
+local game = ...
+local _e01 = type(game) == "Part"
+local _e02 = typeof(game) == "Bar"
+local _e03 = typeof(game) == "vector"
 
-local _o01 = game:GetService("Workspace")
-local _o02 = game:FindService("RunService")
-local _o03 = type(game) == "number"
-local _o04 = type(game) == "vector"
-local _o05 = typeof(game) == "string"
-local _o06 = typeof(game) == "Instance"
-local _o07 = typeof(game) == "EnumItem"
-local _o08 = game:IsA("Part")
-local _o09 = game:IsA("NormalId")
-local _o10 = game:FindFirstChildWhichIsA("Part")
+local _o01 = type(game) == "number"
+local _o02 = type(game) == "vector"
+local _o03 = typeof(game) == "Part"
 )");
 
-    REQUIRE_EQ(result.warnings.size(), 12);
-    CHECK_EQ(result.warnings[0].location.begin.line, 1);
-    CHECK_EQ(result.warnings[0].text, "Unknown type 'Foo'");
-    CHECK_EQ(result.warnings[1].location.begin.line, 2);
-    CHECK_EQ(result.warnings[1].text, "Unknown type 'NormalId' (expected class type)");
-    CHECK_EQ(result.warnings[2].location.begin.line, 3);
-    CHECK_EQ(result.warnings[2].text, "Unknown type 'table' (expected class type)");
-    CHECK_EQ(result.warnings[3].location.begin.line, 4);
-    CHECK_EQ(result.warnings[3].text, "Unknown type 'Part' (expected primitive type)");
-    CHECK_EQ(result.warnings[4].location.begin.line, 5);
-    CHECK_EQ(result.warnings[4].text, "Unknown type 'NormalId' (expected primitive type)");
-    CHECK_EQ(result.warnings[5].location.begin.line, 6);
-    CHECK_EQ(result.warnings[5].text, "Unknown type 'Bar'");
-    CHECK_EQ(result.warnings[6].location.begin.line, 7);
-    CHECK_EQ(result.warnings[6].text, "Unknown type 'Part' (expected primitive or userdata type)");
-    CHECK_EQ(result.warnings[7].location.begin.line, 8);
-    CHECK_EQ(result.warnings[7].text, "Unknown type 'vector' (expected primitive or userdata type)");
-    CHECK_EQ(result.warnings[8].location.begin.line, 9);
-    CHECK_EQ(result.warnings[8].text, "Unknown type 'NormalId' (expected primitive or userdata type)");
-    CHECK_EQ(result.warnings[9].location.begin.line, 10);
-    CHECK_EQ(result.warnings[9].text, "Unknown type 'ColorSequence' (expected class or enum type)");
-    CHECK_EQ(result.warnings[10].location.begin.line, 11);
-    CHECK_EQ(result.warnings[10].text, "Unknown type 'Enum.NormalId'");
-    CHECK_EQ(result.warnings[11].location.begin.line, 12);
-    CHECK_EQ(result.warnings[11].text, "Unknown type 'function' (expected class type)");
+    REQUIRE_EQ(result.warnings.size(), 3);
+    CHECK_EQ(result.warnings[0].location.begin.line, 2);
+    CHECK_EQ(result.warnings[0].text, "Unknown type 'Part' (expected primitive type)");
+    CHECK_EQ(result.warnings[1].location.begin.line, 3);
+    CHECK_EQ(result.warnings[1].text, "Unknown type 'Bar'");
+    CHECK_EQ(result.warnings[2].location.begin.line, 4);
+    CHECK_EQ(result.warnings[2].text, "Unknown type 'vector' (expected primitive or userdata type)");
 }
 
 TEST_CASE_FIXTURE(Fixture, "ForRangeTable")
@@ -1491,7 +1450,8 @@ TEST_CASE_FIXTURE(Fixture, "LintHygieneUAF")
 TEST_CASE_FIXTURE(Fixture, "DeprecatedApi")
 {
     unfreeze(typeChecker.globalTypes);
-    TypeId instanceType = typeChecker.globalTypes.addType(ClassTypeVar{"Instance", {}, std::nullopt, std::nullopt, {}, {}});
+    TypeId instanceType = typeChecker.globalTypes.addType(ClassTypeVar{"Instance", {}, std::nullopt, std::nullopt, {}, {}, "Test"});
+    persist(instanceType);
     typeChecker.globalScope->exportedTypeBindings["Instance"] = TypeFun{{}, instanceType};
 
     getMutable<ClassTypeVar>(instanceType)->props = {
@@ -1524,7 +1484,7 @@ end
     CHECK_EQ(result.warnings[2].text, "Member 'Instance.DataCost' is deprecated");
 }
 
-TEST_CASE_FIXTURE(Fixture, "TableOperations")
+TEST_CASE_FIXTURE(BuiltinsFixture, "TableOperations")
 {
     LintResult result = lintTyped(R"(
 local t = {}
@@ -1667,8 +1627,6 @@ _ = (math.random() < 0.5 and false) or 42 -- currently ignored
 
 TEST_CASE_FIXTURE(Fixture, "WrongComment")
 {
-    ScopedFastFlag sff("LuauParseAllHotComments", true);
-
     LintResult result = lint(R"(
 --!strict
 --!struct
@@ -1712,6 +1670,101 @@ end
 
     REQUIRE_EQ(result.warnings.size(), 1);
     CHECK_EQ(result.warnings[0].text, "Condition has already been checked on line 2");
+}
+
+TEST_CASE_FIXTURE(Fixture, "WrongCommentOptimize")
+{
+    LintResult result = lint(R"(
+--!optimize
+--!optimize me
+--!optimize 100500
+--!optimize 2
+)");
+
+    REQUIRE_EQ(result.warnings.size(), 3);
+    CHECK_EQ(result.warnings[0].text, "optimize directive requires an optimization level");
+    CHECK_EQ(result.warnings[1].text, "optimize directive uses unknown optimization level 'me', 0..2 expected");
+    CHECK_EQ(result.warnings[2].text, "optimize directive uses unknown optimization level '100500', 0..2 expected");
+
+    result = lint("--!optimize   ");
+    REQUIRE_EQ(result.warnings.size(), 1);
+    CHECK_EQ(result.warnings[0].text, "optimize directive requires an optimization level");
+}
+
+TEST_CASE_FIXTURE(Fixture, "TestStringInterpolation")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    LintResult result = lint(R"(
+        --!nocheck
+        local _ = `unknown {foo}`
+    )");
+
+    REQUIRE_EQ(result.warnings.size(), 1);
+}
+
+TEST_CASE_FIXTURE(Fixture, "IntegerParsing")
+{
+    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
+
+    LintResult result = lint(R"(
+local _ = 0b10000000000000000000000000000000000000000000000000000000000000000
+local _ = 0x10000000000000000
+)");
+
+    REQUIRE_EQ(result.warnings.size(), 2);
+    CHECK_EQ(result.warnings[0].text, "Binary number literal exceeded available precision and has been truncated to 2^64");
+    CHECK_EQ(result.warnings[1].text, "Hexadecimal number literal exceeded available precision and has been truncated to 2^64");
+}
+
+// TODO: remove with FFlagLuauErrorDoubleHexPrefix
+TEST_CASE_FIXTURE(Fixture, "IntegerParsingDoublePrefix")
+{
+    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
+    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", false}; // Lint will be available until we start rejecting code
+
+    LintResult result = lint(R"(
+local _ = 0x0x123
+local _ = 0x0xffffffffffffffffffffffffffffffffff
+)");
+
+    REQUIRE_EQ(result.warnings.size(), 2);
+    CHECK_EQ(result.warnings[0].text,
+        "Hexadecimal number literal has a double prefix, which will fail to parse in the future; remove the extra 0x to fix");
+    CHECK_EQ(result.warnings[1].text,
+        "Hexadecimal number literal has a double prefix, which will fail to parse in the future; remove the extra 0x to fix");
+}
+
+TEST_CASE_FIXTURE(Fixture, "ComparisonPrecedence")
+{
+    ScopedFastFlag sff("LuauLintComparisonPrecedence", true);
+
+    LintResult result = lint(R"(
+local a, b = ...
+
+local _ = not a == b
+local _ = not a ~= b
+local _ = not a <= b
+local _ = a <= b == 0
+
+local _ = not a == not b -- weird but ok
+
+-- silence tests for all of the above
+local _ = not (a == b)
+local _ = (not a) == b
+local _ = not (a ~= b)
+local _ = (not a) ~= b
+local _ = not (a <= b)
+local _ = (not a) <= b
+local _ = (a <= b) == 0
+local _ = a <= (b == 0)
+)");
+
+    REQUIRE_EQ(result.warnings.size(), 4);
+    CHECK_EQ(result.warnings[0].text, "not X == Y is equivalent to (not X) == Y; consider using X ~= Y, or wrap one of the expressions in parentheses to silence");
+    CHECK_EQ(result.warnings[1].text, "not X ~= Y is equivalent to (not X) ~= Y; consider using X == Y, or wrap one of the expressions in parentheses to silence");
+    CHECK_EQ(result.warnings[2].text, "not X <= Y is equivalent to (not X) <= Y; wrap one of the expressions in parentheses to silence");
+    CHECK_EQ(result.warnings[3].text, "X <= Y == Z is equivalent to (X <= Y) == Z; wrap one of the expressions in parentheses to silence");
 }
 
 TEST_SUITE_END();

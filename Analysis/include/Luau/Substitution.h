@@ -1,8 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
-#include "Luau/Module.h"
-#include "Luau/ModuleResolver.h"
+#include "Luau/TypeArena.h"
 #include "Luau/TypePack.h"
 #include "Luau/TypeVar.h"
 #include "Luau/DenseHash.h"
@@ -90,6 +89,7 @@ struct Tarjan
     std::vector<int> lowlink;
 
     int childCount = 0;
+    int childLimit = 0;
 
     // This should never be null; ensure you initialize it before calling
     // substitution methods.
@@ -139,6 +139,8 @@ struct FindDirty : Tarjan
 {
     std::vector<bool> dirty;
 
+    void clearTarjan();
+
     // Get/set the dirty bit for an index (grows the vector if needed)
     bool getDirty(int index);
     void setDirty(int index, bool d);
@@ -176,6 +178,8 @@ public:
     TypeArena* arena;
     DenseHashMap<TypeId, TypeId> newTypes{nullptr};
     DenseHashMap<TypePackId, TypePackId> newPacks{nullptr};
+    DenseHashSet<TypeId> replacedTypes{nullptr};
+    DenseHashSet<TypePackId> replacedTypePacks{nullptr};
 
     std::optional<TypeId> substitute(TypeId ty);
     std::optional<TypePackId> substitute(TypePackId tp);

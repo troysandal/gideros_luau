@@ -8,9 +8,10 @@
 #include "Luau/BytecodeBuilder.h"
 #include "Luau/Parser.h"
 
-#include "FileUtils.h"
-#include "Profiler.h"
 #include "Coverage.h"
+#include "FileUtils.h"
+#include "Flags.h"
+#include "Profiler.h"
 
 #include "isocline.h"
 
@@ -19,7 +20,17 @@
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #endif
+
+#ifdef CALLGRIND
+#include <valgrind/callgrind.h>
+#endif
+
+#include <locale.h>
+#include <signal.h>
 
 LUAU_FASTFLAG(DebugLuauTimeTracing)
 
@@ -34,10 +45,40 @@ enum class CliMode
 enum class CompileFormat
 {
     Text,
-    Binary
+    Binary,
+    Null
 };
 
 constexpr int MaxTraversalLimit = 50;
+
+// Ctrl-C handling
+static void sigintCallback(lua_State* L, int gc)
+{
+    if (gc >= 0)
+        return;
+
+    lua_callbacks(L)->interrupt = NULL;
+
+    lua_rawcheckstack(L, 1); // reserve space for error string
+    luaL_error(L, "Execution interrupted");
+}
+
+static lua_State* replState = NULL;
+
+#ifdef _WIN32
+BOOL WINAPI sigintHandler(DWORD signal)
+{
+    if (signal == CTRL_C_EVENT && replState)
+        lua_callbacks(replState)->interrupt = &sigintCallback;
+    return TRUE;
+}
+#else
+static void sigintHandler(int signum)
+{
+    if (signum == SIGINT && replState)
+        lua_callbacks(replState)->interrupt = &sigintCallback;
+}
+#endif
 
 struct GlobalOptions
 {
@@ -68,8 +109,8 @@ static int lua_loadstring(lua_State* L)
         return 1;
 
     lua_pushnil(L);
-    lua_insert(L, -2); /* put before error message */
-    return 2;          /* return nil plus error message */
+    lua_insert(L, -2); // put before error message
+    return 2;          // return nil plus error message
 }
 
 static int finishrequire(lua_State* L)
@@ -90,7 +131,11 @@ static int lua_require(lua_State* L)
     // return the module from the cache
     lua_getfield(L, -1, name.c_str());
     if (!lua_isnil(L, -1))
+    {
+        // L stack: _MODULES result
         return finishrequire(L);
+    }
+
     lua_pop(L, 1);
 
     std::optional<std::string> source = readFile(name + ".luau");
@@ -102,6 +147,7 @@ static int lua_require(lua_State* L)
     }
 
     // module needs to run in a new thread, isolated from the rest
+    // note: we create ML on main thread so that it doesn't inherit environment of L
     lua_State* GL = lua_mainthread(L);
     lua_State* ML = lua_newthread(GL);
     lua_xmove(GL, L, 1);
@@ -135,11 +181,12 @@ static int lua_require(lua_State* L)
         }
     }
 
-    // there's now a return value on top of ML; stack of L is MODULES thread
+    // there's now a return value on top of ML; L stack: _MODULES ML
     lua_xmove(ML, L, 1);
     lua_pushvalue(L, -1);
     lua_setfield(L, -4, name.c_str());
 
+    // L stack: _MODULES ML result
     return finishrequire(L);
 }
 
@@ -163,6 +210,36 @@ static int lua_collectgarbage(lua_State* L)
     luaL_error(L, "collectgarbage must be called with 'count' or 'collect'");
 }
 
+#ifdef CALLGRIND
+static int lua_callgrind(lua_State* L)
+{
+    const char* option = luaL_checkstring(L, 1);
+
+    if (strcmp(option, "running") == 0)
+    {
+        int r = RUNNING_ON_VALGRIND;
+        lua_pushboolean(L, r);
+        return 1;
+    }
+
+    if (strcmp(option, "zero") == 0)
+    {
+        CALLGRIND_ZERO_STATS;
+        return 0;
+    }
+
+    if (strcmp(option, "dump") == 0)
+    {
+        const char* name = luaL_checkstring(L, 2);
+
+        CALLGRIND_DUMP_STATS_AT(name);
+        return 0;
+    }
+
+    luaL_error(L, "callgrind must be called with one of 'running', 'zero', 'dump'");
+}
+#endif
+
 void setupState(lua_State* L)
 {
     luaL_openlibs(L);
@@ -171,6 +248,9 @@ void setupState(lua_State* L)
         {"loadstring", lua_loadstring},
         {"require", lua_require},
         {"collectgarbage", lua_collectgarbage},
+#ifdef CALLGRIND
+        {"callgrind", lua_callgrind},
+#endif
         {NULL, NULL},
     };
 
@@ -434,6 +514,9 @@ static void runReplImpl(lua_State* L)
 {
     ic_set_default_completer(completeRepl, L);
 
+    // Reset the locale to C
+    setlocale(LC_ALL, "C");
+
     // Make brace matching easier to see
     ic_style_def("ic-bracematch", "teal");
 
@@ -485,6 +568,15 @@ static void runRepl()
     lua_State* L = globalState.get();
 
     setupState(L);
+
+    // setup Ctrl+C handling
+    replState = L;
+#ifdef _WIN32
+    SetConsoleCtrlHandler(sigintHandler, TRUE);
+#else
+    signal(SIGINT, sigintHandler);
+#endif
+
     luaL_sandboxthread(L);
     runReplImpl(L);
 }
@@ -580,7 +672,8 @@ static bool compileFile(const char* name, CompileFormat format)
 
         if (format == CompileFormat::Text)
         {
-            bcb.setDumpFlags(Luau::BytecodeBuilder::Dump_Code | Luau::BytecodeBuilder::Dump_Source | Luau::BytecodeBuilder::Dump_Locals);
+            bcb.setDumpFlags(Luau::BytecodeBuilder::Dump_Code | Luau::BytecodeBuilder::Dump_Source | Luau::BytecodeBuilder::Dump_Locals |
+                             Luau::BytecodeBuilder::Dump_Remarks);
             bcb.setDumpSource(*source);
         }
 
@@ -593,6 +686,8 @@ static bool compileFile(const char* name, CompileFormat format)
             break;
         case CompileFormat::Binary:
             fwrite(bcb.getBytecode().data(), 1, bcb.getBytecode().size(), stdout);
+            break;
+        case CompileFormat::Null:
             break;
         }
 
@@ -641,9 +736,7 @@ int replMain(int argc, char** argv)
 {
     Luau::assertHandler() = assertionHandler;
 
-    for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
-        if (strncmp(flag->name, "Luau", 4) == 0)
-            flag->value = true;
+    setLuauFlagsDefault();
 
     CliMode mode = CliMode::Unknown;
     CompileFormat compileFormat{};
@@ -668,6 +761,10 @@ int replMain(int argc, char** argv)
         else if (strcmp(argv[1], "--compile=text") == 0)
         {
             compileFormat = CompileFormat::Text;
+        }
+        else if (strcmp(argv[1], "--compile=null") == 0)
+        {
+            compileFormat = CompileFormat::Null;
         }
         else
         {
@@ -722,11 +819,10 @@ int replMain(int argc, char** argv)
         else if (strcmp(argv[i], "--timetrace") == 0)
         {
             FFlag::DebugLuauTimeTracing.value = true;
-
-#if !defined(LUAU_ENABLE_TIME_TRACE)
-            printf("To run with --timetrace, Luau has to be built with LUAU_ENABLE_TIME_TRACE enabled\n");
-            return 1;
-#endif
+        }
+        else if (strncmp(argv[i], "--fflags=", 9) == 0)
+        {
+            setLuauFlags(argv[i] + 9);
         }
         else if (argv[i][0] == '-')
         {
@@ -735,6 +831,14 @@ int replMain(int argc, char** argv)
             return 1;
         }
     }
+
+#if !defined(LUAU_ENABLE_TIME_TRACE)
+    if (FFlag::DebugLuauTimeTracing)
+    {
+        fprintf(stderr, "To run with --timetrace, Luau has to be built with LUAU_ENABLE_TIME_TRACE enabled\n");
+        return 1;
+    }
+#endif
 
     const std::vector<std::string> files = getSourceFiles(argc, argv);
     if (mode == CliMode::Unknown)

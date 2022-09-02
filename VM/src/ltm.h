@@ -16,8 +16,11 @@ typedef enum
     TM_NEWINDEX,
     TM_MODE,
     TM_NAMECALL,
+    TM_CALL,
+    TM_ITER,
+    TM_LEN,
 
-    TM_EQ, /* last tag method with `fast' access */
+    TM_EQ, // last tag method with `fast' access
 
     
     TM_ADD,
@@ -29,11 +32,9 @@ typedef enum
     TM_UNM,
 
     
-    TM_LEN,
     TM_LT,
     TM_LE,
     TM_CONCAT,
-    TM_CALL,
     TM_TYPE,
 
 //GIDEROS
@@ -47,14 +48,14 @@ typedef enum
     TM_SHL,
     TM_BNOT,
 
-    TM_N /* number of elements in the enum */
+    TM_N // number of elements in the enum
 } TMS;
 // clang-format on
 
-#define gfasttm(g, et, e) ((et) == NULL ? NULL : ((et)->flags & (1u << (e))) ? NULL : luaT_gettm(et, e, (g)->tmname[e]))
+#define gfasttm(g, et, e) ((et) == NULL ? NULL : ((et)->tmcache & (1u << (e))) ? NULL : luaT_gettm(et, e, (g)->tmname[e]))
 
 #define fasttm(l, et, e) gfasttm(l->global, et, e)
-#define fastnotm(et, e) ((et) == NULL || ((et)->flags & (1u << (e))))
+#define fastnotm(et, e) ((et) == NULL || ((et)->tmcache & (1u << (e))))
 
 LUAI_DATA const char* const luaT_typenames[];
 LUAI_DATA const char* const luaT_eventname[];

@@ -7,8 +7,14 @@
 #include "Luau/Transpiler.h"
 
 #include "FileUtils.h"
+#include "Flags.h"
+
+#ifdef CALLGRIND
+#include <valgrind/callgrind.h>
+#endif
 
 LUAU_FASTFLAG(DebugLuauTimeTracing)
+LUAU_FASTFLAG(LuauTypeMismatchModuleNameResolution)
 
 enum class ReportFormat
 {
@@ -49,6 +55,9 @@ static void reportError(const Luau::Frontend& frontend, ReportFormat format, con
 
     if (const Luau::SyntaxError* syntaxError = Luau::get_if<Luau::SyntaxError>(&error.data))
         report(format, humanReadableName.c_str(), error.location, "SyntaxError", syntaxError->message.c_str());
+    else if (FFlag::LuauTypeMismatchModuleNameResolution)
+        report(format, humanReadableName.c_str(), error.location, "TypeError",
+            Luau::toString(error, Luau::TypeErrorToStringOptions{frontend.fileResolver}).c_str());
     else
         report(format, humanReadableName.c_str(), error.location, "TypeError", Luau::toString(error).c_str());
 }
@@ -108,6 +117,7 @@ static void displayHelp(const char* argv0)
     printf("Available options:\n");
     printf("  --formatter=plain: report analysis errors in Luacheck-compatible format\n");
     printf("  --formatter=gnu: report analysis errors in GNU-compatible format\n");
+    printf("  --mode=strict: default to strict mode when typechecking\n");
     printf("  --timetrace: record compiler time tracing information into trace.json\n");
 }
 
@@ -174,9 +184,9 @@ struct CliConfigResolver : Luau::ConfigResolver
     mutable std::unordered_map<std::string, Luau::Config> configCache;
     mutable std::vector<std::pair<std::string, std::string>> configErrors;
 
-    CliConfigResolver()
+    CliConfigResolver(Luau::Mode mode)
     {
-        defaultConfig.mode = Luau::Mode::Nonstrict;
+        defaultConfig.mode = mode;
     }
 
     const Luau::Config& getConfig(const Luau::ModuleName& name) const override
@@ -214,9 +224,7 @@ int main(int argc, char** argv)
 {
     Luau::assertHandler() = assertionHandler;
 
-    for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
-        if (strncmp(flag->name, "Luau", 4) == 0)
-            flag->value = true;
+    setLuauFlagsDefault();
 
     if (argc >= 2 && strcmp(argv[1], "--help") == 0)
     {
@@ -225,6 +233,7 @@ int main(int argc, char** argv)
     }
 
     ReportFormat format = ReportFormat::Default;
+    Luau::Mode mode = Luau::Mode::Nonstrict;
     bool annotate = false;
 
     for (int i = 1; i < argc; ++i)
@@ -236,16 +245,20 @@ int main(int argc, char** argv)
             format = ReportFormat::Luacheck;
         else if (strcmp(argv[i], "--formatter=gnu") == 0)
             format = ReportFormat::Gnu;
+        else if (strcmp(argv[i], "--mode=strict") == 0)
+            mode = Luau::Mode::Strict;
         else if (strcmp(argv[i], "--annotate") == 0)
             annotate = true;
         else if (strcmp(argv[i], "--timetrace") == 0)
             FFlag::DebugLuauTimeTracing.value = true;
+        else if (strncmp(argv[i], "--fflags=", 9) == 0)
+            setLuauFlags(argv[i] + 9);
     }
 
 #if !defined(LUAU_ENABLE_TIME_TRACE)
     if (FFlag::DebugLuauTimeTracing)
     {
-        printf("To run with --timetrace, Luau has to be built with LUAU_ENABLE_TIME_TRACE enabled\n");
+        fprintf(stderr, "To run with --timetrace, Luau has to be built with LUAU_ENABLE_TIME_TRACE enabled\n");
         return 1;
     }
 #endif
@@ -254,11 +267,15 @@ int main(int argc, char** argv)
     frontendOptions.retainFullTypeGraphs = annotate;
 
     CliFileResolver fileResolver;
-    CliConfigResolver configResolver;
+    CliConfigResolver configResolver(mode);
     Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
 
     Luau::registerBuiltinTypes(frontend.typeChecker);
     Luau::freeze(frontend.typeChecker.globalTypes);
+
+#ifdef CALLGRIND
+    CALLGRIND_ZERO_STATS;
+#endif
 
     std::vector<std::string> files = getSourceFiles(argc, argv);
 

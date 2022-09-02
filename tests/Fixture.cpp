@@ -17,6 +17,8 @@
 
 static const char* mainModuleName = "MainModule";
 
+LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution);
+
 namespace Luau
 {
 
@@ -83,7 +85,7 @@ std::optional<std::string> TestFileResolver::getEnvironmentForModule(const Modul
     return std::nullopt;
 }
 
-Fixture::Fixture(bool freeze)
+Fixture::Fixture(bool freeze, bool prepareAutocomplete)
     : sff_DebugLuauFreezeArena("DebugLuauFreezeArena", freeze)
     , frontend(&fileResolver, &configResolver, {/* retainFullTypeGraphs= */ true})
     , typeChecker(frontend.typeChecker)
@@ -92,9 +94,8 @@ Fixture::Fixture(bool freeze)
     configResolver.defaultConfig.enabledLint.warningMask = ~0ull;
     configResolver.defaultConfig.parseOptions.captureComments = true;
 
-    registerBuiltinTypes(frontend.typeChecker);
-    registerTestTypes();
     Luau::freeze(frontend.typeChecker.globalTypes);
+    Luau::freeze(frontend.typeCheckerForAutocomplete.globalTypes);
 
     Luau::setPrintLine([](auto s) {});
 }
@@ -133,26 +134,19 @@ AstStatBlock* Fixture::parse(const std::string& source, const ParseOptions& pars
 
 CheckResult Fixture::check(Mode mode, std::string source)
 {
-    configResolver.defaultConfig.mode = mode;
-    fileResolver.source[mainModuleName] = std::move(source);
-
-    CheckResult result = frontend.check(fromString(mainModuleName));
-
-    configResolver.defaultConfig.mode = Mode::Strict;
-
-    return result;
-}
-
-CheckResult Fixture::check(const std::string& source)
-{
     ModuleName mm = fromString(mainModuleName);
-    configResolver.defaultConfig.mode = Mode::Strict;
+    configResolver.defaultConfig.mode = mode;
     fileResolver.source[mm] = std::move(source);
     frontend.markDirty(mm);
 
     CheckResult result = frontend.check(mm);
 
     return result;
+}
+
+CheckResult Fixture::check(const std::string& source)
+{
+    return check(Mode::Strict, source);
 }
 
 LintResult Fixture::lint(const std::string& source, const std::optional<LintOptions>& lintOptions)
@@ -201,12 +195,15 @@ ParseResult Fixture::matchParseError(const std::string& source, const std::strin
     sourceModule.reset(new SourceModule);
     ParseResult result = Parser::parse(source.c_str(), source.length(), *sourceModule->names, *sourceModule->allocator, options);
 
-    REQUIRE_MESSAGE(!result.errors.empty(), "Expected a parse error in '" << source << "'");
+    CHECK_MESSAGE(!result.errors.empty(), "Expected a parse error in '" << source << "'");
 
-    CHECK_EQ(result.errors.front().getMessage(), message);
+    if (!result.errors.empty())
+    {
+        CHECK_EQ(result.errors.front().getMessage(), message);
 
-    if (location)
-        CHECK_EQ(result.errors.front().getLocation(), *location);
+        if (location)
+            CHECK_EQ(result.errors.front().getLocation(), *location);
+    }
 
     return result;
 }
@@ -219,11 +216,14 @@ ParseResult Fixture::matchParseErrorPrefix(const std::string& source, const std:
     sourceModule.reset(new SourceModule);
     ParseResult result = Parser::parse(source.c_str(), source.length(), *sourceModule->names, *sourceModule->allocator, options);
 
-    REQUIRE_MESSAGE(!result.errors.empty(), "Expected a parse error in '" << source << "'");
+    CHECK_MESSAGE(!result.errors.empty(), "Expected a parse error in '" << source << "'");
 
-    const std::string& message = result.errors.front().getMessage();
-    CHECK_GE(message.length(), prefix.length());
-    CHECK_EQ(prefix, message.substr(0, prefix.size()));
+    if (!result.errors.empty())
+    {
+        const std::string& message = result.errors.front().getMessage();
+        CHECK_GE(message.length(), prefix.length());
+        CHECK_EQ(prefix, message.substr(0, prefix.size()));
+    }
 
     return result;
 }
@@ -235,7 +235,7 @@ ModulePtr Fixture::getMainModule()
 
 SourceModule* Fixture::getMainSourceModule()
 {
-    return frontend.getSourceModule(fromString("MainModule"));
+    return frontend.getSourceModule(fromString(mainModuleName));
 }
 
 std::optional<PrimitiveTypeVar::Type> Fixture::getPrimitiveType(TypeId ty)
@@ -257,13 +257,16 @@ std::optional<TypeId> Fixture::getType(const std::string& name)
     ModulePtr module = getMainModule();
     REQUIRE(module);
 
-    return lookupName(module->getModuleScope(), name);
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        return linearSearchForBinding(module->getModuleScope().get(), name.c_str());
+    else
+        return lookupName(module->getModuleScope(), name);
 }
 
 TypeId Fixture::requireType(const std::string& name)
 {
     std::optional<TypeId> ty = getType(name);
-    REQUIRE(bool(ty));
+    REQUIRE_MESSAGE(bool(ty), "Unable to requireType \"" << name << "\"");
     return follow(*ty);
 }
 
@@ -348,7 +351,7 @@ void Fixture::dumpErrors(std::ostream& os, const std::vector<TypeError>& errors)
         if (error.location.begin.line >= lines.size())
         {
             os << "\tSource not available?" << std::endl;
-            return;
+            continue;
         }
 
         std::string_view theLine = lines[error.location.begin.line];
@@ -369,17 +372,25 @@ void Fixture::registerTestTypes()
 
 void Fixture::dumpErrors(const CheckResult& cr)
 {
-    dumpErrors(std::cout, cr.errors);
+    std::string error = getErrors(cr);
+    if (!error.empty())
+        MESSAGE(error);
 }
 
 void Fixture::dumpErrors(const ModulePtr& module)
 {
-    dumpErrors(std::cout, module->errors);
+    std::stringstream ss;
+    dumpErrors(ss, module->errors);
+    if (!ss.str().empty())
+        MESSAGE(ss.str());
 }
 
 void Fixture::dumpErrors(const Module& module)
 {
-    dumpErrors(std::cout, module.errors);
+    std::stringstream ss;
+    dumpErrors(ss, module.errors);
+    if (!ss.str().empty())
+        MESSAGE(ss.str());
 }
 
 std::string Fixture::getErrors(const CheckResult& cr)
@@ -407,11 +418,36 @@ void Fixture::validateErrors(const std::vector<Luau::TypeError>& errors)
 LoadDefinitionFileResult Fixture::loadDefinition(const std::string& source)
 {
     unfreeze(typeChecker.globalTypes);
-    LoadDefinitionFileResult result = loadDefinitionFile(typeChecker, typeChecker.globalScope, source, "@test");
+    LoadDefinitionFileResult result = frontend.loadDefinitionFile(source, "@test");
     freeze(typeChecker.globalTypes);
 
+    dumpErrors(result.module);
     REQUIRE_MESSAGE(result.success, "loadDefinition: unable to load definition file");
     return result;
+}
+
+BuiltinsFixture::BuiltinsFixture(bool freeze, bool prepareAutocomplete)
+    : Fixture(freeze, prepareAutocomplete)
+{
+    Luau::unfreeze(frontend.typeChecker.globalTypes);
+    Luau::unfreeze(frontend.typeCheckerForAutocomplete.globalTypes);
+
+    registerBuiltinTypes(frontend.typeChecker);
+    if (prepareAutocomplete)
+        registerBuiltinTypes(frontend.typeCheckerForAutocomplete);
+    registerTestTypes();
+
+    Luau::freeze(frontend.typeChecker.globalTypes);
+    Luau::freeze(frontend.typeCheckerForAutocomplete.globalTypes);
+}
+
+ConstraintGraphBuilderFixture::ConstraintGraphBuilderFixture()
+    : Fixture()
+    , mainModule(new Module)
+    , cgb(mainModuleName, mainModule, &arena, NotNull(&ice), frontend.getGlobalScope())
+    , forceTheFlag{"DebugLuauDeferredConstraintResolution", true}
+{
+    BlockedTypeVar::nextIndex = 0;
 }
 
 ModuleName fromString(std::string_view name)
@@ -451,6 +487,66 @@ std::optional<TypeId> lookupName(ScopePtr scope, const std::string& name)
         return binding->typeId;
     else
         return std::nullopt;
+}
+
+std::optional<TypeId> linearSearchForBinding(Scope* scope, const char* name)
+{
+    while (scope)
+    {
+        for (const auto& [n, ty] : scope->bindings)
+        {
+            if (n.astName() == name)
+                return ty.typeId;
+        }
+
+        scope = scope->parent.get();
+    }
+
+    return std::nullopt;
+}
+
+void dump(const std::vector<Constraint>& constraints)
+{
+    ToStringOptions opts;
+    for (const auto& c : constraints)
+        printf("%s\n", toString(c, opts).c_str());
+}
+
+FindNthOccurenceOf::FindNthOccurenceOf(Nth nth)
+    : requestedNth(nth)
+{
+}
+
+bool FindNthOccurenceOf::checkIt(AstNode* n)
+{
+    if (theNode)
+        return false;
+
+    if (n->classIndex == requestedNth.classIndex)
+    {
+        // Human factor: the requestedNth starts from 1 because of the term `nth`.
+        if (currentOccurrence + 1 != requestedNth.nth)
+            ++currentOccurrence;
+        else
+            theNode = n;
+    }
+
+    return !theNode; // once found, returns false and stops traversal
+}
+
+bool FindNthOccurenceOf::visit(AstNode* n)
+{
+    return checkIt(n);
+}
+
+bool FindNthOccurenceOf::visit(AstType* t)
+{
+    return checkIt(t);
+}
+
+bool FindNthOccurenceOf::visit(AstTypePack* t)
+{
+    return checkIt(t);
 }
 
 } // namespace Luau

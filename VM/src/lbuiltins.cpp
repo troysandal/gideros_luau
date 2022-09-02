@@ -15,6 +15,8 @@
 #include <intrin.h>
 #endif
 
+LUAU_FASTFLAGVARIABLE(LuauFasterBit32NoWidth, false)
+
 // luauF functions implement FASTCALL instruction that performs a direct execution of some builtin functions from the VM
 // The rule of thumb is that FASTCALL functions can not call user code, yield, fail, or reallocate stack.
 // If types of the arguments mismatch, luauF_* needs to return -1 and the execution will fall back to the usual call path
@@ -600,24 +602,39 @@ static int luauF_btest(lua_State* L, StkId res, TValue* arg0, int nresults, StkI
 
 static int luauF_extract(lua_State* L, StkId res, TValue* arg0, int nresults, StkId args, int nparams)
 {
-    if (nparams >= 3 && nresults <= 1 && ttisnumber(arg0) && ttisnumber(args) && ttisnumber(args + 1))
+    if (nparams >= (3 - FFlag::LuauFasterBit32NoWidth) && nresults <= 1 && ttisnumber(arg0) && ttisnumber(args))
     {
         double a1 = nvalue(arg0);
         double a2 = nvalue(args);
-        double a3 = nvalue(args + 1);
 
         unsigned n;
         luai_num2unsigned(n, a1);
         int f = int(a2);
-        int w = int(a3);
 
-        if (f >= 0 && w > 0 && f + w <= 32)
+        if (nparams == 2)
         {
-            uint32_t m = ~(0xfffffffeu << (w - 1));
-            uint32_t r = (n >> f) & m;
+            if (unsigned(f) < 32)
+            {
+                uint32_t m = 1;
+                uint32_t r = (n >> f) & m;
 
-            setnvalue(res, double(r));
-            return 1;
+                setnvalue(res, double(r));
+                return 1;
+            }
+        }
+        else if (ttisnumber(args + 1))
+        {
+            double a3 = nvalue(args + 1);
+            int w = int(a3);
+
+            if (f >= 0 && w > 0 && f + w <= 32)
+            {
+                uint32_t m = ~(0xfffffffeu << (w - 1));
+                uint32_t r = (n >> f) & m;
+
+                setnvalue(res, double(r));
+                return 1;
+            }
         }
     }
 
@@ -676,26 +693,41 @@ static int luauF_lshift(lua_State* L, StkId res, TValue* arg0, int nresults, Stk
 
 static int luauF_replace(lua_State* L, StkId res, TValue* arg0, int nresults, StkId args, int nparams)
 {
-    if (nparams >= 4 && nresults <= 1 && ttisnumber(arg0) && ttisnumber(args) && ttisnumber(args + 1) && ttisnumber(args + 2))
+    if (nparams >= (4 - FFlag::LuauFasterBit32NoWidth) && nresults <= 1 && ttisnumber(arg0) && ttisnumber(args) && ttisnumber(args + 1))
     {
         double a1 = nvalue(arg0);
         double a2 = nvalue(args);
         double a3 = nvalue(args + 1);
-        double a4 = nvalue(args + 2);
 
         unsigned n, v;
         luai_num2unsigned(n, a1);
         luai_num2unsigned(v, a2);
         int f = int(a3);
-        int w = int(a4);
 
-        if (f >= 0 && w > 0 && f + w <= 32)
+        if (nparams == 3)
         {
-            uint32_t m = ~(0xfffffffeu << (w - 1));
-            uint32_t r = (n & ~(m << f)) | ((v & m) << f);
+            if (unsigned(f) < 32)
+            {
+                uint32_t m = 1;
+                uint32_t r = (n & ~(m << f)) | ((v & m) << f);
 
-            setnvalue(res, double(r));
-            return 1;
+                setnvalue(res, double(r));
+                return 1;
+            }
+        }
+        else if (ttisnumber(args + 2))
+        {
+            double a4 = nvalue(args + 2);
+            int w = int(a4);
+
+            if (f >= 0 && w > 0 && f + w <= 32)
+            {
+                uint32_t m = ~(0xfffffffeu << (w - 1));
+                uint32_t r = (n & ~(m << f)) | ((v & m) << f);
+
+                setnvalue(res, double(r));
+                return 1;
+            }
         }
     }
 
@@ -1003,7 +1035,7 @@ static int luauF_tunpack(lua_State* L, StkId res, TValue* arg0, int nresults, St
         else if (nparams == 3 && ttisnumber(args) && ttisnumber(args + 1) && nvalue(args) == 1.0)
             n = int(nvalue(args + 1));
 
-        if (n >= 0 && n <= t->sizearray && cast_int(L->stack_last - res) >= n)
+        if (n >= 0 && n <= t->sizearray && cast_int(L->stack_last - res) >= n && n + nparams <= LUAI_MAXCSTACK)
         {
             TValue* array = t->array;
             for (int i = 0; i < n; ++i)
@@ -1018,18 +1050,20 @@ static int luauF_tunpack(lua_State* L, StkId res, TValue* arg0, int nresults, St
 
 static int luauF_vector(lua_State* L, StkId res, TValue* arg0, int nresults, StkId args, int nparams)
 {
-#if LUA_VECTOR_SIZE == 4
-    if (nparams >= 4 && nresults <= 1 && ttisnumber(arg0) && ttisnumber(args) && ttisnumber(args + 1) && ttisnumber(args + 2))
-#else
     if (nparams >= 3 && nresults <= 1 && ttisnumber(arg0) && ttisnumber(args) && ttisnumber(args + 1))
-#endif
     {
         double x = nvalue(arg0);
         double y = nvalue(args);
         double z = nvalue(args + 1);
 
 #if LUA_VECTOR_SIZE == 4
-        double w = nvalue(args + 2);
+        double w = 0.0;
+        if (nparams >= 4)
+        {
+            if (!ttisnumber(args + 2))
+                return -1;
+            w = nvalue(args + 2);
+        }
         setvvalue(res, float(x), float(y), float(z), float(w));
 #else
         setvvalue(res, float(x), float(y), float(z), 0.0f);
@@ -1115,6 +1149,52 @@ static int luauF_select(lua_State* L, StkId res, TValue* arg0, int nresults, Stk
     return -1;
 }
 
+static int luauF_rawlen(lua_State* L, StkId res, TValue* arg0, int nresults, StkId args, int nparams)
+{
+    if (nparams >= 1 && nresults <= 1)
+    {
+        if (ttistable(arg0))
+        {
+            Table* h = hvalue(arg0);
+            setnvalue(res, double(luaH_getn(h)));
+            return 1;
+        }
+        else if (ttisstring(arg0))
+        {
+            TString* ts = tsvalue(arg0);
+            setnvalue(res, double(ts->len));
+            return 1;
+        }
+    }
+
+    return -1;
+}
+
+static int luauF_extractk(lua_State* L, StkId res, TValue* arg0, int nresults, StkId args, int nparams)
+{
+    // args is known to contain a number constant with packed in-range f/w
+    if (nparams >= 2 && nresults <= 1 && ttisnumber(arg0))
+    {
+        double a1 = nvalue(arg0);
+        double a2 = nvalue(args);
+
+        unsigned n;
+        luai_num2unsigned(n, a1);
+        int fw = int(a2);
+
+        int f = fw & 31;
+        int w1 = fw >> 5;
+
+        uint32_t m = ~(0xfffffffeu << w1);
+        uint32_t r = (n >> f) & m;
+
+        setnvalue(res, double(r));
+        return 1;
+    }
+
+    return -1;
+}
+
 luau_FastFunction luauF_table[256] = {
     NULL,
     luauF_assert,
@@ -1186,4 +1266,8 @@ luau_FastFunction luauF_table[256] = {
     luauF_countrz,
 
     luauF_select,
+
+    luauF_rawlen,
+
+    luauF_extractk,
 };

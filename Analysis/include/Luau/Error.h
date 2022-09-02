@@ -5,6 +5,7 @@
 #include "Luau/Location.h"
 #include "Luau/TypeVar.h"
 #include "Luau/Variant.h"
+#include "Luau/TypeArena.h"
 
 namespace Luau
 {
@@ -96,6 +97,7 @@ struct CountMismatch
     size_t expected;
     size_t actual;
     Context context = Arg;
+    bool isVariadic = false;
 
     bool operator==(const CountMismatch& rhs) const;
 };
@@ -107,8 +109,6 @@ struct FunctionDoesNotTakeSelf
 
 struct FunctionRequiresSelf
 {
-    int requiredExtraNils = 0;
-
     bool operator==(const FunctionRequiresSelf& rhs) const;
 };
 
@@ -167,6 +167,13 @@ struct GenericError
     std::string message;
 
     bool operator==(const GenericError& rhs) const;
+};
+
+struct InternalError
+{
+    std::string message;
+
+    bool operator==(const InternalError& rhs) const;
 };
 
 struct CannotCallNonFunction
@@ -285,12 +292,20 @@ struct TypesAreUnrelated
     bool operator==(const TypesAreUnrelated& rhs) const;
 };
 
-using TypeErrorData =
-    Variant<TypeMismatch, UnknownSymbol, UnknownProperty, NotATable, CannotExtendTable, OnlyTablesCanHaveMethods, DuplicateTypeDefinition,
-        CountMismatch, FunctionDoesNotTakeSelf, FunctionRequiresSelf, OccursCheckFailed, UnknownRequire, IncorrectGenericParameterCount, SyntaxError,
-        CodeTooComplex, UnificationTooComplex, UnknownPropButFoundLikeProp, GenericError, CannotCallNonFunction, ExtraInformation, DeprecatedApiUsed,
-        ModuleHasCyclicDependency, IllegalRequire, FunctionExitsWithoutReturning, DuplicateGenericParameter, CannotInferBinaryOperation,
-        MissingProperties, SwappedGenericTypeParameter, OptionalValueAccess, MissingUnionProperty, TypesAreUnrelated>;
+struct NormalizationTooComplex
+{
+    bool operator==(const NormalizationTooComplex&) const
+    {
+        return true;
+    }
+};
+
+using TypeErrorData = Variant<TypeMismatch, UnknownSymbol, UnknownProperty, NotATable, CannotExtendTable, OnlyTablesCanHaveMethods,
+    DuplicateTypeDefinition, CountMismatch, FunctionDoesNotTakeSelf, FunctionRequiresSelf, OccursCheckFailed, UnknownRequire,
+    IncorrectGenericParameterCount, SyntaxError, CodeTooComplex, UnificationTooComplex, UnknownPropButFoundLikeProp, GenericError, InternalError,
+    CannotCallNonFunction, ExtraInformation, DeprecatedApiUsed, ModuleHasCyclicDependency, IllegalRequire, FunctionExitsWithoutReturning,
+    DuplicateGenericParameter, CannotInferBinaryOperation, MissingProperties, SwappedGenericTypeParameter, OptionalValueAccess, MissingUnionProperty,
+    TypesAreUnrelated, NormalizationTooComplex>;
 
 struct TypeError
 {
@@ -331,7 +346,13 @@ T* get(TypeError& e)
 
 using ErrorVec = std::vector<TypeError>;
 
+struct TypeErrorToStringOptions
+{
+    FileResolver* fileResolver = nullptr;
+};
+
 std::string toString(const TypeError& error);
+std::string toString(const TypeError& error, TypeErrorToStringOptions options);
 
 bool containsParseErrorName(const TypeError& error);
 
@@ -346,6 +367,27 @@ struct InternalErrorReporter
 
     [[noreturn]] void ice(const std::string& message, const Location& location);
     [[noreturn]] void ice(const std::string& message);
+};
+
+class InternalCompilerError : public std::exception
+{
+public:
+    explicit InternalCompilerError(const std::string& message, const std::string& moduleName)
+        : message(message)
+        , moduleName(moduleName)
+    {
+    }
+    explicit InternalCompilerError(const std::string& message, const std::string& moduleName, const Location& location)
+        : message(message)
+        , moduleName(moduleName)
+        , location(location)
+    {
+    }
+    virtual const char* what() const throw();
+
+    const std::string message;
+    const std::string moduleName;
+    const std::optional<Location> location;
 };
 
 } // namespace Luau

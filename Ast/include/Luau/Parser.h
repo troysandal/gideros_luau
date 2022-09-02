@@ -11,6 +11,7 @@
 
 #include <initializer_list>
 #include <optional>
+#include <tuple>
 
 namespace Luau
 {
@@ -109,8 +110,10 @@ private:
     // for namelist in explist do block end |
     AstStat* parseFor();
 
-    // function funcname funcbody |
     // funcname ::= Name {`.' Name} [`:' Name]
+    AstExpr* parseFunctionName(Location start, bool& hasself, AstName& debugname);
+
+    // function funcname funcbody
     AstStat* parseFunctionStat();
 
     // local function Name funcbody |
@@ -135,10 +138,12 @@ private:
     // var [`+=' | `-=' | `*=' | `/=' | `%=' | `^=' | `..='] exp
     AstStat* parseCompoundAssignment(AstExpr* initial, AstExprBinary::Op op);
 
-    // funcbody ::= `(' [parlist] `)' block end
-    // parlist ::= namelist [`,' `...'] | `...'
+    std::pair<AstLocal*, AstArray<AstLocal*>> prepareFunctionArguments(const Location& start, bool hasself, const TempVector<Binding>& args);
+
+    // funcbodyhead ::= `(' [namelist [`,' `...'] | `...'] `)' [`:` TypeAnnotation]
+    // funcbody ::= funcbodyhead block end
     std::pair<AstExprFunction*, AstLocal*> parseFunctionBody(
-        bool hasself, const Lexeme& matchFunction, const AstName& debugname, std::optional<Name> localName);
+        bool hasself, const Lexeme& matchFunction, const AstName& debugname, const Name* localName);
 
     // explist ::= {exp `,'} exp
     void parseExprList(TempVector<AstExpr*>& result);
@@ -148,7 +153,7 @@ private:
 
     // bindinglist ::= (binding | `...') {`,' bindinglist}
     // Returns the location of the vararg ..., or std::nullopt if the function is not vararg.
-    std::pair<std::optional<Location>, AstTypePack*> parseBindingList(TempVector<Binding>& result, bool allowDot3 = false);
+    std::tuple<bool, Location, AstTypePack*> parseBindingList(TempVector<Binding>& result, bool allowDot3 = false);
 
     AstType* parseOptionalTypeAnnotation();
 
@@ -217,7 +222,7 @@ private:
     AstExpr* parseSimpleExpr();
 
     // args ::=  `(' [explist] `)' | tableconstructor | String
-    AstExpr* parseFunctionArgs(AstExpr* func, bool self, const Location& selfLocation);
+    AstExpr* parseFunctionArgs(AstExpr* func, bool self);
 
     // tableconstructor ::= `{' [fieldlist] `}'
     // fieldlist ::= field {fieldsep field} [fieldsep]
@@ -227,6 +232,9 @@ private:
 
     // TODO: Add grammar rules here?
     AstExpr* parseIfElseExpr();
+
+    // stringinterp ::= <INTERP_BEGIN> exp {<INTERP_MID> exp} <INTERP_END>
+    AstExpr* parseInterpString();
 
     // Name
     std::optional<Name> parseNameOpt(const char* context = nullptr);
@@ -241,6 +249,7 @@ private:
 
     std::optional<AstArray<char>> parseCharArray();
     AstExpr* parseString();
+    AstExpr* parseNumber();
 
     AstLocal* pushLocal(const Binding& binding);
 
@@ -253,11 +262,24 @@ private:
     bool expectAndConsume(Lexeme::Type type, const char* context = nullptr);
     void expectAndConsumeFail(Lexeme::Type type, const char* context);
 
-    bool expectMatchAndConsume(char value, const Lexeme& begin, bool searchForMissing = false);
-    void expectMatchAndConsumeFail(Lexeme::Type type, const Lexeme& begin, const char* extra = nullptr);
+    struct MatchLexeme
+    {
+        MatchLexeme(const Lexeme& l)
+            : type(l.type)
+            , position(l.location.begin)
+        {
+        }
 
-    bool expectMatchEndAndConsume(Lexeme::Type type, const Lexeme& begin);
-    void expectMatchEndAndConsumeFail(Lexeme::Type type, const Lexeme& begin);
+        Lexeme::Type type;
+        Position position;
+    };
+
+    bool expectMatchAndConsume(char value, const MatchLexeme& begin, bool searchForMissing = false);
+    void expectMatchAndConsumeFail(Lexeme::Type type, const MatchLexeme& begin, const char* extra = nullptr);
+    bool expectMatchAndConsumeRecover(char value, const MatchLexeme& begin, bool searchForMissing);
+
+    bool expectMatchEndAndConsume(Lexeme::Type type, const MatchLexeme& begin);
+    void expectMatchEndAndConsumeFail(Lexeme::Type type, const MatchLexeme& begin);
 
     template<typename T>
     AstArray<T> copy(const T* data, std::size_t size);
@@ -282,6 +304,9 @@ private:
     AstExprError* reportExprError(const Location& location, const AstArray<AstExpr*>& expressions, const char* format, ...) LUAU_PRINTF_ATTR(4, 5);
     AstTypeError* reportTypeAnnotationError(const Location& location, const AstArray<AstType*>& types, bool isMissing, const char* format, ...)
         LUAU_PRINTF_ATTR(5, 6);
+
+    AstExpr* reportFunctionArgsError(AstExpr* func, bool self);
+    void reportAmbiguousCallError();
 
     void nextLexeme();
 
@@ -350,7 +375,7 @@ private:
     AstName nameError;
     AstName nameNil;
 
-    Lexeme endMismatchSuspect;
+    MatchLexeme endMismatchSuspect;
 
     std::vector<Function> functionStack;
 
@@ -362,6 +387,7 @@ private:
     std::vector<unsigned int> matchRecoveryStopOnToken;
 
     std::vector<AstStat*> scratchStat;
+    std::vector<AstArray<char>> scratchString;
     std::vector<AstExpr*> scratchExpr;
     std::vector<AstExpr*> scratchExprAux;
     std::vector<AstName> scratchName;

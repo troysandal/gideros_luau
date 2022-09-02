@@ -5,6 +5,7 @@
 #include "Luau/Module.h"
 #include "Luau/ModuleResolver.h"
 #include "Luau/RequireTracer.h"
+#include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/Variant.h"
 
@@ -55,10 +56,23 @@ std::optional<ModuleName> pathExprToModuleName(const ModuleName& currentModuleNa
 
 struct SourceNode
 {
+    bool hasDirtySourceModule() const
+    {
+        return dirtySourceModule;
+    }
+
+    bool hasDirtyModule(bool forAutocomplete) const
+    {
+        return forAutocomplete ? dirtyModuleForAutocomplete : dirtyModule;
+    }
+
     ModuleName name;
-    std::unordered_set<ModuleName> requires;
+    std::unordered_set<ModuleName> requireSet;
     std::vector<std::pair<ModuleName, Location>> requireLocations;
-    bool dirty = true;
+    bool dirtySourceModule = true;
+    bool dirtyModule = true;
+    bool dirtyModuleForAutocomplete = true;
+    double autocompleteLimitsMult = 1.0;
 };
 
 struct FrontendOptions
@@ -69,14 +83,14 @@ struct FrontendOptions
     // is complete.
     bool retainFullTypeGraphs = false;
 
-    // When true, we run typechecking twice, once in the regular mode, and once in strict mode
-    // in order to get more precise type information (e.g. for autocomplete).
-    bool typecheckTwice = false;
+    // Run typechecking only in mode required for autocomplete (strict mode in order to get more precise type information)
+    bool forAutocomplete = false;
 };
 
 struct CheckResult
 {
     std::vector<TypeError> errors;
+    std::vector<ModuleName> timeoutHits;
 };
 
 struct FrontendModuleResolver : ModuleResolver
@@ -113,17 +127,9 @@ struct Frontend
     CheckResult check(const ModuleName& name, std::optional<FrontendOptions> optionOverride = {}); // new shininess
     LintResult lint(const ModuleName& name, std::optional<LintOptions> enabledLintWarnings = {});
 
-    /** Lint some code that has no associated DataModel object
-     *
-     * Since this source fragment has no name, we cannot cache its AST.  Instead,
-     * we return it to the caller to use as they wish.
-     */
-    std::pair<SourceModule, LintResult> lintFragment(std::string_view source, std::optional<LintOptions> enabledLintWarnings = {});
-
-    CheckResult check(const SourceModule& module); // OLD.  TODO KILL
     LintResult lint(const SourceModule& module, std::optional<LintOptions> enabledLintWarnings = {});
 
-    bool isDirty(const ModuleName& name) const;
+    bool isDirty(const ModuleName& name, bool forAutocomplete = false) const;
     void markDirty(const ModuleName& name, std::vector<ModuleName>* markedDirty = nullptr);
 
     /** Borrow a pointer into the SourceModule cache.
@@ -146,18 +152,26 @@ struct Frontend
     void registerBuiltinDefinition(const std::string& name, std::function<void(TypeChecker&, ScopePtr)>);
     void applyBuiltinDefinitionToEnvironment(const std::string& environmentName, const std::string& definitionName);
 
+    LoadDefinitionFileResult loadDefinitionFile(std::string_view source, const std::string& packageName);
+
+    ScopePtr getGlobalScope();
+
 private:
+    ModulePtr check(const SourceModule& sourceModule, Mode mode, const ScopePtr& environmentScope);
+
     std::pair<SourceNode*, SourceModule*> getSourceNode(CheckResult& checkResult, const ModuleName& name);
     SourceModule parse(const ModuleName& name, std::string_view src, const ParseOptions& parseOptions);
 
-    bool parseGraph(std::vector<ModuleName>& buildQueue, CheckResult& checkResult, const ModuleName& root);
+    bool parseGraph(std::vector<ModuleName>& buildQueue, CheckResult& checkResult, const ModuleName& root, bool forAutocomplete);
 
     static LintResult classifyLints(const std::vector<LintWarning>& warnings, const Config& config);
 
-    ScopePtr getModuleEnvironment(const SourceModule& module, const Config& config);
+    ScopePtr getModuleEnvironment(const SourceModule& module, const Config& config, bool forAutocomplete = false);
 
     std::unordered_map<std::string, ScopePtr> environments;
     std::unordered_map<std::string, std::function<void(TypeChecker&, ScopePtr)>> builtinDefinitions;
+
+    ScopePtr globalScope;
 
 public:
     FileResolver* fileResolver;
@@ -168,11 +182,12 @@ public:
     ConfigResolver* configResolver;
     FrontendOptions options;
     InternalErrorReporter iceHandler;
+    TypeArena globalTypes;
     TypeArena arenaForAutocomplete;
 
     std::unordered_map<ModuleName, SourceNode> sourceNodes;
     std::unordered_map<ModuleName, SourceModule> sourceModules;
-    std::unordered_map<ModuleName, RequireTraceResult> requires;
+    std::unordered_map<ModuleName, RequireTraceResult> requireTrace;
 
     Stats stats = {};
 };

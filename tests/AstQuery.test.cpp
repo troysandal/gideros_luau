@@ -7,7 +7,7 @@
 
 using namespace Luau;
 
-struct DocumentationSymbolFixture : Fixture
+struct DocumentationSymbolFixture : BuiltinsFixture
 {
     std::optional<DocumentationSymbol> getDocSymbol(const std::string& source, Position position)
     {
@@ -90,6 +90,128 @@ bar(foo())
     auto expectedOty = findExpectedTypeAtPosition(Position(3, 7));
     REQUIRE(expectedOty);
     CHECK_EQ("number", toString(*expectedOty));
+}
+
+TEST_CASE_FIXTURE(Fixture, "ast_ancestry_at_eof")
+{
+    check(R"(
+if true then
+    )");
+
+    std::vector<AstNode*> ancestry = findAstAncestryOfPosition(*getMainSourceModule(), Position(2, 4));
+    REQUIRE_GE(ancestry.size(), 2);
+    AstStat* parentStat = ancestry[ancestry.size() - 2]->asStat();
+    REQUIRE(bool(parentStat));
+    REQUIRE(parentStat->is<AstStatIf>());
+}
+
+TEST_CASE_FIXTURE(Fixture, "ac_ast_ancestry_at_number_const")
+{
+    check(R"(
+print(3.)
+    )");
+
+    std::vector<AstNode*> ancestry = findAncestryAtPositionForAutocomplete(*getMainSourceModule(), Position(1, 8));
+    REQUIRE_GE(ancestry.size(), 2);
+    REQUIRE(ancestry.back()->is<AstExprConstantNumber>());
+}
+
+TEST_CASE_FIXTURE(Fixture, "ac_ast_ancestry_in_workspace_dot")
+{
+    check(R"(
+print(workspace.)
+    )");
+
+    std::vector<AstNode*> ancestry = findAncestryAtPositionForAutocomplete(*getMainSourceModule(), Position(1, 16));
+    REQUIRE_GE(ancestry.size(), 2);
+    REQUIRE(ancestry.back()->is<AstExprIndexName>());
+}
+
+TEST_CASE_FIXTURE(Fixture, "ac_ast_ancestry_in_workspace_colon")
+{
+    check(R"(
+print(workspace:)
+    )");
+
+    std::vector<AstNode*> ancestry = findAncestryAtPositionForAutocomplete(*getMainSourceModule(), Position(1, 16));
+    REQUIRE_GE(ancestry.size(), 2);
+    REQUIRE(ancestry.back()->is<AstExprIndexName>());
+}
+
+TEST_CASE_FIXTURE(Fixture, "Luau_query")
+{
+    AstStatBlock* block = parse(R"(
+        if true then
+        end
+    )");
+
+    AstStatIf* if_ = Luau::query<AstStatIf>(block);
+    CHECK(if_);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Luau_query_for_2nd_if_stat_which_doesnt_exist")
+{
+    AstStatBlock* block = parse(R"(
+        if true then
+        end
+    )");
+
+    AstStatIf* if_ = Luau::query<AstStatIf, 2>(block);
+    CHECK(!if_);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Luau_nested_query")
+{
+    AstStatBlock* block = parse(R"(
+        if true then
+        end
+    )");
+
+    AstStatIf* if_ = Luau::query<AstStatIf>(block);
+    REQUIRE(if_);
+    AstExprConstantBool* bool_ = Luau::query<AstExprConstantBool>(if_);
+    REQUIRE(bool_);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Luau_nested_query_but_first_query_failed")
+{
+    AstStatBlock* block = parse(R"(
+        if true then
+        end
+    )");
+
+    AstStatIf* if_ = Luau::query<AstStatIf, 2>(block);
+    REQUIRE(!if_);
+    AstExprConstantBool* bool_ = Luau::query<AstExprConstantBool>(if_); // ensure it doesn't crash
+    REQUIRE(!bool_);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Luau_selectively_query_for_a_different_boolean")
+{
+    AstStatBlock* block = parse(R"(
+        local x = false and true
+        local y = true and false
+    )");
+
+    AstExprConstantBool* fst = Luau::query<AstExprConstantBool>(block, {nth<AstStatLocal>(), nth<AstExprConstantBool>(2)});
+    REQUIRE(fst);
+    REQUIRE(fst->value == true);
+
+    AstExprConstantBool* snd = Luau::query<AstExprConstantBool>(block, {nth<AstStatLocal>(2), nth<AstExprConstantBool>(2)});
+    REQUIRE(snd);
+    REQUIRE(snd->value == false);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Luau_selectively_query_for_a_different_boolean_2")
+{
+    AstStatBlock* block = parse(R"(
+        local x = false and true
+        local y = true and false
+    )");
+
+    AstExprConstantBool* snd = Luau::query<AstExprConstantBool>(block, {nth<AstStatLocal>(2), nth<AstExprConstantBool>()});
+    REQUIRE(snd);
+    REQUIRE(snd->value == true);
 }
 
 TEST_SUITE_END();

@@ -27,7 +27,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{f3a7dfcc-506a-4800-9df7-beb0541b21f2}</ProjectGuid>
+    <ProjectGuid>{5123635E-7CED-437C-8614-4252741E19A0}</ProjectGuid>
     <RootNamespace>luawinrt</RootNamespace>
     <DefaultLanguage>en-US</DefaultLanguage>
     <MinimumVisualStudioVersion>14.0</MinimumVisualStudioVersion>
@@ -120,7 +120,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAsWinRT>false</CompileAsWinRT>
       <SDLCheck>false</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
@@ -137,7 +137,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <BufferSecurityCheck>true</BufferSecurityCheck>
-      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -151,7 +151,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAsWinRT>false</CompileAsWinRT>
       <SDLCheck>false</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
@@ -166,7 +166,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAsWinRT>false</CompileAsWinRT>
       <SDLCheck>false</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
@@ -181,7 +181,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAsWinRT>false</CompileAsWinRT>
       <SDLCheck>false</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
@@ -196,7 +196,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAsWinRT>false</CompileAsWinRT>
       <SDLCheck>false</SDLCheck>
-      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>

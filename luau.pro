@@ -29,6 +29,7 @@ defineReplace(expand) {
 INCLUDEPATH += \
 	VM/src \
 	VM/include \
+	Common/Include \
         Compiler/include \
         Ast/include \
         ../libgvfs
@@ -36,7 +37,7 @@ INCLUDEPATH += \
 SOURCES += \
          $$expand(lapi laux lbaselib lbitlib lbuiltins lcorolib ldblib ldebug ldo lfunc lgc lgcdebug linit lint64lib liolib lmathlib lmem lnumprint lobject loslib lperf lstate lstring lstrlib \
          ltable ltablib ltm ludata lutf8lib lvmexecute lvmload lvmutils,VM/src/,.cpp) \
-         $$expand(Builtins BytecodeBuilder ConstantFolding Compiler lcode PseudoCode TableShape ValueTracking,Compiler/src/,.cpp) \
+         $$expand(Builtins BuiltinFolding BytecodeBuilder ConstantFolding Compiler CostModel lcode PseudoCode TableShape ValueTracking,Compiler/src/,.cpp) \
          $$expand(Ast Confusables Lexer Location Parser StringUtils TimeTrace,Ast/src/,.cpp)
 
 win32 {

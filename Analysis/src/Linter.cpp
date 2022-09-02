@@ -14,6 +14,8 @@
 
 LUAU_FASTINTVARIABLE(LuauSuggestionDistance, 4)
 LUAU_FASTFLAGVARIABLE(LuauLintGlobalNeverReadBeforeWritten, false)
+LUAU_FASTFLAGVARIABLE(LuauLintComparisonPrecedence, false)
+LUAU_FASTFLAGVARIABLE(LuauLintFixDeprecationMessage, false)
 
 namespace Luau
 {
@@ -48,6 +50,8 @@ static const char* kWarningNames[] = {
     "DuplicateCondition",
     "MisleadingAndOr",
     "CommentDirective",
+    "IntegerParsing",
+    "ComparisonPrecedence",
 };
 // clang-format on
 
@@ -203,6 +207,24 @@ static bool similar(AstExpr* lhs, AstExpr* rhs)
         return true;
     }
     CASE(AstExprIfElse) return similar(le->condition, re->condition) && similar(le->trueExpr, re->trueExpr) && similar(le->falseExpr, re->falseExpr);
+    CASE(AstExprInterpString)
+    {
+        if (le->strings.size != re->strings.size)
+            return false;
+
+        if (le->expressions.size != re->expressions.size)
+            return false;
+
+        for (size_t i = 0; i < le->strings.size; ++i)
+            if (le->strings.data[i].size != re->strings.data[i].size || memcmp(le->strings.data[i].data, re->strings.data[i].data, le->strings.data[i].size) != 0)
+                return false;
+
+        for (size_t i = 0; i < le->expressions.size; ++i)
+            if (!similar(le->expressions.data[i], re->expressions.data[i]))
+                return false;
+
+        return true;
+    }
     else
     {
         LUAU_ASSERT(!"Unknown expression type");
@@ -285,11 +307,22 @@ private:
                 emitWarning(*context, LintWarning::Code_UnknownGlobal, gv->location, "Unknown global '%s'", gv->name.value);
             else if (g->deprecated)
             {
-                if (*g->deprecated)
-                    emitWarning(*context, LintWarning::Code_DeprecatedGlobal, gv->location, "Global '%s' is deprecated, use '%s' instead",
-                        gv->name.value, *g->deprecated);
+                if (FFlag::LuauLintFixDeprecationMessage)
+                {
+                    if (const char* replacement = *g->deprecated; replacement && strlen(replacement))
+                        emitWarning(*context, LintWarning::Code_DeprecatedGlobal, gv->location, "Global '%s' is deprecated, use '%s' instead",
+                            gv->name.value, replacement);
+                    else
+                        emitWarning(*context, LintWarning::Code_DeprecatedGlobal, gv->location, "Global '%s' is deprecated", gv->name.value);
+                }
                 else
-                    emitWarning(*context, LintWarning::Code_DeprecatedGlobal, gv->location, "Global '%s' is deprecated", gv->name.value);
+                {
+                    if (*g->deprecated)
+                        emitWarning(*context, LintWarning::Code_DeprecatedGlobal, gv->location, "Global '%s' is deprecated, use '%s' instead",
+                            gv->name.value, *g->deprecated);
+                    else
+                        emitWarning(*context, LintWarning::Code_DeprecatedGlobal, gv->location, "Global '%s' is deprecated", gv->name.value);
+                }
             }
         }
 
@@ -1135,24 +1168,11 @@ private:
 
     enum TypeKind
     {
-        Kind_Invalid,
+        Kind_Unknown,
         Kind_Primitive, // primitive type supported by VM - boolean/userdata/etc. No differentiation between types of userdata.
-        Kind_Vector,    // For 'vector' but only used when type is used
-        Kind_Userdata,  // custom userdata type - Vector3/etc.
-        Kind_Class,     // custom userdata type that reflects Roblox Instance-derived hierarchy - Part/etc.
-        Kind_Enum,      // custom userdata type referring to an enum item of enum classes, e.g. Enum.NormalId.Back/Enum.Axis.X/etc.
+        Kind_Vector,    // 'vector' but only used when type is used
+        Kind_Userdata,  // custom userdata type
     };
-
-    bool containsPropName(TypeId ty, const std::string& propName)
-    {
-        if (auto ctv = get<ClassTypeVar>(ty))
-            return lookupClassProp(ctv, propName) != nullptr;
-
-        if (auto ttv = get<TableTypeVar>(ty))
-            return ttv->props.find(propName) != ttv->props.end();
-
-        return false;
-    }
 
     TypeKind getTypeKind(const std::string& name)
     {
@@ -1164,12 +1184,9 @@ private:
             return Kind_Vector;
 
         if (std::optional<TypeFun> maybeTy = context->scope->lookupType(name))
-            // Kind_Userdata is probably not 100% precise but is close enough
-            return containsPropName(maybeTy->type, "ClassName") ? Kind_Class : Kind_Userdata;
-        else if (std::optional<TypeFun> maybeTy = context->scope->lookupImportedType("Enum", name))
-            return Kind_Enum;
+            return Kind_Userdata;
 
-        return Kind_Invalid;
+        return Kind_Unknown;
     }
 
     void validateType(AstExprConstantString* expr, std::initializer_list<TypeKind> expected, const char* expectedString)
@@ -1177,7 +1194,7 @@ private:
         std::string name(expr->value.data, expr->value.size);
         TypeKind kind = getTypeKind(name);
 
-        if (kind == Kind_Invalid)
+        if (kind == Kind_Unknown)
         {
             emitWarning(*context, LintWarning::Code_UnknownType, expr->location, "Unknown type '%s'", name.c_str());
             return;
@@ -1187,59 +1204,9 @@ private:
         {
             if (kind == ek)
                 return;
-
-            // as a special case, Instance and EnumItem are both a userdata type (as returned by typeof) and a class type
-            if (ek == Kind_Userdata && (name == "Instance" || name == "EnumItem"))
-                return;
         }
 
         emitWarning(*context, LintWarning::Code_UnknownType, expr->location, "Unknown type '%s' (expected %s)", name.c_str(), expectedString);
-    }
-
-    bool acceptsClassName(AstName method)
-    {
-        return method.value[0] == 'F' && (method == "FindFirstChildOfClass" || method == "FindFirstChildWhichIsA" ||
-                                             method == "FindFirstAncestorOfClass" || method == "FindFirstAncestorWhichIsA");
-    }
-
-    bool visit(AstExprCall* node) override
-    {
-        if (AstExprIndexName* index = node->func->as<AstExprIndexName>())
-        {
-            AstExprConstantString* arg0 = node->args.size > 0 ? node->args.data[0]->as<AstExprConstantString>() : NULL;
-
-            if (arg0)
-            {
-                if (node->self && index->index == "IsA" && node->args.size == 1)
-                {
-                    validateType(arg0, {Kind_Class, Kind_Enum}, "class or enum type");
-                }
-                else if (node->self && (index->index == "GetService" || index->index == "FindService") && node->args.size == 1)
-                {
-                    AstExprGlobal* g = index->expr->as<AstExprGlobal>();
-
-                    if (g && (g->name == "game" || g->name == "Game"))
-                    {
-                        validateType(arg0, {Kind_Class}, "class type");
-                    }
-                }
-                else if (node->self && acceptsClassName(index->index) && node->args.size == 1)
-                {
-                    validateType(arg0, {Kind_Class}, "class type");
-                }
-                else if (!node->self && index->index == "new" && node->args.size <= 2)
-                {
-                    AstExprGlobal* g = index->expr->as<AstExprGlobal>();
-
-                    if (g && g->name == "Instance")
-                    {
-                        validateType(arg0, {Kind_Class}, "class type");
-                    }
-                }
-            }
-        }
-
-        return true;
     }
 
     bool visit(AstExprBinary* node) override
@@ -1499,7 +1466,7 @@ private:
     const char* checkStringFormat(const char* data, size_t size)
     {
         const char* flags = "-+ #0";
-        const char* options = "cdiouxXeEfgGqs";
+        const char* options = "cdiouxXeEfgGqs*";
 
         for (size_t i = 0; i < size; ++i)
         {
@@ -2348,7 +2315,7 @@ private:
     size_t getReturnCount(TypeId ty)
     {
         if (auto ftv = get<FunctionTypeVar>(ty))
-            return size(ftv->retType);
+            return size(ftv->retTypes);
 
         if (auto itv = get<IntersectionTypeVar>(ty))
         {
@@ -2357,7 +2324,7 @@ private:
 
             for (TypeId part : itv->parts)
                 if (auto ftv = get<FunctionTypeVar>(follow(part)))
-                    result = std::max(result, size(ftv->retType));
+                    result = std::max(result, size(ftv->retTypes));
 
             return result;
         }
@@ -2655,6 +2622,104 @@ private:
     }
 };
 
+class LintIntegerParsing : AstVisitor
+{
+public:
+    LUAU_NOINLINE static void process(LintContext& context)
+    {
+        LintIntegerParsing pass;
+        pass.context = &context;
+
+        context.root->visit(&pass);
+    }
+
+private:
+    LintContext* context;
+
+    bool visit(AstExprConstantNumber* node) override
+    {
+        switch (node->parseResult)
+        {
+        case ConstantNumberParseResult::Ok:
+        case ConstantNumberParseResult::Malformed:
+            break;
+        case ConstantNumberParseResult::BinOverflow:
+            emitWarning(*context, LintWarning::Code_IntegerParsing, node->location,
+                "Binary number literal exceeded available precision and has been truncated to 2^64");
+            break;
+        case ConstantNumberParseResult::HexOverflow:
+            emitWarning(*context, LintWarning::Code_IntegerParsing, node->location,
+                "Hexadecimal number literal exceeded available precision and has been truncated to 2^64");
+            break;
+        case ConstantNumberParseResult::DoublePrefix:
+            emitWarning(*context, LintWarning::Code_IntegerParsing, node->location,
+                "Hexadecimal number literal has a double prefix, which will fail to parse in the future; remove the extra 0x to fix");
+            break;
+        }
+
+        return true;
+    }
+};
+
+class LintComparisonPrecedence : AstVisitor
+{
+public:
+    LUAU_NOINLINE static void process(LintContext& context)
+    {
+        LintComparisonPrecedence pass;
+        pass.context = &context;
+
+        context.root->visit(&pass);
+    }
+
+private:
+    LintContext* context;
+
+    bool isComparison(AstExprBinary::Op op)
+    {
+        return op == AstExprBinary::CompareNe || op == AstExprBinary::CompareEq || op == AstExprBinary::CompareLt || op == AstExprBinary::CompareLe ||
+               op == AstExprBinary::CompareGt || op == AstExprBinary::CompareGe;
+    }
+
+    bool isNot(AstExpr* node)
+    {
+        AstExprUnary* expr = node->as<AstExprUnary>();
+
+        return expr && expr->op == AstExprUnary::Not;
+    }
+
+    bool visit(AstExprBinary* node) override
+    {
+        if (!isComparison(node->op))
+            return true;
+
+        // not X == Y; we silence this for not X == not Y as it's likely an intentional boolean comparison
+        if (isNot(node->left) && !isNot(node->right))
+        {
+            std::string op = toString(node->op);
+
+            if (node->op == AstExprBinary::CompareEq || node->op == AstExprBinary::CompareNe)
+                emitWarning(*context, LintWarning::Code_ComparisonPrecedence, node->location,
+                    "not X %s Y is equivalent to (not X) %s Y; consider using X %s Y, or wrap one of the expressions in parentheses to silence",
+                    op.c_str(), op.c_str(), node->op == AstExprBinary::CompareEq ? "~=" : "==");
+            else
+                emitWarning(*context, LintWarning::Code_ComparisonPrecedence, node->location,
+                    "not X %s Y is equivalent to (not X) %s Y; wrap one of the expressions in parentheses to silence", op.c_str(), op.c_str());
+        }
+        else if (AstExprBinary* left = node->left->as<AstExprBinary>(); left && isComparison(left->op))
+        {
+            std::string lop = toString(left->op);
+            std::string rop = toString(node->op);
+
+            emitWarning(*context, LintWarning::Code_ComparisonPrecedence, node->location,
+                "X %s Y %s Z is equivalent to (X %s Y) %s Z; wrap one of the expressions in parentheses to silence", lop.c_str(), rop.c_str(),
+                lop.c_str(), rop.c_str());
+        }
+
+        return true;
+    }
+};
+
 static void fillBuiltinGlobals(LintContext& context, const AstNameTable& names, const ScopePtr& env)
 {
     ScopePtr current = env;
@@ -2719,12 +2784,12 @@ static void lintComments(LintContext& context, const std::vector<HotComment>& ho
         }
         else
         {
-            std::string::size_type space = hc.content.find_first_of(" \t");
+            size_t space = hc.content.find_first_of(" \t");
             std::string_view first = std::string_view(hc.content).substr(0, space);
 
             if (first == "nolint")
             {
-                std::string::size_type notspace = hc.content.find_first_not_of(" \t", space);
+                size_t notspace = hc.content.find_first_not_of(" \t", space);
 
                 if (space == std::string::npos || notspace == std::string::npos)
                 {
@@ -2754,6 +2819,21 @@ static void lintComments(LintContext& context, const std::vector<HotComment>& ho
                 else
                     seenMode = true;
             }
+            else if (first == "optimize")
+            {
+                size_t notspace = hc.content.find_first_not_of(" \t", space);
+
+                if (space == std::string::npos || notspace == std::string::npos)
+                    emitWarning(context, LintWarning::Code_CommentDirective, hc.location, "optimize directive requires an optimization level");
+                else
+                {
+                    const char* level = hc.content.c_str() + notspace;
+
+                    if (strcmp(level, "0") && strcmp(level, "1") && strcmp(level, "2"))
+                        emitWarning(context, LintWarning::Code_CommentDirective, hc.location,
+                            "optimize directive uses unknown optimization level '%s', 0..2 expected", level);
+                }
+            }
             else
             {
                 static const char* kHotComments[] = {
@@ -2761,6 +2841,7 @@ static void lintComments(LintContext& context, const std::vector<HotComment>& ho
                     "nocheck",
                     "nonstrict",
                     "strict",
+                    "optimize",
                 };
 
                 if (const char* suggestion = fuzzyMatch(first, kHotComments, std::size(kHotComments)))
@@ -2860,6 +2941,12 @@ std::vector<LintWarning> lint(AstStat* root, const AstNameTable& names, const Sc
     if (context.warningEnabled(LintWarning::Code_CommentDirective))
         lintComments(context, hotcomments);
 
+    if (context.warningEnabled(LintWarning::Code_IntegerParsing))
+        LintIntegerParsing::process(context);
+
+    if (context.warningEnabled(LintWarning::Code_ComparisonPrecedence) && FFlag::LuauLintComparisonPrecedence)
+        LintComparisonPrecedence::process(context);
+
     std::sort(context.result.begin(), context.result.end(), WarningComparator());
 
     return context.result;
@@ -2893,7 +2980,7 @@ uint64_t LintWarning::parseMask(const std::vector<HotComment>& hotcomments)
         if (hc.content.compare(0, 6, "nolint") != 0)
             continue;
 
-        std::string::size_type name = hc.content.find_first_not_of(" \t", 6);
+        size_t name = hc.content.find_first_not_of(" \t", 6);
 
         // --!nolint disables everything
         if (name == std::string::npos)

@@ -7,109 +7,10 @@
 #include <algorithm>
 #include <stdexcept>
 
-LUAU_FASTFLAGVARIABLE(LuauUseCommittingTxnLog, false)
+LUAU_FASTFLAG(LuauUnknownAndNeverType)
 
 namespace Luau
 {
-
-void DEPRECATED_TxnLog::operator()(TypeId a)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    typeVarChanges.emplace_back(a, *a);
-}
-
-void DEPRECATED_TxnLog::operator()(TypePackId a)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    typePackChanges.emplace_back(a, *a);
-}
-
-void DEPRECATED_TxnLog::operator()(TableTypeVar* a)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    tableChanges.emplace_back(a, a->boundTo);
-}
-
-void DEPRECATED_TxnLog::rollback()
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    for (auto it = typeVarChanges.rbegin(); it != typeVarChanges.rend(); ++it)
-        std::swap(*asMutable(it->first), it->second);
-
-    for (auto it = typePackChanges.rbegin(); it != typePackChanges.rend(); ++it)
-        std::swap(*asMutable(it->first), it->second);
-
-    for (auto it = tableChanges.rbegin(); it != tableChanges.rend(); ++it)
-        std::swap(it->first->boundTo, it->second);
-
-    LUAU_ASSERT(originalSeenSize <= sharedSeen->size());
-    sharedSeen->resize(originalSeenSize);
-}
-
-void DEPRECATED_TxnLog::concat(DEPRECATED_TxnLog rhs)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    typeVarChanges.insert(typeVarChanges.end(), rhs.typeVarChanges.begin(), rhs.typeVarChanges.end());
-    rhs.typeVarChanges.clear();
-
-    typePackChanges.insert(typePackChanges.end(), rhs.typePackChanges.begin(), rhs.typePackChanges.end());
-    rhs.typePackChanges.clear();
-
-    tableChanges.insert(tableChanges.end(), rhs.tableChanges.begin(), rhs.tableChanges.end());
-    rhs.tableChanges.clear();
-}
-
-bool DEPRECATED_TxnLog::haveSeen(TypeId lhs, TypeId rhs)
-{
-    return haveSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
-}
-
-void DEPRECATED_TxnLog::pushSeen(TypeId lhs, TypeId rhs)
-{
-    pushSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
-}
-
-void DEPRECATED_TxnLog::popSeen(TypeId lhs, TypeId rhs)
-{
-    popSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
-}
-
-bool DEPRECATED_TxnLog::haveSeen(TypePackId lhs, TypePackId rhs)
-{
-    return haveSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
-}
-
-void DEPRECATED_TxnLog::pushSeen(TypePackId lhs, TypePackId rhs)
-{
-    pushSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
-}
-
-void DEPRECATED_TxnLog::popSeen(TypePackId lhs, TypePackId rhs)
-{
-    popSeen((TypeOrPackId)lhs, (TypeOrPackId)rhs);
-}
-
-bool DEPRECATED_TxnLog::haveSeen(TypeOrPackId lhs, TypeOrPackId rhs)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
-    return (sharedSeen->end() != std::find(sharedSeen->begin(), sharedSeen->end(), sortedPair));
-}
-
-void DEPRECATED_TxnLog::pushSeen(TypeOrPackId lhs, TypeOrPackId rhs)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
-    sharedSeen->push_back(sortedPair);
-}
-
-void DEPRECATED_TxnLog::popSeen(TypeOrPackId lhs, TypeOrPackId rhs)
-{
-    LUAU_ASSERT(!FFlag::LuauUseCommittingTxnLog);
-    const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
-    LUAU_ASSERT(sortedPair == sharedSeen->back());
-    sharedSeen->pop_back();
-}
 
 const std::string nullPendingResult = "<nullptr>";
 
@@ -170,8 +71,6 @@ const TxnLog* TxnLog::empty()
 
 void TxnLog::concat(TxnLog rhs)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     for (auto& [ty, rep] : rhs.typeVarChanges)
         typeVarChanges[ty] = std::move(rep);
 
@@ -181,29 +80,23 @@ void TxnLog::concat(TxnLog rhs)
 
 void TxnLog::commit()
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     for (auto& [ty, rep] : typeVarChanges)
-        *asMutable(ty) = rep.get()->pending;
+        asMutable(ty)->reassign(rep.get()->pending);
 
     for (auto& [tp, rep] : typePackChanges)
-        *asMutable(tp) = rep.get()->pending;
+        asMutable(tp)->reassign(rep.get()->pending);
 
     clear();
 }
 
 void TxnLog::clear()
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     typeVarChanges.clear();
     typePackChanges.clear();
 }
 
 TxnLog TxnLog::inverse()
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     TxnLog inversed(sharedSeen);
 
     for (auto& [ty, _rep] : typeVarChanges)
@@ -247,17 +140,10 @@ void TxnLog::popSeen(TypePackId lhs, TypePackId rhs)
 
 bool TxnLog::haveSeen(TypeOrPackId lhs, TypeOrPackId rhs) const
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     if (sharedSeen->end() != std::find(sharedSeen->begin(), sharedSeen->end(), sortedPair))
     {
         return true;
-    }
-
-    if (parent)
-    {
-        return parent->haveSeen(lhs, rhs);
     }
 
     return false;
@@ -265,16 +151,12 @@ bool TxnLog::haveSeen(TypeOrPackId lhs, TypeOrPackId rhs) const
 
 void TxnLog::pushSeen(TypeOrPackId lhs, TypeOrPackId rhs)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     sharedSeen->push_back(sortedPair);
 }
 
 void TxnLog::popSeen(TypeOrPackId lhs, TypeOrPackId rhs)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
-
     const std::pair<TypeOrPackId, TypeOrPackId> sortedPair = (lhs > rhs) ? std::make_pair(lhs, rhs) : std::make_pair(rhs, lhs);
     LUAU_ASSERT(sortedPair == sharedSeen->back());
     sharedSeen->pop_back();
@@ -282,28 +164,32 @@ void TxnLog::popSeen(TypeOrPackId lhs, TypeOrPackId rhs)
 
 PendingType* TxnLog::queue(TypeId ty)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
     LUAU_ASSERT(!ty->persistent);
 
     // Explicitly don't look in ancestors. If we have discovered something new
     // about this type, we don't want to mutate the parent's state.
     auto& pending = typeVarChanges[ty];
     if (!pending)
+    {
         pending = std::make_unique<PendingType>(*ty);
+        pending->pending.owningArena = nullptr;
+    }
 
     return pending.get();
 }
 
 PendingTypePack* TxnLog::queue(TypePackId tp)
 {
-    LUAU_ASSERT(FFlag::LuauUseCommittingTxnLog);
     LUAU_ASSERT(!tp->persistent);
 
     // Explicitly don't look in ancestors. If we have discovered something new
     // about this type, we don't want to mutate the parent's state.
     auto& pending = typePackChanges[tp];
     if (!pending)
+    {
         pending = std::make_unique<PendingTypePack>(*tp);
+        pending->pending.owningArena = nullptr;
+    }
 
     return pending.get();
 }
@@ -316,8 +202,8 @@ PendingType* TxnLog::pending(TypeId ty) const
 
     for (const TxnLog* current = this; current; current = current->parent)
     {
-        if (auto it = current->typeVarChanges.find(ty); it != current->typeVarChanges.end())
-            return it->second.get();
+        if (auto it = current->typeVarChanges.find(ty))
+            return it->get();
     }
 
     return nullptr;
@@ -331,8 +217,8 @@ PendingTypePack* TxnLog::pending(TypePackId tp) const
 
     for (const TxnLog* current = this; current; current = current->parent)
     {
-        if (auto it = current->typePackChanges.find(tp); it != current->typePackChanges.end())
-            return it->second.get();
+        if (auto it = current->typePackChanges.find(tp))
+            return it->get();
     }
 
     return nullptr;
@@ -341,14 +227,14 @@ PendingTypePack* TxnLog::pending(TypePackId tp) const
 PendingType* TxnLog::replace(TypeId ty, TypeVar replacement)
 {
     PendingType* newTy = queue(ty);
-    newTy->pending = replacement;
+    newTy->pending.reassign(replacement);
     return newTy;
 }
 
 PendingTypePack* TxnLog::replace(TypePackId tp, TypePackVar replacement)
 {
     PendingTypePack* newTp = queue(tp);
-    newTp->pending = replacement;
+    newTp->pending.reassign(replacement);
     return newTp;
 }
 
@@ -365,7 +251,7 @@ PendingType* TxnLog::bindTable(TypeId ty, std::optional<TypeId> newBoundTo)
 
 PendingType* TxnLog::changeLevel(TypeId ty, TypeLevel newLevel)
 {
-    LUAU_ASSERT(get<FreeTypeVar>(ty) || get<TableTypeVar>(ty) || get<FunctionTypeVar>(ty));
+    LUAU_ASSERT(get<FreeTypeVar>(ty) || get<TableTypeVar>(ty) || get<FunctionTypeVar>(ty) || get<ConstrainedTypeVar>(ty));
 
     PendingType* newTy = queue(ty);
     if (FreeTypeVar* ftv = Luau::getMutable<FreeTypeVar>(newTy))
@@ -380,6 +266,11 @@ PendingType* TxnLog::changeLevel(TypeId ty, TypeLevel newLevel)
     else if (FunctionTypeVar* ftv = Luau::getMutable<FunctionTypeVar>(newTy))
     {
         ftv->level = newLevel;
+    }
+    else if (ConstrainedTypeVar* ctv = Luau::getMutable<ConstrainedTypeVar>(newTy))
+    {
+        if (FFlag::LuauUnknownAndNeverType)
+            ctv->level = newLevel;
     }
 
     return newTy;
@@ -451,6 +342,18 @@ TypePackId TxnLog::follow(TypePackId tp) const
         // only call get<> on the returned pointer.
         return const_cast<const TypePackVar*>(&state->pending);
     });
+}
+
+std::pair<std::vector<TypeId>, std::vector<TypePackId>> TxnLog::getChanges() const
+{
+    std::pair<std::vector<TypeId>, std::vector<TypePackId>> result;
+
+    for (const auto& [typeId, _newState] : typeVarChanges)
+        result.first.push_back(typeId);
+    for (const auto& [typePackId, _newState] : typePackChanges)
+        result.second.push_back(typePackId);
+
+    return result;
 }
 
 } // namespace Luau

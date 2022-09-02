@@ -19,7 +19,7 @@ static void validateobjref(global_State* g, GCObject* f, GCObject* t)
 
     if (keepinvariant(g))
     {
-        /* basic incremental invariant: black can't point to white */
+        // basic incremental invariant: black can't point to white
         LUAU_ASSERT(!(isblack(f) && iswhite(t)));
     }
 }
@@ -102,10 +102,12 @@ static void validatestack(global_State* g, lua_State* l)
     if (l->namecall)
         validateobjref(g, obj2gco(l), obj2gco(l->namecall));
 
-    for (UpVal* uv = l->openupval; uv; uv = uv->u.l.threadnext)
+    for (UpVal* uv = l->openupval; uv; uv = uv->u.open.threadnext)
     {
         LUAU_ASSERT(uv->tt == LUA_TUPVAL);
-        LUAU_ASSERT(uv->v != &uv->u.value);
+        LUAU_ASSERT(upisopen(uv));
+        LUAU_ASSERT(uv->u.open.next->u.open.prev == uv && uv->u.open.prev->u.open.next == uv);
+        LUAU_ASSERT(!isblack(obj2gco(uv))); // open upvalues are never black
     }
 }
 
@@ -138,7 +140,7 @@ static void validateproto(global_State* g, Proto* f)
 
 static void validateobj(global_State* g, GCObject* o)
 {
-    /* dead objects can only occur during sweep */
+    // dead objects can only occur during sweep
     if (isdead(g, o))
     {
         LUAU_ASSERT(g->gcstate == GCSsweep);
@@ -238,11 +240,12 @@ void luaC_validate(lua_State* L)
 
     luaM_visitgco(L, L, validategco);
 
-    for (UpVal* uv = g->uvhead.u.l.next; uv != &g->uvhead; uv = uv->u.l.next)
+    for (UpVal* uv = g->uvhead.u.open.next; uv != &g->uvhead; uv = uv->u.open.next)
     {
         LUAU_ASSERT(uv->tt == LUA_TUPVAL);
-        LUAU_ASSERT(uv->v != &uv->u.value);
-        LUAU_ASSERT(uv->u.l.next->u.l.prev == uv && uv->u.l.prev->u.l.next == uv);
+        LUAU_ASSERT(upisopen(uv));
+        LUAU_ASSERT(uv->u.open.next->u.open.prev == uv && uv->u.open.prev->u.open.next == uv);
+        LUAU_ASSERT(!isblack(obj2gco(uv))); // open upvalues are never black
     }
 }
 
@@ -348,6 +351,9 @@ static void dumpclosure(FILE* f, Closure* cl)
 
     if (cl->isC)
     {
+        if (cl->c.debugname)
+            fprintf(f, ",\"name\":\"%s\"", cl->c.debugname + 0);
+
         if (cl->nupvalues)
         {
             fprintf(f, ",\"upvalues\":[");
@@ -357,6 +363,9 @@ static void dumpclosure(FILE* f, Closure* cl)
     }
     else
     {
+        if (cl->l.p->debugname)
+            fprintf(f, ",\"name\":\"%s\"", getstr(cl->l.p->debugname));
+
         fprintf(f, ",\"proto\":");
         dumpref(f, obj2gco(cl->l.p));
         if (cl->nupvalues)
@@ -406,13 +415,62 @@ static void dumpthread(FILE* f, lua_State* th)
 
         fprintf(f, ",\"source\":\"");
         dumpstringdata(f, p->source->data, p->source->len);
-        fprintf(f, "\",\"line\":%d", p->abslineinfo ? p->abslineinfo[0] : 0);
+        fprintf(f, "\",\"line\":%d", p->linedefined);
     }
 
     if (th->top > th->stack)
     {
         fprintf(f, ",\"stack\":[");
         dumprefs(f, th->stack, th->top - th->stack);
+        fprintf(f, "]");
+
+        CallInfo* ci = th->base_ci;
+        bool first = true;
+
+        fprintf(f, ",\"stacknames\":[");
+        for (StkId v = th->stack; v < th->top; ++v)
+        {
+            if (!iscollectable(v))
+                continue;
+
+            while (ci < th->ci && v >= (ci + 1)->func)
+                ci++;
+
+            if (!first)
+                fputc(',', f);
+            first = false;
+
+            if (v == ci->func)
+            {
+                Closure* cl = ci_func(ci);
+
+                if (cl->isC)
+                {
+                    fprintf(f, "\"frame:%s\"", cl->c.debugname ? cl->c.debugname : "[C]");
+                }
+                else
+                {
+                    Proto* p = cl->l.p;
+                    fprintf(f, "\"frame:");
+                    if (p->source)
+                        dumpstringdata(f, p->source->data, p->source->len);
+                    fprintf(f, ":%d:%s\"", p->linedefined, p->debugname ? getstr(p->debugname) : "");
+                }
+            }
+            else if (isLua(ci))
+            {
+                Proto* p = ci_func(ci)->l.p;
+                int pc = pcRel(ci->savedpc, p);
+                const LocVar* var = luaF_findlocal(p, int(v - ci->base), pc);
+
+                if (var && var->varname)
+                    fprintf(f, "\"%s\"", getstr(var->varname));
+                else
+                    fprintf(f, "null");
+            }
+            else
+                fprintf(f, "null");
+        }
         fprintf(f, "]");
     }
     fprintf(f, "}");
@@ -456,13 +514,14 @@ static void dumpproto(FILE* f, Proto* p)
 
 static void dumpupval(FILE* f, UpVal* uv)
 {
-    fprintf(f, "{\"type\":\"upvalue\",\"cat\":%d,\"size\":%d", uv->memcat, int(sizeof(UpVal)));
+    fprintf(f, "{\"type\":\"upvalue\",\"cat\":%d,\"size\":%d,\"open\":%s", uv->memcat, int(sizeof(UpVal)), upisopen(uv) ? "true" : "false");
 
     if (iscollectable(uv->v))
     {
         fprintf(f, ",\"object\":");
         dumpref(f, gcvalue(uv->v));
     }
+
     fprintf(f, "}");
 }
 

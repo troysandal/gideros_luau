@@ -9,6 +9,10 @@
 
 using namespace Luau;
 
+LUAU_FASTFLAG(LuauRecursiveTypeParameterRestriction);
+LUAU_FASTFLAG(LuauSpecialTypesAsterisked);
+LUAU_FASTFLAG(LuauFixNameMaps);
+
 TEST_SUITE_BEGIN("ToString");
 
 TEST_CASE_FIXTURE(Fixture, "primitive")
@@ -58,7 +62,72 @@ TEST_CASE_FIXTURE(Fixture, "named_table")
     CHECK_EQ("TheTable", toString(&table));
 }
 
-TEST_CASE_FIXTURE(Fixture, "exhaustive_toString_of_cyclic_table")
+TEST_CASE_FIXTURE(Fixture, "empty_table")
+{
+    CheckResult result = check(R"(
+        local a: {}
+    )");
+
+    CHECK_EQ("{|  |}", toString(requireType("a")));
+
+    // Should stay the same with useLineBreaks enabled
+    ToStringOptions opts;
+    opts.useLineBreaks = true;
+    CHECK_EQ("{|  |}", toString(requireType("a"), opts));
+}
+
+TEST_CASE_FIXTURE(Fixture, "table_respects_use_line_break")
+{
+    CheckResult result = check(R"(
+        local a: { prop: string, anotherProp: number, thirdProp: boolean }
+    )");
+
+    ToStringOptions opts;
+    opts.useLineBreaks = true;
+    opts.indent = true;
+
+    //clang-format off
+    CHECK_EQ("{|\n"
+             "    anotherProp: number,\n"
+             "    prop: string,\n"
+             "    thirdProp: boolean\n"
+             "|}",
+        toString(requireType("a"), opts));
+    //clang-format on
+}
+
+TEST_CASE_FIXTURE(Fixture, "metatable")
+{
+    TypeVar table{TypeVariant(TableTypeVar())};
+    TypeVar metatable{TypeVariant(TableTypeVar())};
+    TypeVar mtv{TypeVariant(MetatableTypeVar{&table, &metatable})};
+    CHECK_EQ("{ @metatable {  }, {  } }", toString(&mtv));
+}
+
+TEST_CASE_FIXTURE(Fixture, "named_metatable")
+{
+    TypeVar table{TypeVariant(TableTypeVar())};
+    TypeVar metatable{TypeVariant(TableTypeVar())};
+    TypeVar mtv{TypeVariant(MetatableTypeVar{&table, &metatable, "NamedMetatable"})};
+    CHECK_EQ("NamedMetatable", toString(&mtv));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "named_metatable_toStringNamedFunction")
+{
+    CheckResult result = check(R"(
+        local function createTbl(): NamedMetatable
+            return setmetatable({}, {})
+        end
+        type NamedMetatable = typeof(createTbl())
+    )");
+
+    TypeId ty = requireType("createTbl");
+    const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(ty));
+    REQUIRE(ftv);
+    CHECK_EQ("createTbl(): NamedMetatable", toStringNamedFunction("createTbl", *ftv));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "exhaustive_toString_of_cyclic_table")
 {
     CheckResult result = check(R"(
         --!strict
@@ -124,6 +193,39 @@ TEST_CASE_FIXTURE(Fixture, "functions_are_always_parenthesized_in_unions_or_inte
     CHECK_EQ(toString(&itv), "((number, string) -> (string, number)) & ((string, number) -> (number, string))");
 }
 
+TEST_CASE_FIXTURE(Fixture, "intersections_respects_use_line_breaks")
+{
+    CheckResult result = check(R"(
+        local a: ((string) -> string) & ((number) -> number)
+    )");
+
+    ToStringOptions opts;
+    opts.useLineBreaks = true;
+
+    //clang-format off
+    CHECK_EQ("((number) -> number)\n"
+             "& ((string) -> string)",
+        toString(requireType("a"), opts));
+    //clang-format on
+}
+
+TEST_CASE_FIXTURE(Fixture, "unions_respects_use_line_breaks")
+{
+    CheckResult result = check(R"(
+        local a: string | number | boolean
+    )");
+
+    ToStringOptions opts;
+    opts.useLineBreaks = true;
+
+    //clang-format off
+    CHECK_EQ("boolean\n"
+             "| number\n"
+             "| string",
+        toString(requireType("a"), opts));
+    //clang-format on
+}
+
 TEST_CASE_FIXTURE(Fixture, "quit_stringifying_table_type_when_length_is_exceeded")
 {
     TableTypeVar ttv{};
@@ -167,8 +269,16 @@ TEST_CASE_FIXTURE(Fixture, "quit_stringifying_type_when_length_is_exceeded")
     o.maxTypeLength = 40;
     CHECK_EQ(toString(requireType("f0"), o), "() -> ()");
     CHECK_EQ(toString(requireType("f1"), o), "(() -> ()) -> () -> ()");
-    CHECK_EQ(toString(requireType("f2"), o), "((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
-    CHECK_EQ(toString(requireType("f3"), o), "(((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
+    if (FFlag::LuauSpecialTypesAsterisked)
+    {
+        CHECK_EQ(toString(requireType("f2"), o), "((() -> ()) -> () -> ()) -> (() -> ()) -> ... *TRUNCATED*");
+        CHECK_EQ(toString(requireType("f3"), o), "(((() -> ()) -> () -> ()) -> (() -> ()) -> ... *TRUNCATED*");
+    }
+    else
+    {
+        CHECK_EQ(toString(requireType("f2"), o), "((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
+        CHECK_EQ(toString(requireType("f3"), o), "(((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "stringifying_type_is_still_capped_when_exhaustive")
@@ -186,8 +296,16 @@ TEST_CASE_FIXTURE(Fixture, "stringifying_type_is_still_capped_when_exhaustive")
     o.maxTypeLength = 40;
     CHECK_EQ(toString(requireType("f0"), o), "() -> ()");
     CHECK_EQ(toString(requireType("f1"), o), "(() -> ()) -> () -> ()");
-    CHECK_EQ(toString(requireType("f2"), o), "((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
-    CHECK_EQ(toString(requireType("f3"), o), "(((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
+    if (FFlag::LuauSpecialTypesAsterisked)
+    {
+        CHECK_EQ(toString(requireType("f2"), o), "((() -> ()) -> () -> ()) -> (() -> ()) -> ... *TRUNCATED*");
+        CHECK_EQ(toString(requireType("f3"), o), "(((() -> ()) -> () -> ()) -> (() -> ()) -> ... *TRUNCATED*");
+    }
+    else
+    {
+        CHECK_EQ(toString(requireType("f2"), o), "((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
+        CHECK_EQ(toString(requireType("f3"), o), "(((() -> ()) -> () -> ()) -> (() -> ()) -> ... <TRUNCATED>");
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "stringifying_table_type_correctly_use_matching_table_state_braces")
@@ -316,29 +434,40 @@ TEST_CASE_FIXTURE(Fixture, "toStringDetailed")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    TypeId id3Type = requireType("id3");
-    ToStringResult nameData = toStringDetailed(id3Type);
+    ToStringOptions opts;
 
-    REQUIRE_EQ(3, nameData.nameMap.typeVars.size());
+    TypeId id3Type = requireType("id3");
+    ToStringResult nameData = toStringDetailed(id3Type, opts);
+
+    if (FFlag::LuauFixNameMaps)
+        REQUIRE(3 == opts.nameMap.typeVars.size());
+    else
+        REQUIRE_EQ(3, nameData.DEPRECATED_nameMap.typeVars.size());
+
     REQUIRE_EQ("<a, b, c>(a, b, c) -> (a, b, c)", nameData.name);
 
-    ToStringOptions opts;
-    opts.nameMap = std::move(nameData.nameMap);
+    ToStringOptions opts2; // TODO: delete opts2 when clipping FFlag::LuauFixNameMaps
+    if (FFlag::LuauFixNameMaps)
+        opts2.nameMap = std::move(opts.nameMap);
+    else
+        opts2.DEPRECATED_nameMap = std::move(nameData.DEPRECATED_nameMap);
 
     const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(id3Type));
     REQUIRE(ftv != nullptr);
 
     auto params = flatten(ftv->argTypes).first;
-    REQUIRE_EQ(3, params.size());
+    REQUIRE(3 == params.size());
 
-    REQUIRE_EQ("a", toString(params[0], opts));
-    REQUIRE_EQ("b", toString(params[1], opts));
-    REQUIRE_EQ("c", toString(params[2], opts));
+    CHECK("a" == toString(params[0], opts2));
+    CHECK("b" == toString(params[1], opts2));
+    CHECK("c" == toString(params[2], opts2));
 }
 
-TEST_CASE_FIXTURE(Fixture, "toStringDetailed2")
+TEST_CASE_FIXTURE(BuiltinsFixture, "toStringDetailed2")
 {
-    ScopedFastFlag sff{"LuauUnsealedTableLiteral", true};
+    ScopedFastFlag sff[] = {
+        {"DebugLuauSharedSelf", true},
+    };
 
     CheckResult result = check(R"(
         local base = {}
@@ -353,13 +482,18 @@ TEST_CASE_FIXTURE(Fixture, "toStringDetailed2")
     )");
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    TypeId tType = requireType("inst");
-    ToStringResult r = toStringDetailed(tType);
-    CHECK_EQ("{ @metatable { __index: { @metatable { __index: base }, child } }, inst }", r.name);
-    CHECK_EQ(0, r.nameMap.typeVars.size());
-
     ToStringOptions opts;
-    opts.nameMap = r.nameMap;
+
+    TypeId tType = requireType("inst");
+    ToStringResult r = toStringDetailed(tType, opts);
+    CHECK_EQ("{ @metatable { __index: { @metatable {| __index: base |}, child } }, inst }", r.name);
+    if (FFlag::LuauFixNameMaps)
+        CHECK(0 == opts.nameMap.typeVars.size());
+    else
+        CHECK_EQ(0, r.DEPRECATED_nameMap.typeVars.size());
+
+    if (!FFlag::LuauFixNameMaps)
+        opts.DEPRECATED_nameMap = r.DEPRECATED_nameMap;
 
     const MetatableTypeVar* tMeta = get<MetatableTypeVar>(tType);
     REQUIRE(tMeta);
@@ -382,14 +516,14 @@ TEST_CASE_FIXTURE(Fixture, "toStringDetailed2")
     REQUIRE(tMeta6);
 
     ToStringResult oneResult = toStringDetailed(tMeta5->props["one"].type, opts);
-    opts.nameMap = oneResult.nameMap;
+    if (!FFlag::LuauFixNameMaps)
+        opts.DEPRECATED_nameMap = oneResult.DEPRECATED_nameMap;
 
     std::string twoResult = toString(tMeta6->props["two"].type, opts);
 
-    REQUIRE_EQ("<a>(a) -> number", oneResult.name);
-    REQUIRE_EQ("<b>(b) -> number", twoResult);
+    CHECK_EQ("<a>(a) -> number", oneResult.name);
+    CHECK_EQ("<b>(b) -> number", twoResult);
 }
-
 
 TEST_CASE_FIXTURE(Fixture, "toStringErrorPack")
 {
@@ -398,7 +532,10 @@ local function target(callback: nil) return callback(4, "hello") end
     )");
 
     LUAU_REQUIRE_ERRORS(result);
-    CHECK_EQ("(nil) -> (*unknown*)", toString(requireType("target")));
+    if (FFlag::LuauSpecialTypesAsterisked)
+        CHECK_EQ("(nil) -> (*error-type*)", toString(requireType("target")));
+    else
+        CHECK_EQ("(nil) -> (<error-type>)", toString(requireType("target")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "toStringGenericPack")
@@ -588,6 +725,69 @@ TEST_CASE_FIXTURE(Fixture, "toStringNamedFunction_hide_type_params")
     ToStringOptions opts;
     opts.hideNamedFunctionTypeParameters = true;
     CHECK_EQ("f(x: T, g: <U>(T) -> U): ()", toStringNamedFunction("f", *ftv, opts));
+}
+
+TEST_CASE_FIXTURE(Fixture, "toStringNamedFunction_overrides_param_names")
+{
+    CheckResult result = check(R"(
+        local function test(a, b : string, ... : number) return a end
+    )");
+
+    TypeId ty = requireType("test");
+    const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(ty));
+
+    ToStringOptions opts;
+    opts.namedFunctionOverrideArgNames = {"first", "second", "third"};
+    CHECK_EQ("test<a>(first: a, second: string, ...: number): a", toStringNamedFunction("test", *ftv, opts));
+}
+
+TEST_CASE_FIXTURE(Fixture, "pick_distinct_names_for_mixed_explicit_and_implicit_generics")
+{
+    CheckResult result = check(R"(
+        function foo<a>(x: a, y) end
+    )");
+
+    CHECK("<a, b>(a, b) -> ()" == toString(requireType("foo")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "toStringNamedFunction_include_self_param")
+{
+    ScopedFastFlag sff[]{
+        {"DebugLuauSharedSelf", true},
+    };
+
+    CheckResult result = check(R"(
+        local foo = {}
+        function foo:method(arg: string): ()
+        end
+    )");
+
+    TypeId parentTy = requireType("foo");
+    auto ttv = get<TableTypeVar>(follow(parentTy));
+    auto ftv = get<FunctionTypeVar>(ttv->props.at("method").type);
+
+    CHECK_EQ("foo:method<a>(self: a, arg: string): ()", toStringNamedFunction("foo:method", *ftv));
+}
+
+TEST_CASE_FIXTURE(Fixture, "toStringNamedFunction_hide_self_param")
+{
+    ScopedFastFlag sff[]{
+        {"DebugLuauSharedSelf", true},
+    };
+
+    CheckResult result = check(R"(
+        local foo = {}
+        function foo:method(arg: string): ()
+        end
+    )");
+
+    TypeId parentTy = requireType("foo");
+    auto ttv = get<TableTypeVar>(follow(parentTy));
+    auto ftv = get<FunctionTypeVar>(ttv->props.at("method").type);
+
+    ToStringOptions opts;
+    opts.hideFunctionSelfArgument = true;
+    CHECK_EQ("foo:method<a>(arg: string): ()", toStringNamedFunction("foo:method", *ftv, opts));
 }
 
 TEST_SUITE_END();

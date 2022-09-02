@@ -6,6 +6,8 @@
 
 #include "doctest.h"
 
+#include <limits.h>
+
 using namespace Luau;
 
 namespace
@@ -91,138 +93,6 @@ TEST_CASE("initial_double_is_aligned")
 
     double* one = alloc.alloc<double>();
     CHECK_EQ(0, reinterpret_cast<intptr_t>(one) & (alignof(double) - 1));
-}
-
-TEST_SUITE_END();
-
-TEST_SUITE_BEGIN("LexerTests");
-
-TEST_CASE("broken_string_works")
-{
-    const std::string testInput = "[[";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    Lexeme lexeme = lexer.next();
-    CHECK_EQ(lexeme.type, Lexeme::Type::BrokenString);
-    CHECK_EQ(lexeme.location, Luau::Location(Luau::Position(0, 0), Luau::Position(0, 2)));
-}
-
-TEST_CASE("broken_comment")
-{
-    const std::string testInput = "--[[  ";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    Lexeme lexeme = lexer.next();
-    CHECK_EQ(lexeme.type, Lexeme::Type::BrokenComment);
-    CHECK_EQ(lexeme.location, Luau::Location(Luau::Position(0, 0), Luau::Position(0, 6)));
-}
-
-TEST_CASE("broken_comment_kept")
-{
-    const std::string testInput = "--[[  ";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    lexer.setSkipComments(true);
-    CHECK_EQ(lexer.next().type, Lexeme::Type::BrokenComment);
-}
-
-TEST_CASE("comment_skipped")
-{
-    const std::string testInput = "--  ";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    lexer.setSkipComments(true);
-    CHECK_EQ(lexer.next().type, Lexeme::Type::Eof);
-}
-
-TEST_CASE("multilineCommentWithLexemeInAndAfter")
-{
-    const std::string testInput = "--[[ function \n"
-                                  "]] end";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    Lexeme comment = lexer.next();
-    Lexeme end = lexer.next();
-
-    CHECK_EQ(comment.type, Lexeme::Type::BlockComment);
-    CHECK_EQ(comment.location, Luau::Location(Luau::Position(0, 0), Luau::Position(1, 2)));
-    CHECK_EQ(end.type, Lexeme::Type::ReservedEnd);
-    CHECK_EQ(end.location, Luau::Location(Luau::Position(1, 3), Luau::Position(1, 6)));
-}
-
-TEST_CASE("testBrokenEscapeTolerant")
-{
-    const std::string testInput = "'\\3729472897292378'";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    Lexeme item = lexer.next();
-
-    CHECK_EQ(item.type, Lexeme::QuotedString);
-    CHECK_EQ(item.location, Luau::Location(Luau::Position(0, 0), Luau::Position(0, int(testInput.size()))));
-}
-
-TEST_CASE("testBigDelimiters")
-{
-    const std::string testInput = "--[===[\n"
-                                  "\n"
-                                  "\n"
-                                  "\n"
-                                  "]===]";
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    Lexeme item = lexer.next();
-
-    CHECK_EQ(item.type, Lexeme::Type::BlockComment);
-    CHECK_EQ(item.location, Luau::Location(Luau::Position(0, 0), Luau::Position(4, 5)));
-}
-
-TEST_CASE("lookahead")
-{
-    const std::string testInput = "foo --[[ comment ]] bar : nil end";
-
-    Luau::Allocator alloc;
-    AstNameTable table(alloc);
-    Lexer lexer(testInput.c_str(), testInput.size(), table);
-    lexer.setSkipComments(true);
-    lexer.next(); // must call next() before reading data from lexer at least once
-
-    CHECK_EQ(lexer.current().type, Lexeme::Name);
-    CHECK_EQ(lexer.current().name, std::string("foo"));
-    CHECK_EQ(lexer.lookahead().type, Lexeme::Name);
-    CHECK_EQ(lexer.lookahead().name, std::string("bar"));
-
-    lexer.next();
-
-    CHECK_EQ(lexer.current().type, Lexeme::Name);
-    CHECK_EQ(lexer.current().name, std::string("bar"));
-    CHECK_EQ(lexer.lookahead().type, ':');
-
-    lexer.next();
-
-    CHECK_EQ(lexer.current().type, ':');
-    CHECK_EQ(lexer.lookahead().type, Lexeme::ReservedNil);
-
-    lexer.next();
-
-    CHECK_EQ(lexer.current().type, Lexeme::ReservedNil);
-    CHECK_EQ(lexer.lookahead().type, Lexeme::ReservedEnd);
-
-    lexer.next();
-
-    CHECK_EQ(lexer.current().type, Lexeme::ReservedEnd);
-    CHECK_EQ(lexer.lookahead().type, Lexeme::Eof);
-
-    lexer.next();
-
-    CHECK_EQ(lexer.current().type, Lexeme::Eof);
-    CHECK_EQ(lexer.lookahead().type, Lexeme::Eof);
 }
 
 TEST_SUITE_END();
@@ -786,33 +656,49 @@ TEST_CASE_FIXTURE(Fixture, "parse_numbers_decimal")
 
 TEST_CASE_FIXTURE(Fixture, "parse_numbers_hexadecimal")
 {
-    AstStat* stat = parse("return 0xab, 0XAB05, 0xff_ff");
+    AstStat* stat = parse("return 0xab, 0XAB05, 0xff_ff, 0xffffffffffffffff");
     REQUIRE(stat != nullptr);
 
     AstStatReturn* str = stat->as<AstStatBlock>()->body.data[0]->as<AstStatReturn>();
-    CHECK(str->list.size == 3);
+    CHECK(str->list.size == 4);
     CHECK_EQ(str->list.data[0]->as<AstExprConstantNumber>()->value, 0xab);
     CHECK_EQ(str->list.data[1]->as<AstExprConstantNumber>()->value, 0xAB05);
     CHECK_EQ(str->list.data[2]->as<AstExprConstantNumber>()->value, 0xFFFF);
+    CHECK_EQ(str->list.data[3]->as<AstExprConstantNumber>()->value, double(ULLONG_MAX));
 }
 
 TEST_CASE_FIXTURE(Fixture, "parse_numbers_binary")
 {
-    AstStat* stat = parse("return 0b1, 0b0, 0b101010");
+    AstStat* stat = parse("return 0b1, 0b0, 0b101010, 0b1111111111111111111111111111111111111111111111111111111111111111");
     REQUIRE(stat != nullptr);
 
     AstStatReturn* str = stat->as<AstStatBlock>()->body.data[0]->as<AstStatReturn>();
-    CHECK(str->list.size == 3);
+    CHECK(str->list.size == 4);
     CHECK_EQ(str->list.data[0]->as<AstExprConstantNumber>()->value, 1);
     CHECK_EQ(str->list.data[1]->as<AstExprConstantNumber>()->value, 0);
     CHECK_EQ(str->list.data[2]->as<AstExprConstantNumber>()->value, 42);
+    CHECK_EQ(str->list.data[3]->as<AstExprConstantNumber>()->value, double(ULLONG_MAX));
 }
 
 TEST_CASE_FIXTURE(Fixture, "parse_numbers_error")
 {
+    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
+    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", true};
+
     CHECK_EQ(getParseError("return 0b123"), "Malformed number");
     CHECK_EQ(getParseError("return 123x"), "Malformed number");
     CHECK_EQ(getParseError("return 0xg"), "Malformed number");
+    CHECK_EQ(getParseError("return 0x0x123"), "Malformed number");
+    CHECK_EQ(getParseError("return 0xffffffffffffffffffffllllllg"), "Malformed number");
+    CHECK_EQ(getParseError("return 0x0xffffffffffffffffffffffffffff"), "Malformed number");
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_numbers_error_soft")
+{
+    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
+    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", false};
+
+    CHECK_EQ(getParseError("return 0x0x0x0x0x0x0x0"), "Malformed number");
 }
 
 TEST_CASE_FIXTURE(Fixture, "break_return_not_last_error")
@@ -1016,6 +902,146 @@ TEST_CASE_FIXTURE(Fixture, "parse_compound_assignment_error_multiple")
     catch (const ParseErrors& e)
     {
         CHECK_EQ("Expected '=' when parsing assignment, got '+='", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_begin")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = `{{oops}}`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Double braces are not permitted within interpolated strings. Did you mean '\\{'?", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_mid")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = `{nice} {{oops}}`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Double braces are not permitted within interpolated strings. Did you mean '\\{'?", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    auto columnOfEndBraceError = [this](const char* code)
+    {
+        try
+        {
+            parse(code);
+            FAIL("Expected ParseErrors to be thrown");
+            return UINT_MAX;
+        }
+        catch (const ParseErrors& e)
+        {
+            CHECK_EQ(e.getErrors().size(), 1);
+
+            auto error = e.getErrors().front();
+            CHECK_EQ("Malformed interpolated string, did you forget to add a '}'?", error.getMessage());
+            return error.getLocation().begin.column;
+        }
+    };
+
+    // This makes sure that the error is coming from the brace itself
+    CHECK_EQ(columnOfEndBraceError("_ = `{a`"), columnOfEndBraceError("_ = `{abcdefg`"));
+    CHECK_NE(columnOfEndBraceError("_ = `{a`"), columnOfEndBraceError("_ =       `{a`"));
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace_in_table")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = { `{a` }
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ(e.getErrors().size(), 2);
+
+        CHECK_EQ("Malformed interpolated string, did you forget to add a '}'?", e.getErrors().front().getMessage());
+        CHECK_EQ("Expected '}' (to close '{' at line 2), got <eof>", e.getErrors().back().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_mid_without_end_brace_in_table")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = { `x {"y"} {z` }
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ(e.getErrors().size(), 2);
+
+        CHECK_EQ("Malformed interpolated string, did you forget to add a '}'?", e.getErrors().front().getMessage());
+        CHECK_EQ("Expected '}' (to close '{' at line 2), got <eof>", e.getErrors().back().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_as_type_fail")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            local a: `what` = `???`
+            local b: `what {"the"}` = `???`
+            local c: `what {"the"} heck` = `???`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& parseErrors)
+    {
+        CHECK_EQ(parseErrors.getErrors().size(), 3);
+
+        for (ParseError error : parseErrors.getErrors())
+            CHECK_EQ(error.getMessage(), "Interpolated string literals cannot be used as types");
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_call_without_parens")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    try
+    {
+        parse(R"(
+            _ = print `{42}`
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Expected identifier when parsing expression, got `{", e.getErrors().front().getMessage());
     }
 }
 
@@ -1604,6 +1630,35 @@ TEST_CASE_FIXTURE(Fixture, "end_extent_of_functions_unions_and_intersections")
     CHECK_EQ((Position{3, 42}), block->body.data[2]->location.end);
 }
 
+TEST_CASE_FIXTURE(Fixture, "end_extent_doesnt_consume_comments")
+{
+    AstStatBlock* block = parse(R"(
+        type F = number
+        --comment
+        print('hello')
+    )");
+
+    REQUIRE_EQ(2, block->body.size);
+    CHECK_EQ((Position{1, 23}), block->body.data[0]->location.end);
+}
+
+TEST_CASE_FIXTURE(Fixture, "end_extent_doesnt_consume_comments_even_with_capture")
+{
+    // Same should hold when comments are captured
+    ParseOptions opts;
+    opts.captureComments = true;
+
+    AstStatBlock* block = parse(R"(
+        type F = number
+        --comment
+        print('hello')
+    )",
+        opts);
+
+    REQUIRE_EQ(2, block->body.size);
+    CHECK_EQ((Position{1, 23}), block->body.data[0]->location.end);
+}
+
 TEST_CASE_FIXTURE(Fixture, "parse_error_loop_control")
 {
     matchParseError("break", "break statement must be inside a loop");
@@ -2008,6 +2063,13 @@ TEST_CASE_FIXTURE(Fixture, "parse_type_alias_default_type_errors")
     matchParseError("type Y<T... = (string) -> number> = {}", "Expected type pack after '=', got type", Location{{0, 14}, {0, 32}});
 }
 
+TEST_CASE_FIXTURE(Fixture, "parse_type_pack_errors")
+{
+    matchParseError("type Y<T...> = {a: T..., b: number}", "Unexpected '...' after type name; type pack is not allowed in this context",
+        Location{{0, 20}, {0, 23}});
+    matchParseError("type Y<T...> = {a: (number | string)...", "Unexpected '...' after type annotation", Location{{0, 36}, {0, 39}});
+}
+
 TEST_CASE_FIXTURE(Fixture, "parse_if_else_expression")
 {
     {
@@ -2073,6 +2135,15 @@ type B<X...> = Packed<...number>
 type C<X...> = Packed<(number, X...)>
     )");
     REQUIRE(stat != nullptr);
+}
+
+TEST_CASE_FIXTURE(Fixture, "invalid_type_forms")
+{
+    ScopedFastFlag luauFixNamedFunctionParse{"LuauFixNamedFunctionParse", true};
+
+    matchParseError("type A = (b: number)", "Expected '->' when parsing function type, got <eof>");
+    matchParseError("type P<T...> = () -> T... type B = P<(x: number, y: string)>", "Expected '->' when parsing function type, got '>'");
+    matchParseError("type F<T... = (a: string)> = (T...) -> ()", "Expected '->' when parsing function type, got '>'");
 }
 
 TEST_SUITE_END();
@@ -2574,6 +2645,42 @@ TEST_CASE_FIXTURE(Fixture, "recover_expected_type_pack")
 type Y<T..., U = T...> = (T...) -> U...
     )");
     CHECK_EQ(1, result.errors.size());
+}
+
+TEST_CASE_FIXTURE(Fixture, "recover_unexpected_type_pack")
+{
+    ParseResult result = tryParse(R"(
+type X<T...> = { a: T..., b: number }
+type Y<T> = { a: T..., b: number }
+type Z<T> = { a: string | T..., b: number }
+    )");
+    REQUIRE_EQ(3, result.errors.size());
+}
+
+TEST_CASE_FIXTURE(Fixture, "recover_function_return_type_annotations")
+{
+    ParseResult result = tryParse(R"(
+type Custom<A, B, C> = { x: A, y: B, z: C }
+type Packed<A...> = { x: (A...) -> () }
+type F = (number): Custom<boolean, number, string>
+type G = Packed<(number): (string, number, boolean)>
+local function f(x: number) -> Custom<string, boolean, number>
+end
+    )");
+    REQUIRE_EQ(3, result.errors.size());
+    CHECK_EQ(result.errors[0].getMessage(), "Return types in function type annotations are written after '->' instead of ':'");
+    CHECK_EQ(result.errors[1].getMessage(), "Return types in function type annotations are written after '->' instead of ':'");
+    CHECK_EQ(result.errors[2].getMessage(), "Function return type annotations are written after ':' instead of '->'");
+}
+
+TEST_CASE_FIXTURE(Fixture, "error_message_for_using_function_as_type_annotation")
+{
+    ParseResult result = tryParse(R"(
+        type Foo = function
+    )");
+    REQUIRE_EQ(1, result.errors.size());
+    CHECK_EQ("Using 'function' as a type annotation is not supported, consider replacing with a function type annotation e.g. '(...any) -> ...any'",
+        result.errors[0].getMessage());
 }
 
 TEST_SUITE_END();

@@ -1,13 +1,18 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/BuiltinDefinitions.h"
 
+LUAU_FASTFLAG(LuauUnknownAndNeverType)
+
 namespace Luau
 {
 
 static const std::string kBuiltinDefinitionLuaSrc = R"BUILTIN_SRC(
 
 declare bit32: {
-    -- band, bor, bxor, and btest are declared in C++
+    band: (...number) -> number,
+    bor: (...number) -> number,
+    bxor: (...number) -> number,
+    btest: (number, ...number) -> boolean,
     rrotate: (number, number) -> number,
     lrotate: (number, number) -> number,
     lshift: (number, number) -> number,
@@ -50,7 +55,8 @@ declare math: {
     asin: (number) -> number,
     atan2: (number, number) -> number,
 
-    -- min and max are declared in C++.
+    min: (number, ...number) -> number,
+    max: (number, ...number) -> number,
 
     pi: number,
     huge: number,
@@ -95,110 +101,117 @@ declare os: {
 
 declare function require(target: any): any
 
-declare function getfenv(target: any?): { [string]: any }
+declare function getfenv(target: any): { [string]: any }
 
 declare _G: any
 declare _VERSION: string
 
 declare function gcinfo(): number
 
-            declare function print<T...>(...: T...)
+declare function print<T...>(...: T...)
 
-            declare function type<T>(value: T): string
-            declare function typeof<T>(value: T): string
-            
-            -- `assert` has a magic function attached that will give more detailed type information
-            declare function assert<T>(value: T, errorMessage: string?): T
+declare function type<T>(value: T): string
+declare function typeof<T>(value: T): string
 
-            declare function error<T>(message: T, level: number?)
+-- `assert` has a magic function attached that will give more detailed type information
+declare function assert<T>(value: T, errorMessage: string?): T
 
-            declare function tostring<T>(value: T): string
-            declare function tonumber<T>(value: T, radix: number?): number?
+declare function tostring<T>(value: T): string
+declare function tonumber<T>(value: T, radix: number?): number?
 
-            declare function rawequal<T1, T2>(a: T1, b: T2): boolean
-            declare function rawget<K, V>(tab: {[K]: V}, k: K): V
-            declare function rawset<K, V>(tab: {[K]: V}, k: K, v: V): {[K]: V}
+declare function rawequal<T1, T2>(a: T1, b: T2): boolean
+declare function rawget<K, V>(tab: {[K]: V}, k: K): V
+declare function rawset<K, V>(tab: {[K]: V}, k: K, v: V): {[K]: V}
+declare function rawlen<K, V>(obj: {[K]: V} | string): number
 
-            declare function setfenv<T..., R...>(target: number | (T...) -> R..., env: {[string]: any}): ((T...) -> R...)?
+declare function setfenv<T..., R...>(target: number | (T...) -> R..., env: {[string]: any}): ((T...) -> R...)?
 
-            declare function ipairs<V>(tab: {V}): (({V}, number) -> (number, V), {V}, number)
+declare function ipairs<V>(tab: {V}): (({V}, number) -> (number, V), {V}, number)
 
-            declare function pcall<A..., R...>(f: (A...) -> R..., ...: A...): (boolean, R...)
+declare function pcall<A..., R...>(f: (A...) -> R..., ...: A...): (boolean, R...)
 
-            -- FIXME: The actual type of `xpcall` is:
-            -- <E, A..., R1..., R2...>(f: (A...) -> R1..., err: (E) -> R2..., A...) -> (true, R1...) | (false, R2...)
-            -- Since we can't represent the return value, we use (boolean, R1...).
-            declare function xpcall<E, A..., R1..., R2...>(f: (A...) -> R1..., err: (E) -> R2..., ...: A...): (boolean, R1...)
+-- FIXME: The actual type of `xpcall` is:
+-- <E, A..., R1..., R2...>(f: (A...) -> R1..., err: (E) -> R2..., A...) -> (true, R1...) | (false, R2...)
+-- Since we can't represent the return value, we use (boolean, R1...).
+declare function xpcall<E, A..., R1..., R2...>(f: (A...) -> R1..., err: (E) -> R2..., ...: A...): (boolean, R1...)
 
-            -- `select` has a magic function attached to provide more detailed type information
-            declare function select<A...>(i: string | number, ...: A...): ...any
+-- `select` has a magic function attached to provide more detailed type information
+declare function select<A...>(i: string | number, ...: A...): ...any
 
-            -- FIXME: This type is not entirely correct - `loadstring` returns a function or
-            -- (nil, string).
-            declare function loadstring<A...>(src: string, chunkname: string?): (((A...) -> any)?, string?)
+-- FIXME: This type is not entirely correct - `loadstring` returns a function or
+-- (nil, string).
+declare function loadstring<A...>(src: string, chunkname: string?): (((A...) -> any)?, string?)
 
-            declare function newproxy(mt: boolean?): any
+declare function newproxy(mt: boolean?): any
 
-            declare coroutine: {
-                create: <A..., R...>((A...) -> R...) -> thread,
-                resume: <A..., R...>(thread, A...) -> (boolean, R...),
-                running: () -> thread,
-                status: (thread) -> string,
-                -- FIXME: This technically returns a function, but we can't represent this yet.
-                wrap: <A..., R...>((A...) -> R...) -> any,
-                yield: <A..., R...>(A...) -> R...,
-                isyieldable: () -> boolean,
-                close: (thread) -> (boolean, any?)
-            }
+declare coroutine: {
+    create: <A..., R...>((A...) -> R...) -> thread,
+    resume: <A..., R...>(thread, A...) -> (boolean, R...),
+    running: () -> thread,
+    status: (thread) -> "dead" | "running" | "normal" | "suspended",
+    -- FIXME: This technically returns a function, but we can't represent this yet.
+    wrap: <A..., R...>((A...) -> R...) -> any,
+    yield: <A..., R...>(A...) -> R...,
+    isyieldable: () -> boolean,
+    close: (thread) -> (boolean, any)
+}
 
-            declare table: {
-                concat: <V>({V}, string?, number?, number?) -> string,
-                insert: (<V>({V}, V) -> ()) & (<V>({V}, number, V) -> ()),
-                maxn: <V>({V}) -> number,
-                remove: <V>({V}, number?) -> V?,
-                sort: <V>({V}, ((V, V) -> boolean)?) -> (),
-                create: <V>(number, V?) -> {V},
-                find: <V>({V}, V, number?) -> number?,
+declare table: {
+    concat: <V>({V}, string?, number?, number?) -> string,
+    insert: (<V>({V}, V) -> ()) & (<V>({V}, number, V) -> ()),
+    maxn: <V>({V}) -> number,
+    remove: <V>({V}, number?) -> V?,
+    sort: <V>({V}, ((V, V) -> boolean)?) -> (),
+    create: <V>(number, V?) -> {V},
+    find: <V>({V}, V, number?) -> number?,
 
-                unpack: <V>({V}, number?, number?) -> ...V,
-                pack: <V>(...V) -> { n: number, [number]: V },
+    unpack: <V>({V}, number?, number?) -> ...V,
+    pack: <V>(...V) -> { n: number, [number]: V },
 
-                getn: <V>({V}) -> number,
-                foreach: <K, V>({[K]: V}, (K, V) -> ()) -> (),
-                foreachi: <V>({V}, (number, V) -> ()) -> (),
+    getn: <V>({V}) -> number,
+    foreach: <K, V>({[K]: V}, (K, V) -> ()) -> (),
+    foreachi: <V>({V}, (number, V) -> ()) -> (),
 
-                move: <V>({V}, number, number, number, {V}?) -> {V},
-                clear: <K, V>({[K]: V}) -> (),
+    move: <V>({V}, number, number, number, {V}?) -> {V},
+    clear: <K, V>({[K]: V}) -> (),
 
-                isfrozen: <K, V>({[K]: V}) -> boolean,
-            }
+    isfrozen: <K, V>({[K]: V}) -> boolean,
+}
 
-            declare debug: {
-                info: (<R...>(thread, number, string) -> R...) & (<R...>(number, string) -> R...) & (<A..., R1..., R2...>((A...) -> R1..., string) -> R2...),
-                traceback: ((string?, number?) -> string) & ((thread, string?, number?) -> string),
-            }
+declare debug: {
+    info: (<R...>(thread, number, string) -> R...) & (<R...>(number, string) -> R...) & (<A..., R1..., R2...>((A...) -> R1..., string) -> R2...),
+    traceback: ((string?, number?) -> string) & ((thread, string?, number?) -> string),
+}
 
-            declare utf8: {
-                char: (number, ...number) -> string,
-                charpattern: string,
-                codes: (string) -> ((string, number) -> (number, number), string, number),
-                -- FIXME
-                codepoint: (string, number?, number?) -> (number, ...number),
-                len: (string, number?, number?) -> (number?, number?),
-                offset: (string, number?, number?) -> number,
-                nfdnormalize: (string) -> string,
-                nfcnormalize: (string) -> string,
-                graphemes: (string, number?, number?) -> (() -> (number, number)),
-            }
+declare utf8: {
+    char: (...number) -> string,
+    charpattern: string,
+    codes: (string) -> ((string, number) -> (number, number), string, number),
+    -- FIXME
+    codepoint: (string, number?, number?) -> (number, ...number),
+    len: (string, number?, number?) -> (number?, number?),
+    offset: (string, number?, number?) -> number,
+    nfdnormalize: (string) -> string,
+    nfcnormalize: (string) -> string,
+    graphemes: (string, number?, number?) -> (() -> (number, number)),
+}
 
-            -- Cannot use `typeof` here because it will produce a polytype when we expect a monotype.
-            declare function unpack<V>(tab: {V}, i: number?, j: number?): ...V
+-- Cannot use `typeof` here because it will produce a polytype when we expect a monotype.
+declare function unpack<V>(tab: {V}, i: number?, j: number?): ...V
 
 )BUILTIN_SRC";
 
 std::string getBuiltinDefinitionSource()
 {
-    return kBuiltinDefinitionLuaSrc;
+
+    std::string result = kBuiltinDefinitionLuaSrc;
+
+    if (FFlag::LuauUnknownAndNeverType)
+        result += "declare function error<T>(message: T, level: number?): never\n";
+    else
+        result += "declare function error<T>(message: T, level: number?)\n";
+
+    return result;
 }
 
 } // namespace Luau

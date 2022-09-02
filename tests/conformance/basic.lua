@@ -49,6 +49,12 @@ assert((function() _G.foo = 1 return _G['foo'] end)() == 1)
 assert((function() _G['bar'] = 1 return _G.bar end)() == 1)
 assert((function() local a = 1 (function () a = 2 end)() return a end)() == 2)
 
+-- assignments with local conflicts
+assert((function() local a, b = 1, {} a, b[a] = 43, -1 return a + b[1] end)() == 42)
+assert((function() local a = {} local b = a a[1], a = 43, -1 return a + b[1] end)() == 42)
+assert((function() local a, b = 1, {} a, b[a] = (function() return 43, -1 end)() return a + b[1] end)() == 42)
+assert((function() local a = {} local b = a a[1], a = (function() return 43, -1 end)() return a + b[1] end)() == 42)
+
 -- upvalues
 assert((function() local a = 1 function foo() return a end return foo() end)() == 1)
 
@@ -118,9 +124,11 @@ assert((function() return #_G end)() == 0)
 assert((function() return #{1,2} end)() == 2)
 assert((function() return #'g' end)() == 1)
 
-assert((function() local ud = newproxy(true) getmetatable(ud).__len = function() return 42 end return #ud end)() == 42)
-
 assert((function() local a = 1 a = -a return a end)() == -1)
+
+-- __len metamethod
+assert((function() local ud = newproxy(true) getmetatable(ud).__len = function() return 42 end return #ud end)() == 42)
+assert((function() local t = {} setmetatable(t, { __len = function() return 42 end }) return #t end)() == 42)
 
 -- while/repeat
 assert((function() local a = 10 local b = 1 while a > 1 do b = b * 2 a = a - 1 end return b end)() == 512)
@@ -725,16 +733,20 @@ assert((function() local abs = math.abs function foo(...) return abs(...) end re
 -- NOTE: getfenv breaks fastcalls for the remainder of the source! hence why this is delayed until the end
 function testgetfenv()
     getfenv()
+
+    -- declare constant so that at O2 this test doesn't interfere with constant folding which we can't deoptimize
+    local negfive negfive = -5
+
     -- getfenv breaks fastcalls (we assume we can't rely on knowing the semantics), but behavior shouldn't change
-    assert((function() return math.abs(-5) end)() == 5)
-    assert((function() local abs = math.abs return abs(-5) end)() == 5)
-    assert((function() local abs = math.abs function foo() return abs(-5) end return foo() end)() == 5)
+    assert((function() return math.abs(negfive) end)() == 5)
+    assert((function() local abs = math.abs return abs(negfive) end)() == 5)
+    assert((function() local abs = math.abs function foo() return abs(negfive) end return foo() end)() == 5)
 
     -- ... unless you actually reassign the function :D
     getfenv().math = { abs = function(n) return n*n end }
-    assert((function() return math.abs(-5) end)() == 25)
-    assert((function() local abs = math.abs return abs(-5) end)() == 25)
-    assert((function() local abs = math.abs function foo() return abs(-5) end return foo() end)() == 25)
+    assert((function() return math.abs(negfive) end)() == 25)
+    assert((function() local abs = math.abs return abs(negfive) end)() == 25)
+    assert((function() local abs = math.abs function foo() return abs(negfive) end return foo() end)() == 25)
 end
 
 -- you need to have enough arguments and arguments of the right type; if you don't, we'll fallback to the regular code. This checks coercions
@@ -833,6 +845,17 @@ assert((function()
     return sum
 end)() == 105)
 
+-- shrinking array part
+assert((function()
+    local t = table.create(100, 42)
+    for i=1,90 do t[i] = nil end
+    t[101] = 42
+    local sum = 0
+    for _,v in ipairs(t) do sum += v end
+    for _,v in pairs(t) do sum += v end
+    return sum
+end)() == 462)
+
 -- upvalues: recursive capture
 assert((function() local function fact(n) return n < 1 and 1 or n * fact(n-1) end return fact(5) end)() == 120)
 
@@ -878,8 +901,20 @@ assert((function()
     return table.concat(res, ',')
 end)() == "6,8,10")
 
+-- typeof and type require an argument
+assert(pcall(typeof) == false)
+assert(pcall(type) == false)
+
 -- typeof == type in absence of custom userdata
 assert(concat(typeof(5), typeof(nil), typeof({}), typeof(newproxy())) == "number,nil,table,userdata")
+
+-- type/typeof/newproxy interaction with metatables: __type doesn't work intentionally to avoid spoofing
+assert((function()
+    local ud = newproxy(true)
+    getmetatable(ud).__type = "number"
+
+    return concat(type(ud),typeof(ud))
+end)() == "userdata,userdata")
 
 testgetfenv() -- DONT MOVE THIS LINE
 

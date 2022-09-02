@@ -11,7 +11,7 @@
 namespace Luau
 {
 
-static void vformatAppend(std::string& ret, const char* fmt, va_list args)
+void vformatAppend(std::string& ret, const char* fmt, va_list args)
 {
     va_list argscopy;
     va_copy(argscopy, args);
@@ -230,18 +230,24 @@ bool isIdentifier(std::string_view s)
     return (s.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890_") == std::string::npos);
 }
 
-std::string escape(std::string_view s)
+std::string escape(std::string_view s, bool escapeForInterpString)
 {
     std::string r;
     r.reserve(s.size() + 50); // arbitrary number to guess how many characters we'll be inserting
 
     for (uint8_t c : s)
     {
-        if (c >= ' ' && c != '\\' && c != '\'' && c != '\"')
+        if (c >= ' ' && c != '\\' && c != '\'' && c != '\"' && c != '`' && c != '{')
             r += c;
         else
         {
             r += '\\';
+
+            if (escapeForInterpString && (c == '`' || c == '{'))
+            {
+                r += c;
+                continue;
+            }
 
             switch (c)
             {

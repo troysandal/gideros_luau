@@ -128,7 +128,7 @@ Returns the type of the object, which is one of `"nil"`, `"boolean"`, `"number"`
 function typeof(obj: any): string
 ```
 
-Returns the type of the object; for userdata objects that have a metatable with the `__type` field *and* are defined by the host with an internal tag, returns the value for that key.
+Returns the type of the object; for userdata objects that have a metatable with the `__type` field *and* are defined by the host (not `newproxy`), returns the value for that key.
 For custom userdata objects, such as ones returned by `newproxy`, this function returns `"userdata"` to make sure host-defined types can not be spoofed.
 
 ```
@@ -360,7 +360,7 @@ Returns `-1` if `n` is negative, `1` if `n` is positive, and `0` if `n` is zero 
 function math.round(n: number): number
 ```
 
-Rounds `n` to the nearest integer boundary.
+Rounds `n` to the nearest integer boundary. If `n` is exactly halfway between two integers, rounds `n` away from 0.
 
 ## table library
 
@@ -466,6 +466,13 @@ function table.isfrozen(t: table): boolean
 
 Returns `true` iff the input table is frozen.
 
+```
+function table.clone(t: table): table
+```
+
+Returns a copy of the input table that has the same metatable, same keys and values, and is not frozen even if `t` was.
+The copy is shallow: implementing a deep recursive copy automatically is challenging, and often only certain keys need to be cloned recursively which can be done after the initial clone by modifying the resulting table.
+
 ## string library
 
 ```
@@ -481,7 +488,7 @@ function string.char(args: ...number): string
 Returns the string that contains a byte for every input number; all inputs must be integers in `[0..255]` range.
 
 ```
-function string.find(s: string, p: string, init: number?, plain: boolean?): (number?, number?)
+function string.find(s: string, p: string, init: number?, plain: boolean?): (number?, number?, ...string)
 ```
 
 Tries to find an instance of pattern `p` in the string `s`, starting from position `init` (defaults to 1). When `plain` is true, the search is using raw case-insensitive string equality, otherwise `p` should be a [string pattern](https://www.lua.org/manual/5.3/manual.html#6.4.1). If a match is found, returns the position of the match and the length of the match, followed by the pattern captures; otherwise returns `nil`.
@@ -529,7 +536,7 @@ function string.lower(s: string): string
 Returns a string where each byte corresponds to the lower-case ASCII version of the input byte in the source string.
 
 ```
-function string.match(s: string, p: string, init: number?): (number?, number?)
+function string.match(s: string, p: string, init: number?): ...string?
 ```
 
 Tries to find an instance of pattern `p` in the string `s`, starting from position `init` (defaults to 1). `p` should be a [string pattern](https://www.lua.org/manual/5.3/manual.html#6.4.1). If a match is found, returns all pattern captures, or entire matching substring if no captures are present, otherwise returns `nil`.
@@ -640,7 +647,7 @@ All functions in the `bit32` library treat input numbers as 32-bit unsigned inte
 function bit32.arshift(n: number, i: number): number
 ```
 
-Shifts `n` by `i` bits to the right (if `i` is negative, a left shift is performed instead). The most significant bit of `n` is propagated during the shift.
+Shifts `n` by `i` bits to the right (if `i` is negative, a left shift is performed instead). The most significant bit of `n` is propagated during the shift. When `i` is larger than 31, returns an integer with all bits set to the sign bit of `n`. When `i` is smaller than `-31`, 0 is returned.
 
 ```
 function bit32.band(args: ...number): number
@@ -676,7 +683,7 @@ Perform a bitwise `and` of all input numbers, and return `true` iff the result i
 function bit32.extract(n: number, f: number, w: number?): number
 ```
 
-Extracts bits at positions `[f..w]` and returns the resulting integer. `w` defaults to `f+1`, so a two-argument version of `extract` returns the bit value at position `f`.
+Extracts bits of `n` at position `f` with a width of `w`, and returns the resulting integer. `w` defaults to `1`, so a two-argument version of `extract` returns the bit value at position `f`. Bits are indexed starting at 0. Errors if `f` and `f+w-1` are not between 0 and 31.
 
 ```
 function bit32.lrotate(n: number, i: number): number
@@ -688,13 +695,13 @@ Rotates `n` to the left by `i` bits (if `i` is negative, a right rotate is perfo
 function bit32.lshift(n: number, i: number): number
 ```
 
-Shifts `n` to the left by `i` bits (if `i` is negative, a right shift is performed instead).
+Shifts `n` to the left by `i` bits (if `i` is negative, a right shift is performed instead). When `i` is outside of `[-31..31]` range, returns 0.
 
 ```
 function bit32.replace(n: number, r: number, f: number, w: number?): number
 ```
 
-Replaces bits at positions `[f..w]` of number `n` with `r` and returns the resulting integer. `w` defaults to `f+1`, so a three-argument version of `replace` changes one bit at position `f` to `r` (which should be 0 or 1) and returns the result.
+Replaces bits of `n` at position `f` and width `w` with `r`, and returns the resulting integer. `w` defaults to `1`, so a three-argument version of `replace` changes one bit at position `f` to `r` (which should be 0 or 1) and returns the result. Bits are indexed starting at 0. Errors if `f` and `f+w-1` are not between 0 and 31.
 
 ```
 function bit32.rrotate(n: number, i: number): number
@@ -706,7 +713,7 @@ Rotates `n` to the right by `i` bits (if `i` is negative, a left rotate is perfo
 function bit32.rshift(n: number, i: number): number
 ```
 
-Shifts `n` to the right by `i` bits (if `i` is negative, a left shift is performed instead).
+Shifts `n` to the right by `i` bits (if `i` is negative, a left shift is performed instead). When `i` is outside of `[-31..31]` range, returns 0.
 
 ```
 function bit32.countlz(n: number): number

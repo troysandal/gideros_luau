@@ -54,6 +54,8 @@ LUALIB_API lua_State* luaL_newstate(void);
 
 LUALIB_API const char* luaL_findtable(lua_State* L, int idx, const char* fname, int szhint);
 
+LUALIB_API const char* luaL_typename(lua_State* L, int idx);
+
 /*
 ** ===============================================================
 ** some useful macros
@@ -66,13 +68,11 @@ LUALIB_API const char* luaL_findtable(lua_State* L, int idx, const char* fname, 
 #define luaL_checkstring(L, n) (luaL_checklstring(L, (n), NULL))
 #define luaL_optstring(L, n, d) (luaL_optlstring(L, (n), (d), NULL))
 
-#define luaL_typename(L, i) lua_typename(L, lua_type(L, (i)))
-
 #define luaL_getmetatable(L, n) (lua_getfield(L, LUA_REGISTRYINDEX, (n)))
 
 #define luaL_opt(L, f, n, d) (lua_isnoneornil(L, (n)) ? (d) : f(L, (n)))
 
-/* generic buffer manipulation */
+// generic buffer manipulation
 
 struct luaL_Buffer
 {
@@ -102,7 +102,7 @@ LUALIB_API void luaL_addvalue(luaL_Buffer* B);
 LUALIB_API void luaL_pushresult(luaL_Buffer* B);
 LUALIB_API void luaL_pushresultsize(luaL_Buffer* B, size_t size);
 
-/* builtin libraries */
+// builtin libraries
 LUALIB_API int luaopen_base(lua_State* L);
 
 #define LUA_COLIBNAME "coroutine"
@@ -135,9 +135,9 @@ LUALIB_API int luaopen_int64(lua_State* L);
 #define LUA_IOLIBNAME	"io"
 LUALIB_API int luaopen_io (lua_State *L);
 
-/* open all builtin libraries */
+// open all builtin libraries
 LUALIB_API void luaL_openlibs(lua_State* L);
 
-/* sandbox libraries and globals */
+// sandbox libraries and globals
 LUALIB_API void luaL_sandbox(lua_State* L);
 LUALIB_API void luaL_sandboxthread(lua_State* L);

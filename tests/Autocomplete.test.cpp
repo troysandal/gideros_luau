@@ -14,8 +14,6 @@
 
 LUAU_FASTFLAG(LuauTraceTypesInNonstrictMode2)
 LUAU_FASTFLAG(LuauSetMetatableDoesNotTimeTravel)
-LUAU_FASTFLAG(LuauUseCommittingTxnLog)
-LUAU_FASTFLAG(LuauTableCloneType)
 
 using namespace Luau;
 
@@ -27,6 +25,11 @@ static std::optional<AutocompleteEntryMap> nullCallback(std::string tag, std::op
 template<class BaseType>
 struct ACFixtureImpl : BaseType
 {
+    ACFixtureImpl()
+        : BaseType(true, true)
+    {
+    }
+
     AutocompleteResult autocomplete(unsigned row, unsigned column)
     {
         return Luau::autocomplete(this->frontend, "MainModule", Position{row, column}, nullCallback);
@@ -74,7 +77,18 @@ struct ACFixtureImpl : BaseType
         }
         LUAU_ASSERT("Digit expected after @ symbol" && prevChar != '@');
 
-        return Fixture::check(filteredSource);
+        return BaseType::check(filteredSource);
+    }
+
+    LoadDefinitionFileResult loadDefinition(const std::string& source)
+    {
+        TypeChecker& typeChecker = this->frontend.typeCheckerForAutocomplete;
+        unfreeze(typeChecker.globalTypes);
+        LoadDefinitionFileResult result = loadDefinitionFile(typeChecker, typeChecker.globalScope, source, "@test");
+        freeze(typeChecker.globalTypes);
+
+        REQUIRE_MESSAGE(result.success, "loadDefinition: unable to load definition file");
+        return result;
     }
 
     const Position& getPosition(char marker) const
@@ -90,6 +104,18 @@ struct ACFixtureImpl : BaseType
 
 struct ACFixture : ACFixtureImpl<Fixture>
 {
+    ACFixture()
+        : ACFixtureImpl<Fixture>()
+    {
+        addGlobalBinding(frontend.typeChecker, "table", Binding{typeChecker.anyType});
+        addGlobalBinding(frontend.typeChecker, "math", Binding{typeChecker.anyType});
+        addGlobalBinding(frontend.typeCheckerForAutocomplete, "table", Binding{typeChecker.anyType});
+        addGlobalBinding(frontend.typeCheckerForAutocomplete, "math", Binding{typeChecker.anyType});
+    }
+};
+
+struct ACBuiltinsFixture : ACFixtureImpl<BuiltinsFixture>
+{
 };
 
 TEST_SUITE_BEGIN("AutocompleteTest");
@@ -103,6 +129,7 @@ TEST_CASE_FIXTURE(ACFixture, "empty_program")
     CHECK(!ac.entryMap.empty());
     CHECK(ac.entryMap.count("table"));
     CHECK(ac.entryMap.count("math"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "local_initializer")
@@ -112,6 +139,7 @@ TEST_CASE_FIXTURE(ACFixture, "local_initializer")
     auto ac = autocomplete('1');
     CHECK(ac.entryMap.count("table"));
     CHECK(ac.entryMap.count("math"));
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "leave_numbers_alone")
@@ -120,6 +148,7 @@ TEST_CASE_FIXTURE(ACFixture, "leave_numbers_alone")
 
     auto ac = autocomplete('1');
     CHECK(ac.entryMap.empty());
+    CHECK_EQ(ac.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "user_defined_globals")
@@ -131,6 +160,7 @@ TEST_CASE_FIXTURE(ACFixture, "user_defined_globals")
     CHECK(ac.entryMap.count("myLocal"));
     CHECK(ac.entryMap.count("table"));
     CHECK(ac.entryMap.count("math"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "dont_suggest_local_before_its_definition")
@@ -165,6 +195,7 @@ TEST_CASE_FIXTURE(ACFixture, "recursive_function")
 
     auto ac = autocomplete('1');
     CHECK(ac.entryMap.count("foo"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "nested_recursive_function")
@@ -255,7 +286,7 @@ TEST_CASE_FIXTURE(ACFixture, "function_parameters")
     CHECK(ac.entryMap.count("test"));
 }
 
-TEST_CASE_FIXTURE(ACFixture, "get_member_completions")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "get_member_completions")
 {
     check(R"(
         local a = table.@1
@@ -263,10 +294,11 @@ TEST_CASE_FIXTURE(ACFixture, "get_member_completions")
 
     auto ac = autocomplete('1');
 
-    CHECK_EQ(FFlag::LuauTableCloneType ? 17 : 16, ac.entryMap.size());
+    CHECK_EQ(17, ac.entryMap.size());
     CHECK(ac.entryMap.count("find"));
     CHECK(ac.entryMap.count("pack"));
     CHECK(!ac.entryMap.count("math"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "nested_member_completions")
@@ -280,6 +312,7 @@ TEST_CASE_FIXTURE(ACFixture, "nested_member_completions")
     CHECK_EQ(2, ac.entryMap.size());
     CHECK(ac.entryMap.count("def"));
     CHECK(ac.entryMap.count("egh"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "unsealed_table")
@@ -293,6 +326,7 @@ TEST_CASE_FIXTURE(ACFixture, "unsealed_table")
     auto ac = autocomplete('1');
     CHECK_EQ(1, ac.entryMap.size());
     CHECK(ac.entryMap.count("prop"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "unsealed_table_2")
@@ -307,6 +341,7 @@ TEST_CASE_FIXTURE(ACFixture, "unsealed_table_2")
     auto ac = autocomplete('1');
     CHECK_EQ(1, ac.entryMap.size());
     CHECK(ac.entryMap.count("prop"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "cyclic_table")
@@ -320,6 +355,7 @@ TEST_CASE_FIXTURE(ACFixture, "cyclic_table")
 
     auto ac = autocomplete('1');
     CHECK(ac.entryMap.count("abc"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "table_union")
@@ -335,6 +371,7 @@ TEST_CASE_FIXTURE(ACFixture, "table_union")
     auto ac = autocomplete('1');
     CHECK_EQ(1, ac.entryMap.size());
     CHECK(ac.entryMap.count("b2"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "table_intersection")
@@ -352,9 +389,10 @@ TEST_CASE_FIXTURE(ACFixture, "table_intersection")
     CHECK(ac.entryMap.count("a1"));
     CHECK(ac.entryMap.count("b2"));
     CHECK(ac.entryMap.count("c3"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
-TEST_CASE_FIXTURE(ACFixture, "get_string_completions")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "get_string_completions")
 {
     check(R"(
         local a = ("foo"):@1
@@ -363,6 +401,7 @@ TEST_CASE_FIXTURE(ACFixture, "get_string_completions")
     auto ac = autocomplete('1');
 
     CHECK_EQ(17, ac.entryMap.size());
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "get_suggestions_for_new_statement")
@@ -374,6 +413,7 @@ TEST_CASE_FIXTURE(ACFixture, "get_suggestions_for_new_statement")
     CHECK_NE(0, ac.entryMap.size());
 
     CHECK(ac.entryMap.count("table"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "get_suggestions_for_the_very_start_of_the_script")
@@ -386,6 +426,7 @@ TEST_CASE_FIXTURE(ACFixture, "get_suggestions_for_the_very_start_of_the_script")
     auto ac = autocomplete('1');
 
     CHECK(ac.entryMap.count("table"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "method_call_inside_function_body")
@@ -403,9 +444,10 @@ TEST_CASE_FIXTURE(ACFixture, "method_call_inside_function_body")
     CHECK_NE(0, ac.entryMap.size());
 
     CHECK(!ac.entryMap.count("math"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
-TEST_CASE_FIXTURE(ACFixture, "method_call_inside_if_conditional")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "method_call_inside_if_conditional")
 {
     check(R"(
         if table:  @1
@@ -416,6 +458,7 @@ TEST_CASE_FIXTURE(ACFixture, "method_call_inside_if_conditional")
     CHECK_NE(0, ac.entryMap.size());
     CHECK(ac.entryMap.count("concat"));
     CHECK(!ac.entryMap.count("math"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "statement_between_two_statements")
@@ -433,6 +476,8 @@ TEST_CASE_FIXTURE(ACFixture, "statement_between_two_statements")
     CHECK_NE(0, ac.entryMap.size());
 
     CHECK(ac.entryMap.count("getmyscripts"));
+
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "bias_toward_inner_scope")
@@ -450,6 +495,7 @@ TEST_CASE_FIXTURE(ACFixture, "bias_toward_inner_scope")
     auto ac = autocomplete('1');
 
     CHECK(ac.entryMap.count("A"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 
     TypeId t = follow(*ac.entryMap["A"].type);
     const TableTypeVar* tt = get<TableTypeVar>(t);
@@ -463,10 +509,12 @@ TEST_CASE_FIXTURE(ACFixture, "recommend_statement_starting_keywords")
     check("@1");
     auto ac = autocomplete('1');
     CHECK(ac.entryMap.count("local"));
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 
     check("local i = @1");
     auto ac2 = autocomplete('1');
     CHECK(!ac2.entryMap.count("local"));
+    CHECK_EQ(ac2.context, AutocompleteContext::Expression);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "do_not_overwrite_context_sensitive_kws")
@@ -482,6 +530,7 @@ TEST_CASE_FIXTURE(ACFixture, "do_not_overwrite_context_sensitive_kws")
 
     AutocompleteEntry entry = ac.entryMap["continue"];
     CHECK(entry.kind == AutocompleteEntryKind::Binding);
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_within_a_comment")
@@ -499,6 +548,7 @@ TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_within_a_comment")
     auto ac = autocomplete('1');
 
     CHECK_EQ(0, ac.entryMap.size());
+    CHECK_EQ(ac.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_the_end_of_a_comment")
@@ -510,6 +560,7 @@ TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_the_end_of_a_comme
     auto ac = autocomplete('1');
 
     CHECK_EQ(0, ac.entryMap.size());
+    CHECK_EQ(ac.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_within_a_broken_comment")
@@ -521,6 +572,7 @@ TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_within_a_broken_co
     auto ac = autocomplete('1');
 
     CHECK_EQ(0, ac.entryMap.size());
+    CHECK_EQ(ac.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_within_a_broken_comment_at_the_very_end_of_the_file")
@@ -529,6 +581,7 @@ TEST_CASE_FIXTURE(ACFixture, "dont_offer_any_suggestions_from_within_a_broken_co
 
     auto ac = autocomplete('1');
     CHECK_EQ(0, ac.entryMap.size());
+    CHECK_EQ(ac.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
@@ -540,6 +593,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
     auto ac1 = autocomplete('1');
     CHECK_EQ(ac1.entryMap.count("do"), 0);
     CHECK_EQ(ac1.entryMap.count("end"), 0);
+    CHECK_EQ(ac1.context, AutocompleteContext::Unknown);
 
     check(R"(
         for x =@1 1
@@ -548,6 +602,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
     auto ac2 = autocomplete('1');
     CHECK_EQ(ac2.entryMap.count("do"), 0);
     CHECK_EQ(ac2.entryMap.count("end"), 0);
+    CHECK_EQ(ac2.context, AutocompleteContext::Unknown);
 
     check(R"(
         for x = 1,@1 2
@@ -556,6 +611,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
     auto ac3 = autocomplete('1');
     CHECK_EQ(1, ac3.entryMap.size());
     CHECK_EQ(ac3.entryMap.count("do"), 1);
+    CHECK_EQ(ac3.context, AutocompleteContext::Keyword);
 
     check(R"(
         for x = 1, @12,
@@ -564,6 +620,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
     auto ac4 = autocomplete('1');
     CHECK_EQ(ac4.entryMap.count("do"), 0);
     CHECK_EQ(ac4.entryMap.count("end"), 0);
+    CHECK_EQ(ac4.context, AutocompleteContext::Expression);
 
     check(R"(
         for x = 1, 2, @15
@@ -572,6 +629,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
     auto ac5 = autocomplete('1');
     CHECK_EQ(ac5.entryMap.count("do"), 1);
     CHECK_EQ(ac5.entryMap.count("end"), 0);
+    CHECK_EQ(ac5.context, AutocompleteContext::Keyword);
 
     check(R"(
         for x = 1, 2, 5 f@1
@@ -580,6 +638,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
     auto ac6 = autocomplete('1');
     CHECK_EQ(ac6.entryMap.size(), 1);
     CHECK_EQ(ac6.entryMap.count("do"), 1);
+    CHECK_EQ(ac6.context, AutocompleteContext::Keyword);
 
     check(R"(
         for x = 1, 2, 5 do      @1
@@ -587,6 +646,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_middle_keywords")
 
     auto ac7 = autocomplete('1');
     CHECK_EQ(ac7.entryMap.count("end"), 1);
+    CHECK_EQ(ac7.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
@@ -597,6 +657,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
 
     auto ac1 = autocomplete('1');
     CHECK_EQ(0, ac1.entryMap.size());
+    CHECK_EQ(ac1.context, AutocompleteContext::Unknown);
 
     check(R"(
         for x@1 @2
@@ -604,10 +665,12 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
 
     auto ac2 = autocomplete('1');
     CHECK_EQ(0, ac2.entryMap.size());
+    CHECK_EQ(ac2.context, AutocompleteContext::Unknown);
 
     auto ac2a = autocomplete('2');
     CHECK_EQ(1, ac2a.entryMap.size());
     CHECK_EQ(1, ac2a.entryMap.count("in"));
+    CHECK_EQ(ac2a.context, AutocompleteContext::Keyword);
 
     check(R"(
         for x in y@1
@@ -616,6 +679,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
     auto ac3 = autocomplete('1');
     CHECK_EQ(ac3.entryMap.count("table"), 1);
     CHECK_EQ(ac3.entryMap.count("do"), 0);
+    CHECK_EQ(ac3.context, AutocompleteContext::Expression);
 
     check(R"(
         for x in y @1
@@ -624,6 +688,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
     auto ac4 = autocomplete('1');
     CHECK_EQ(ac4.entryMap.size(), 1);
     CHECK_EQ(ac4.entryMap.count("do"), 1);
+    CHECK_EQ(ac4.context, AutocompleteContext::Keyword);
 
     check(R"(
         for x in f f@1
@@ -632,6 +697,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
     auto ac5 = autocomplete('1');
     CHECK_EQ(ac5.entryMap.size(), 1);
     CHECK_EQ(ac5.entryMap.count("do"), 1);
+    CHECK_EQ(ac5.context, AutocompleteContext::Keyword);
 
     check(R"(
         for x in y do  @1
@@ -642,6 +708,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
     CHECK_EQ(ac6.entryMap.count("table"), 1);
     CHECK_EQ(ac6.entryMap.count("end"), 1);
     CHECK_EQ(ac6.entryMap.count("function"), 1);
+    CHECK_EQ(ac6.context, AutocompleteContext::Statement);
 
     check(R"(
         for x in y do e@1
@@ -652,6 +719,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_for_in_middle_keywords")
     CHECK_EQ(ac7.entryMap.count("table"), 1);
     CHECK_EQ(ac7.entryMap.count("end"), 1);
     CHECK_EQ(ac7.entryMap.count("function"), 1);
+    CHECK_EQ(ac7.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_while_middle_keywords")
@@ -663,6 +731,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_while_middle_keywords")
     auto ac1 = autocomplete('1');
     CHECK_EQ(ac1.entryMap.count("do"), 0);
     CHECK_EQ(ac1.entryMap.count("end"), 0);
+    CHECK_EQ(ac1.context, AutocompleteContext::Expression);
 
     check(R"(
         while true @1
@@ -671,6 +740,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_while_middle_keywords")
     auto ac2 = autocomplete('1');
     CHECK_EQ(1, ac2.entryMap.size());
     CHECK_EQ(ac2.entryMap.count("do"), 1);
+    CHECK_EQ(ac2.context, AutocompleteContext::Keyword);
 
     check(R"(
         while true do  @1
@@ -678,6 +748,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_while_middle_keywords")
 
     auto ac3 = autocomplete('1');
     CHECK_EQ(ac3.entryMap.count("end"), 1);
+    CHECK_EQ(ac3.context, AutocompleteContext::Statement);
 
     check(R"(
         while true d@1
@@ -686,6 +757,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_while_middle_keywords")
     auto ac4 = autocomplete('1');
     CHECK_EQ(1, ac4.entryMap.size());
     CHECK_EQ(ac4.entryMap.count("do"), 1);
+    CHECK_EQ(ac4.context, AutocompleteContext::Keyword);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
@@ -702,6 +774,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
     CHECK_EQ(ac1.entryMap.count("else"), 0);
     CHECK_EQ(ac1.entryMap.count("elseif"), 0);
     CHECK_EQ(ac1.entryMap.count("end"), 0);
+    CHECK_EQ(ac1.context, AutocompleteContext::Expression);
 
     check(R"(
         if x  @1
@@ -713,6 +786,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
     CHECK_EQ(ac2.entryMap.count("else"), 0);
     CHECK_EQ(ac2.entryMap.count("elseif"), 0);
     CHECK_EQ(ac2.entryMap.count("end"), 0);
+    CHECK_EQ(ac2.context, AutocompleteContext::Keyword);
 
     check(R"(
         if x t@1
@@ -721,6 +795,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
     auto ac3 = autocomplete('1');
     CHECK_EQ(1, ac3.entryMap.size());
     CHECK_EQ(ac3.entryMap.count("then"), 1);
+    CHECK_EQ(ac3.context, AutocompleteContext::Keyword);
 
     check(R"(
         if x then
@@ -734,6 +809,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
     CHECK_EQ(ac4.entryMap.count("function"), 1);
     CHECK_EQ(ac4.entryMap.count("elseif"), 1);
     CHECK_EQ(ac4.entryMap.count("end"), 0);
+    CHECK_EQ(ac4.context, AutocompleteContext::Statement);
 
     check(R"(
         if x then
@@ -746,6 +822,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
     CHECK_EQ(ac4a.entryMap.count("table"), 1);
     CHECK_EQ(ac4a.entryMap.count("else"), 1);
     CHECK_EQ(ac4a.entryMap.count("elseif"), 1);
+    CHECK_EQ(ac4a.context, AutocompleteContext::Statement);
 
     check(R"(
         if x then
@@ -760,6 +837,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_middle_keywords")
     CHECK_EQ(ac5.entryMap.count("else"), 0);
     CHECK_EQ(ac5.entryMap.count("elseif"), 0);
     CHECK_EQ(ac5.entryMap.count("end"), 0);
+    CHECK_EQ(ac5.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_until_in_repeat")
@@ -771,6 +849,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_until_in_repeat")
     auto ac = autocomplete('1');
     CHECK_EQ(ac.entryMap.count("table"), 1);
     CHECK_EQ(ac.entryMap.count("until"), 1);
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_until_expression")
@@ -782,6 +861,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_until_expression")
 
     auto ac = autocomplete('1');
     CHECK_EQ(ac.entryMap.count("table"), 1);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "local_names")
@@ -793,6 +873,7 @@ TEST_CASE_FIXTURE(ACFixture, "local_names")
     auto ac1 = autocomplete('1');
     CHECK_EQ(ac1.entryMap.size(), 1);
     CHECK_EQ(ac1.entryMap.count("function"), 1);
+    CHECK_EQ(ac1.context, AutocompleteContext::Unknown);
 
     check(R"(
         local ab, cd@1
@@ -800,6 +881,7 @@ TEST_CASE_FIXTURE(ACFixture, "local_names")
 
     auto ac2 = autocomplete('1');
     CHECK(ac2.entryMap.empty());
+    CHECK_EQ(ac2.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_end_with_fn_exprs")
@@ -810,6 +892,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_end_with_fn_exprs")
 
     auto ac = autocomplete('1');
     CHECK_EQ(ac.entryMap.count("end"), 1);
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_end_with_lambda")
@@ -820,6 +903,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_end_with_lambda")
 
     auto ac = autocomplete('1');
     CHECK_EQ(ac.entryMap.count("end"), 1);
+    CHECK_EQ(ac.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "stop_at_first_stat_when_recommending_keywords")
@@ -832,6 +916,7 @@ TEST_CASE_FIXTURE(ACFixture, "stop_at_first_stat_when_recommending_keywords")
     auto ac1 = autocomplete('1');
     CHECK_EQ(ac1.entryMap.count("in"), 1);
     CHECK_EQ(ac1.entryMap.count("until"), 0);
+    CHECK_EQ(ac1.context, AutocompleteContext::Keyword);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_repeat_middle_keyword")
@@ -954,6 +1039,7 @@ TEST_CASE_FIXTURE(ACFixture, "local_function_params")
     auto ac2 = autocomplete('1');
     CHECK_EQ(ac2.entryMap.count("abc"), 1);
     CHECK_EQ(ac2.entryMap.count("def"), 1);
+    CHECK_EQ(ac2.context, AutocompleteContext::Statement);
 
     check(R"(
         local function abc(def, ghi@1)
@@ -962,6 +1048,7 @@ TEST_CASE_FIXTURE(ACFixture, "local_function_params")
 
     auto ac3 = autocomplete('1');
     CHECK(ac3.entryMap.empty());
+    CHECK_EQ(ac3.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "global_function_params")
@@ -996,6 +1083,7 @@ TEST_CASE_FIXTURE(ACFixture, "global_function_params")
     auto ac2 = autocomplete('1');
     CHECK_EQ(ac2.entryMap.count("abc"), 1);
     CHECK_EQ(ac2.entryMap.count("def"), 1);
+    CHECK_EQ(ac2.context, AutocompleteContext::Statement);
 
     check(R"(
         function abc(def, ghi@1)
@@ -1004,6 +1092,7 @@ TEST_CASE_FIXTURE(ACFixture, "global_function_params")
 
     auto ac3 = autocomplete('1');
     CHECK(ac3.entryMap.empty());
+    CHECK_EQ(ac3.context, AutocompleteContext::Unknown);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "arguments_to_global_lambda")
@@ -1048,6 +1137,7 @@ TEST_CASE_FIXTURE(ACFixture, "function_expr_params")
 
     auto ac2 = autocomplete('1');
     CHECK_EQ(ac2.entryMap.count("def"), 1);
+    CHECK_EQ(ac2.context, AutocompleteContext::Statement);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "local_initializer")
@@ -1109,6 +1199,7 @@ local b: string = "don't trip"
 
     CHECK(ac.entryMap.count("nil"));
     CHECK(ac.entryMap.count("number"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "private_types")
@@ -1177,6 +1268,7 @@ local a: aa
     auto ac = Luau::autocomplete(frontend, "Module/B", Position{2, 11}, nullCallback);
 
     CHECK(ac.entryMap.count("aaa"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "module_type_members")
@@ -1201,6 +1293,7 @@ local a: aaa.
     CHECK_EQ(2, ac.entryMap.size());
     CHECK(ac.entryMap.count("A"));
     CHECK(ac.entryMap.count("B"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "argument_types")
@@ -1214,6 +1307,7 @@ local b: string = "don't trip"
 
     CHECK(ac.entryMap.count("nil"));
     CHECK(ac.entryMap.count("number"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "return_types")
@@ -1227,6 +1321,7 @@ local b: string = "don't trip"
 
     CHECK(ac.entryMap.count("nil"));
     CHECK(ac.entryMap.count("number"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "as_types")
@@ -1240,6 +1335,7 @@ local b: number = (a :: n@1
 
     CHECK(ac.entryMap.count("nil"));
     CHECK(ac.entryMap.count("number"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "function_type_types")
@@ -1288,6 +1384,7 @@ local b: string = "don't trip"
     auto ac = autocomplete('1');
 
     CHECK(ac.entryMap.count("Tee"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "type_correct_suggestion_in_argument")
@@ -1376,6 +1473,7 @@ local b: Foo = { a = a.@1
     CHECK(ac.entryMap.count("one"));
     CHECK(ac.entryMap["one"].typeCorrect == TypeCorrectKind::Correct);
     CHECK(ac.entryMap["two"].typeCorrect == TypeCorrectKind::None);
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     check(R"(
 type Foo = { a: number, b: string }
@@ -1388,6 +1486,7 @@ local b: Foo = { b = a.@1
     CHECK(ac.entryMap.count("two"));
     CHECK(ac.entryMap["two"].typeCorrect == TypeCorrectKind::Correct);
     CHECK(ac.entryMap["one"].typeCorrect == TypeCorrectKind::None);
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "type_correct_function_return_types")
@@ -1862,7 +1961,7 @@ ex.b(function(x:
     CHECK(!ac.entryMap.count("(done) -> number"));
 }
 
-TEST_CASE_FIXTURE(ACFixture, "suggest_external_module_type")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "suggest_external_module_type")
 {
     fileResolver.source["Module/A"] = R"(
 export type done = { x: number, y: number }
@@ -1912,14 +2011,9 @@ local bar: @1= foo
     CHECK(!ac.entryMap.count("foo"));
 }
 
-// Switch back to TEST_CASE_FIXTURE with regular ACFixture when removing the
-// LuauUseCommittingTxnLog flag.
-TEST_CASE("type_correct_function_no_parenthesis")
+TEST_CASE_FIXTURE(ACFixture, "type_correct_function_no_parenthesis")
 {
-    ScopedFastFlag sff_LuauUseCommittingTxnLog = ScopedFastFlag("LuauUseCommittingTxnLog", true);
-    ACFixture fix;
-
-    fix.check(R"(
+    check(R"(
 local function target(a: (number) -> number) return a(4) end
 local function bar1(a: number) return -a end
 local function bar2(a: string) return a .. 'x' end
@@ -1927,7 +2021,7 @@ local function bar2(a: string) return a .. 'x' end
 return target(b@1
     )");
 
-    auto ac = fix.autocomplete('1');
+    auto ac = autocomplete('1');
 
     CHECK(ac.entryMap.count("bar1"));
     CHECK(ac.entryMap["bar1"].typeCorrect == TypeCorrectKind::Correct);
@@ -1937,8 +2031,6 @@ return target(b@1
 
 TEST_CASE_FIXTURE(ACFixture, "function_in_assignment_has_parentheses")
 {
-    ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-
     check(R"(
 local function bar(a: number) return -a end
 local abc = b@1
@@ -1952,12 +2044,10 @@ local abc = b@1
 
 TEST_CASE_FIXTURE(ACFixture, "function_result_passed_to_function_has_parentheses")
 {
-    ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-
     check(R"(
 local function foo() return 1 end
 local function bar(a: number) return -a end
-local abc = bar(@1) 
+local abc = bar(@1)
     )");
 
     auto ac = autocomplete('1');
@@ -1975,17 +2065,13 @@ local fp: @1= f
 
     auto ac = autocomplete('1');
 
+    REQUIRE_EQ("({| x: number, y: number |}) -> number", toString(requireType("f")));
     CHECK(ac.entryMap.count("({ x: number, y: number }) -> number"));
 }
 
-// Switch back to TEST_CASE_FIXTURE with regular ACFixture when removing the
-// LuauUseCommittingTxnLog flag.
-TEST_CASE("type_correct_keywords")
+TEST_CASE_FIXTURE(ACFixture, "type_correct_keywords")
 {
-    ScopedFastFlag sff_LuauUseCommittingTxnLog = ScopedFastFlag("LuauUseCommittingTxnLog", true);
-    ACFixture fix;
-
-    fix.check(R"(
+    check(R"(
 local function a(x: boolean) end
 local function b(x: number?) end
 local function c(x: (number) -> string) end
@@ -2002,26 +2088,26 @@ local dc = d(f@4)
 local ec = e(f@5)
     )");
 
-    auto ac = fix.autocomplete('1');
+    auto ac = autocomplete('1');
     CHECK(ac.entryMap.count("tru"));
     CHECK(ac.entryMap["tru"].typeCorrect == TypeCorrectKind::None);
     CHECK(ac.entryMap["true"].typeCorrect == TypeCorrectKind::Correct);
     CHECK(ac.entryMap["false"].typeCorrect == TypeCorrectKind::Correct);
 
-    ac = fix.autocomplete('2');
+    ac = autocomplete('2');
     CHECK(ac.entryMap.count("ni"));
     CHECK(ac.entryMap["ni"].typeCorrect == TypeCorrectKind::None);
     CHECK(ac.entryMap["nil"].typeCorrect == TypeCorrectKind::Correct);
 
-    ac = fix.autocomplete('3');
+    ac = autocomplete('3');
     CHECK(ac.entryMap.count("false"));
     CHECK(ac.entryMap["false"].typeCorrect == TypeCorrectKind::None);
     CHECK(ac.entryMap["function"].typeCorrect == TypeCorrectKind::Correct);
 
-    ac = fix.autocomplete('4');
+    ac = autocomplete('4');
     CHECK(ac.entryMap["function"].typeCorrect == TypeCorrectKind::Correct);
 
-    ac = fix.autocomplete('5');
+    ac = autocomplete('5');
     CHECK(ac.entryMap["function"].typeCorrect == TypeCorrectKind::Correct);
 }
 
@@ -2227,43 +2313,18 @@ local a: aaa.do
     CHECK(ac.entryMap.count("other"));
 }
 
-TEST_CASE_FIXTURE(ACFixture, "autocompleteSource")
+
+TEST_CASE_FIXTURE(ACFixture, "comments")
 {
-    std::string_view source = R"(
-        local a = table. -- Line 1
-        --             | Column 23
-    )";
+    fileResolver.source["Comments"] = "--!str";
 
-    auto ac = autocompleteSource(frontend, source, Position{1, 24}, nullCallback).result;
-
-    CHECK_EQ(FFlag::LuauTableCloneType ? 17 : 16, ac.entryMap.size());
-    CHECK(ac.entryMap.count("find"));
-    CHECK(ac.entryMap.count("pack"));
-    CHECK(!ac.entryMap.count("math"));
-}
-
-TEST_CASE_FIXTURE(ACFixture, "autocompleteSource_require")
-{
-    std::string_view source = R"(
-        local a = require(w -- Line 1
-        --                 | Column 27
-    )";
-
-    // CLI-43699 require shouldn't crash inside autocompleteSource
-    auto ac = autocompleteSource(frontend, source, Position{1, 27}, nullCallback).result;
-}
-
-TEST_CASE_FIXTURE(ACFixture, "autocompleteSource_comments")
-{
-    std::string_view source = "--!str";
-
-    auto ac = autocompleteSource(frontend, source, Position{0, 6}, nullCallback).result;
+    auto ac = Luau::autocomplete(frontend, "Comments", Position{0, 6}, nullCallback);
     CHECK_EQ(0, ac.entryMap.size());
 }
 
-TEST_CASE_FIXTURE(ACFixture, "autocompleteProp_index_function_metamethod_is_variadic")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "autocompleteProp_index_function_metamethod_is_variadic")
 {
-    std::string_view source = R"(
+    fileResolver.source["Module/A"] = R"(
         type Foo = {x: number}
         local t = {}
         setmetatable(t, {
@@ -2276,7 +2337,7 @@ TEST_CASE_FIXTURE(ACFixture, "autocompleteProp_index_function_metamethod_is_vari
         --          | Column 20
     )";
 
-    auto ac = autocompleteSource(frontend, source, Position{9, 20}, nullCallback).result;
+    auto ac = Luau::autocomplete(frontend, "Module/A", Position{9, 20}, nullCallback);
     REQUIRE_EQ(1, ac.entryMap.size());
     CHECK(ac.entryMap.count("x"));
 }
@@ -2365,35 +2426,36 @@ end
     CHECK(ac.entryMap.count("elsewhere"));
 }
 
-TEST_CASE_FIXTURE(ACFixture, "autocompleteSource_not_the_var_we_are_defining")
+TEST_CASE_FIXTURE(ACFixture, "not_the_var_we_are_defining")
 {
-    std::string_view source = "abc,de";
+    fileResolver.source["Module/A"] = "abc,de";
 
-    auto ac = autocompleteSource(frontend, source, Position{0, 6}, nullCallback).result;
+    auto ac = Luau::autocomplete(frontend, "Module/A", Position{0, 6}, nullCallback);
     CHECK(!ac.entryMap.count("de"));
 }
 
-TEST_CASE_FIXTURE(ACFixture, "autocompleteSource_recursive_function")
+TEST_CASE_FIXTURE(ACFixture, "recursive_function_global")
 {
-    {
-        std::string_view global = R"(function abc()
+    fileResolver.source["global"] = R"(function abc()
 
 end
 )";
 
-        auto ac = autocompleteSource(frontend, global, Position{1, 0}, nullCallback).result;
-        CHECK(ac.entryMap.count("abc"));
-    }
+    auto ac = Luau::autocomplete(frontend, "global", Position{1, 0}, nullCallback);
+    CHECK(ac.entryMap.count("abc"));
+}
 
-    {
-        std::string_view local = R"(local function abc()
+
+
+TEST_CASE_FIXTURE(ACFixture, "recursive_function_local")
+{
+    fileResolver.source["local"] = R"(local function abc()
 
 end
 )";
 
-        auto ac = autocompleteSource(frontend, local, Position{1, 0}, nullCallback).result;
-        CHECK(ac.entryMap.count("abc"));
-    }
+    auto ac = Luau::autocomplete(frontend, "local", Position{1, 0}, nullCallback);
+    CHECK(ac.entryMap.count("abc"));
 }
 
 TEST_CASE_FIXTURE(ACFixture, "suggest_table_keys")
@@ -2406,6 +2468,7 @@ local t: Test = { f@1 }
     auto ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // Intersection
     check(R"(
@@ -2416,6 +2479,7 @@ local t: Test = { f@1 }
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // Union
     check(R"(
@@ -2427,6 +2491,7 @@ local t: Test = { s@1 }
     CHECK(ac.entryMap.count("second"));
     CHECK(!ac.entryMap.count("first"));
     CHECK(!ac.entryMap.count("third"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // No parenthesis suggestion
     check(R"(
@@ -2437,6 +2502,7 @@ local t: Test = { f@1 }
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap["first"].parens == ParenthesesRecommendation::None);
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // When key is changed
     check(R"(
@@ -2447,6 +2513,7 @@ local t: Test = { f@1 = 2 }
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // Alternative key syntax
     check(R"(
@@ -2457,6 +2524,7 @@ local t: Test = { ["f@1"] }
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // Not an alternative key syntax
     check(R"(
@@ -2467,6 +2535,7 @@ local t: Test = { "f@1" }
     ac = autocomplete('1');
     CHECK(!ac.entryMap.count("first"));
     CHECK(!ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::String);
 
     // Skip keys that are already defined
     check(R"(
@@ -2477,6 +2546,7 @@ local t: Test = { first = 2, s@1 }
     ac = autocomplete('1');
     CHECK(!ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // Don't skip active key
     check(R"(
@@ -2487,6 +2557,7 @@ local t: Test = { first@1 }
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     // Inference after first key
     check(R"(
@@ -2499,6 +2570,7 @@ local t = {
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 
     check(R"(
 local t = {
@@ -2510,25 +2582,22 @@ local t = {
     ac = autocomplete('1');
     CHECK(ac.entryMap.count("first"));
     CHECK(ac.entryMap.count("second"));
+    CHECK_EQ(ac.context, AutocompleteContext::Property);
 }
 
-TEST_CASE("autocomplete_documentation_symbols")
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_documentation_symbols")
 {
-    Fixture fix(FFlag::LuauUseCommittingTxnLog);
-
-    fix.loadDefinition(R"(
+    loadDefinition(R"(
         declare y: {
             x: number,
         }
     )");
 
-    fix.fileResolver.source["Module/A"] = R"(
-        local a = y.
-    )";
+    check(R"(
+        local a = y.@1
+    )");
 
-    fix.frontend.check("Module/A");
-
-    auto ac = autocomplete(fix.frontend, "Module/A", Position{1, 21}, nullCallback);
+    auto ac = autocomplete('1');
 
     REQUIRE(ac.entryMap.count("x"));
     CHECK_EQ(ac.entryMap["x"].documentationSymbol, "@test/global/y.x");
@@ -2557,6 +2626,7 @@ a = if temp then even elseif true then temp else e@9
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 
     ac = autocomplete('2');
     CHECK(ac.entryMap.count("temp") == 0);
@@ -2564,18 +2634,21 @@ a = if temp then even elseif true then temp else e@9
     CHECK(ac.entryMap.count("then"));
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Keyword);
 
     ac = autocomplete('3');
     CHECK(ac.entryMap.count("even"));
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 
     ac = autocomplete('4');
     CHECK(ac.entryMap.count("even") == 0);
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else"));
     CHECK(ac.entryMap.count("elseif"));
+    CHECK_EQ(ac.context, AutocompleteContext::Keyword);
 
     ac = autocomplete('5');
     CHECK(ac.entryMap.count("temp"));
@@ -2583,6 +2656,7 @@ a = if temp then even elseif true then temp else e@9
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 
     ac = autocomplete('6');
     CHECK(ac.entryMap.count("temp") == 0);
@@ -2590,6 +2664,7 @@ a = if temp then even elseif true then temp else e@9
     CHECK(ac.entryMap.count("then"));
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Keyword);
 
     ac = autocomplete('7');
     CHECK(ac.entryMap.count("temp"));
@@ -2597,22 +2672,24 @@ a = if temp then even elseif true then temp else e@9
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 
     ac = autocomplete('8');
     CHECK(ac.entryMap.count("even") == 0);
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else"));
     CHECK(ac.entryMap.count("elseif"));
+    CHECK_EQ(ac.context, AutocompleteContext::Keyword);
 
     ac = autocomplete('9');
     CHECK(ac.entryMap.count("then") == 0);
     CHECK(ac.entryMap.count("else") == 0);
     CHECK(ac.entryMap.count("elseif") == 0);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_if_else_regression")
 {
-    ScopedFastFlag FFlagLuauIfElseExprFixCompletionIssue("LuauIfElseExprFixCompletionIssue", true);
     check(R"(
 local abcdef = 0;
 local temp = false
@@ -2631,6 +2708,15 @@ a = if temp then even else abc@3
     CHECK(ac.entryMap.count("abcdef"));
 }
 
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_interpolated_string")
+{
+    check(R"(f(`expression = {@1}`))");
+
+    auto ac = autocomplete('1');
+    CHECK(ac.entryMap.count("table"));
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
+}
+
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_explicit_type_pack")
 {
     check(R"(
@@ -2642,12 +2728,11 @@ local a: A<(number, s@1>
 
     CHECK(ac.entryMap.count("number"));
     CHECK(ac.entryMap.count("string"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_first_function_arg_expected_type")
 {
-    ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-
     check(R"(
 local function foo1() return 1 end
 local function foo2() return "1" end
@@ -2704,6 +2789,7 @@ type A<T = @1> = () -> T
 
     CHECK(ac.entryMap.count("number"));
     CHECK(ac.entryMap.count("string"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
 TEST_CASE_FIXTURE(ACFixture, "autocomplete_default_type_pack_parameters")
@@ -2716,26 +2802,26 @@ type A<T... = ...@1> = () -> T
 
     CHECK(ac.entryMap.count("number"));
     CHECK(ac.entryMap.count("string"));
+    CHECK_EQ(ac.context, AutocompleteContext::Type);
 }
 
-TEST_CASE_FIXTURE(ACFixture, "autocomplete_oop_implicit_self")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "autocomplete_oop_implicit_self")
 {
-    ScopedFastFlag flag("LuauMissingFollowACMetatables", true);
     check(R"(
 --!strict
 local Class = {}
 Class.__index = Class
 type Class = typeof(setmetatable({} :: { x: number }, Class))
 function Class.new(x: number): Class
-	return setmetatable({x = x}, Class)
+    return setmetatable({x = x}, Class)
 end
 function Class.getx(self: Class)
-	return self.x
+    return self.x
 end
 function test()
-	local c = Class.new(42)
-	local n = c:@1
-	print(n)
+    local c = Class.new(42)
+    local n = c:@1
+    print(n)
 end
     )");
 
@@ -2744,13 +2830,8 @@ end
     CHECK(ac.entryMap.count("getx"));
 }
 
-TEST_CASE_FIXTURE(ACFixture, "autocomplete_on_string_singletons")
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "autocomplete_on_string_singletons")
 {
-    ScopedFastFlag sffs[] = {
-        {"LuauParseSingletonTypes", true},
-        {"LuauSingletonTypes", true},
-    };
-
     check(R"(
         --!strict
         local foo: "hello" | "bye" = "hello"
@@ -2762,10 +2843,105 @@ TEST_CASE_FIXTURE(ACFixture, "autocomplete_on_string_singletons")
     CHECK(ac.entryMap.count("format"));
 }
 
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_string_singletons")
+{
+    check(R"(
+        type tag = "cat" | "dog"
+        local function f(a: tag) end
+        f("@1")
+        f(@2)
+        local x: tag = "@3"
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("cat"));
+    CHECK(ac.entryMap.count("dog"));
+    CHECK_EQ(ac.context, AutocompleteContext::String);
+
+    ac = autocomplete('2');
+
+    CHECK(ac.entryMap.count("\"cat\""));
+    CHECK(ac.entryMap.count("\"dog\""));
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
+
+    ac = autocomplete('3');
+
+    CHECK(ac.entryMap.count("cat"));
+    CHECK(ac.entryMap.count("dog"));
+    CHECK_EQ(ac.context, AutocompleteContext::String);
+
+    check(R"(
+        type tagged = {tag:"cat", fieldx:number} | {tag:"dog", fieldy:number}
+        local x: tagged = {tag="@4"}
+    )");
+
+    ac = autocomplete('4');
+
+    CHECK(ac.entryMap.count("cat"));
+    CHECK(ac.entryMap.count("dog"));
+    CHECK_EQ(ac.context, AutocompleteContext::String);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_string_singleton_equality")
+{
+    check(R"(
+        type tagged = {tag:"cat", fieldx:number} | {tag:"dog", fieldy:number}
+        local x: tagged = {tag="cat", fieldx=2}
+        if x.tag == "@1" or "@2" ~= x.tag then end
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("cat"));
+    CHECK(ac.entryMap.count("dog"));
+
+    ac = autocomplete('2');
+
+    CHECK(ac.entryMap.count("cat"));
+    CHECK(ac.entryMap.count("dog"));
+
+    // CLI-48823: assignment to x.tag should also autocomplete, but union l-values are not supported yet
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_boolean_singleton")
+{
+    check(R"(
+local function f(x: true) end
+f(@1)
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("true"));
+    CHECK(ac.entryMap["true"].typeCorrect == TypeCorrectKind::Correct);
+    REQUIRE(ac.entryMap.count("false"));
+    CHECK(ac.entryMap["false"].typeCorrect == TypeCorrectKind::None);
+    CHECK_EQ(ac.context, AutocompleteContext::Expression);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "autocomplete_string_singleton_escape")
+{
+    check(R"(
+        type tag = "strange\t\"cat\"" | 'nice\t"dog"'
+        local function f(x: tag) end
+        f(@1)
+        f("@2")
+    )");
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("\"strange\\t\\\"cat\\\"\""));
+    CHECK(ac.entryMap.count("\"nice\\t\\\"dog\\\"\""));
+
+    ac = autocomplete('2');
+
+    CHECK(ac.entryMap.count("strange\\t\\\"cat\\\""));
+    CHECK(ac.entryMap.count("nice\\t\\\"dog\\\""));
+}
+
 TEST_CASE_FIXTURE(ACFixture, "function_in_assignment_has_parentheses_2")
 {
-    ScopedFastFlag luauAutocompleteAvoidMutation("LuauAutocompleteAvoidMutation", true);
-
     check(R"(
 local bar: ((number) -> number) & (number, number) -> number)
 local abc = b@1
@@ -2775,6 +2951,274 @@ local abc = b@1
 
     CHECK(ac.entryMap.count("bar"));
     CHECK(ac.entryMap["bar"].parens == ParenthesesRecommendation::CursorInside);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "no_incompatible_self_calls_on_class")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    loadDefinition(R"(
+declare class Foo
+    function one(self): number
+    two: () -> number
+end
+    )");
+
+    {
+        check(R"(
+local t: Foo
+t:@1
+        )");
+
+        auto ac = autocomplete('1');
+
+        REQUIRE(ac.entryMap.count("one"));
+        REQUIRE(ac.entryMap.count("two"));
+        CHECK(!ac.entryMap["one"].wrongIndexType);
+        CHECK(ac.entryMap["two"].wrongIndexType);
+    }
+
+    {
+        check(R"(
+local t: Foo
+t.@1
+        )");
+
+        auto ac = autocomplete('1');
+
+        REQUIRE(ac.entryMap.count("one"));
+        REQUIRE(ac.entryMap.count("two"));
+        CHECK(ac.entryMap["one"].wrongIndexType);
+        CHECK(!ac.entryMap["two"].wrongIndexType);
+    }
+}
+
+TEST_CASE_FIXTURE(ACFixture, "do_compatible_self_calls")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+local t = {}
+function t:m() end
+t:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("m"));
+    CHECK(!ac.entryMap["m"].wrongIndexType);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "no_incompatible_self_calls")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+local t = {}
+function t.m() end
+t:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("m"));
+    CHECK(ac.entryMap["m"].wrongIndexType);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "no_incompatible_self_calls_2")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+local f: (() -> number) & ((number) -> number) = function(x: number?) return 2 end
+local t = {}
+t.f = f
+t:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("f"));
+    CHECK(ac.entryMap["f"].wrongIndexType);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "do_wrong_compatible_self_calls")
+{
+    check(R"(
+local t = {}
+function t.m(x: typeof(t)) end
+t:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("m"));
+    // We can make changes to mark this as a wrong way to call even though it's compatible
+    CHECK(!ac.entryMap["m"].wrongIndexType);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "no_wrong_compatible_self_calls_with_generics")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+local t = {}
+function t.m<T>(a: T) end
+t:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("m"));
+    // While this call is compatible with the type, this requires instantiation of a generic type which we don't perform
+    CHECK(ac.entryMap["m"].wrongIndexType);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "string_prim_self_calls_are_fine")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+local s = "hello"
+s:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("byte"));
+    CHECK(ac.entryMap["byte"].wrongIndexType == false);
+    REQUIRE(ac.entryMap.count("char"));
+    CHECK(ac.entryMap["char"].wrongIndexType == true);
+    REQUIRE(ac.entryMap.count("sub"));
+    CHECK(ac.entryMap["sub"].wrongIndexType == false);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "string_prim_non_self_calls_are_avoided")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+local s = "hello"
+s.@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("char"));
+    CHECK(ac.entryMap["char"].wrongIndexType == false);
+    REQUIRE(ac.entryMap.count("sub"));
+    CHECK(ac.entryMap["sub"].wrongIndexType == true);
+}
+
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "library_non_self_calls_are_fine")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+string.@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("byte"));
+    CHECK(ac.entryMap["byte"].wrongIndexType == false);
+    REQUIRE(ac.entryMap.count("char"));
+    CHECK(ac.entryMap["char"].wrongIndexType == false);
+    REQUIRE(ac.entryMap.count("sub"));
+    CHECK(ac.entryMap["sub"].wrongIndexType == false);
+
+    check(R"(
+table.@1
+    )");
+
+    ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("remove"));
+    CHECK(ac.entryMap["remove"].wrongIndexType == false);
+    REQUIRE(ac.entryMap.count("getn"));
+    CHECK(ac.entryMap["getn"].wrongIndexType == false);
+    REQUIRE(ac.entryMap.count("insert"));
+    CHECK(ac.entryMap["insert"].wrongIndexType == false);
+}
+
+TEST_CASE_FIXTURE(ACBuiltinsFixture, "library_self_calls_are_invalid")
+{
+    ScopedFastFlag selfCallAutocompleteFix3{"LuauSelfCallAutocompleteFix3", true};
+
+    check(R"(
+string:@1
+    )");
+
+    auto ac = autocomplete('1');
+
+    REQUIRE(ac.entryMap.count("byte"));
+    CHECK(ac.entryMap["byte"].wrongIndexType == true);
+    REQUIRE(ac.entryMap.count("char"));
+    CHECK(ac.entryMap["char"].wrongIndexType == true);
+
+    // We want the next test to evaluate to 'true', but we have to allow function defined with 'self' to be callable with ':'
+    // We may change the definition of the string metatable to not use 'self' types in the future (like byte/char/pack/unpack)
+    REQUIRE(ac.entryMap.count("sub"));
+    CHECK(ac.entryMap["sub"].wrongIndexType == false);
+}
+
+TEST_CASE_FIXTURE(ACFixture, "source_module_preservation_and_invalidation")
+{
+    check(R"(
+local a = { x = 2, y = 4 }
+a.@1
+    )");
+
+    frontend.clear();
+
+    auto ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("x"));
+    CHECK(ac.entryMap.count("y"));
+
+    frontend.check("MainModule", {});
+
+    ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("x"));
+    CHECK(ac.entryMap.count("y"));
+
+    frontend.markDirty("MainModule", nullptr);
+
+    ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("x"));
+    CHECK(ac.entryMap.count("y"));
+
+    frontend.check("MainModule", {});
+
+    ac = autocomplete('1');
+
+    CHECK(ac.entryMap.count("x"));
+    CHECK(ac.entryMap.count("y"));
+}
+
+TEST_CASE_FIXTURE(ACFixture, "globals_are_order_independent")
+{
+    ScopedFastFlag sff("LuauAutocompleteFixGlobalOrder", true);
+
+    check(R"(
+        local myLocal = 4
+        function abc0()
+            local myInnerLocal = 1
+@1
+        end
+
+        function abc1()
+            local myInnerLocal = 1
+        end
+    )");
+
+    auto ac = autocomplete('1');
+    CHECK(ac.entryMap.count("myLocal"));
+    CHECK(ac.entryMap.count("myInnerLocal"));
+    CHECK(ac.entryMap.count("abc0"));
+    CHECK(ac.entryMap.count("abc1"));
 }
 
 TEST_SUITE_END();

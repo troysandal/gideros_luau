@@ -23,15 +23,26 @@ LUAU_FASTFLAG(DebugLuauFreezeArena)
 LUAU_FASTINTVARIABLE(LuauTypeMaximumStringifierLength, 500)
 LUAU_FASTINTVARIABLE(LuauTableTypeMaximumStringifierLength, 0)
 LUAU_FASTINT(LuauTypeInferRecursionLimit)
-LUAU_FASTFLAG(LuauErrorRecoveryType)
-LUAU_FASTFLAG(LuauSubtypingAddOptPropsToUnsealedTables)
-LUAU_FASTFLAG(LuauDiscriminableUnions2)
+LUAU_FASTFLAG(LuauUnknownAndNeverType)
+LUAU_FASTFLAGVARIABLE(LuauDeduceGmatchReturnTypes, false)
+LUAU_FASTFLAGVARIABLE(LuauMaybeGenericIntersectionTypes, false)
+LUAU_FASTFLAGVARIABLE(LuauDeduceFindMatchReturnTypes, false)
+LUAU_FASTFLAGVARIABLE(LuauStringFormatArgumentErrorFix, false)
 
 namespace Luau
 {
 
-std::optional<ExprResult<TypePackId>> magicFunctionFormat(
-    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, ExprResult<TypePackId> exprResult);
+std::optional<WithPredicate<TypePackId>> magicFunctionFormat(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate);
+
+static std::optional<WithPredicate<TypePackId>> magicFunctionGmatch(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate);
+
+static std::optional<WithPredicate<TypePackId>> magicFunctionMatch(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate);
+
+static std::optional<WithPredicate<TypePackId>> magicFunctionFind(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate);
 
 TypeId follow(TypeId t)
 {
@@ -161,10 +172,12 @@ bool isNumber(TypeId ty)
 // Returns true when ty is a subtype of string
 bool isString(TypeId ty)
 {
-    if (isPrim(ty, PrimitiveTypeVar::String) || get<StringSingleton>(get<SingletonTypeVar>(follow(ty))))
+    ty = follow(ty);
+
+    if (isPrim(ty, PrimitiveTypeVar::String) || get<StringSingleton>(get<SingletonTypeVar>(ty)))
         return true;
 
-    if (auto utv = get<UnionTypeVar>(follow(ty)))
+    if (auto utv = get<UnionTypeVar>(ty))
         return std::all_of(begin(utv), end(utv), isString);
 
     return false;
@@ -173,22 +186,15 @@ bool isString(TypeId ty)
 // Returns true when ty is a supertype of string
 bool maybeString(TypeId ty)
 {
-    if (FFlag::LuauSubtypingAddOptPropsToUnsealedTables)
-    {
-        ty = follow(ty);
-    
-        if (isPrim(ty, PrimitiveTypeVar::String) || get<AnyTypeVar>(ty))
-            return true;
+    ty = follow(ty);
 
-        if (auto utv = get<UnionTypeVar>(ty))
-            return std::any_of(begin(utv), end(utv), maybeString);
+    if (isPrim(ty, PrimitiveTypeVar::String) || get<AnyTypeVar>(ty))
+        return true;
 
-        return false;
-    }
-    else
-    {
-        return isString(ty);
-    }
+    if (auto utv = get<UnionTypeVar>(ty))
+        return std::any_of(begin(utv), end(utv), maybeString);
+
+    return false;
 }
 
 bool isThread(TypeId ty)
@@ -201,11 +207,16 @@ bool isOptional(TypeId ty)
     if (isNil(ty))
         return true;
 
-    auto utv = get<UnionTypeVar>(follow(ty));
+    ty = follow(ty);
+
+    if (get<AnyTypeVar>(ty) || (FFlag::LuauUnknownAndNeverType && get<UnknownTypeVar>(ty)))
+        return true;
+
+    auto utv = get<UnionTypeVar>(ty);
     if (!utv)
         return false;
 
-    return std::any_of(begin(utv), end(utv), isNil);
+    return std::any_of(begin(utv), end(utv), isOptional);
 }
 
 bool isTableIntersection(TypeId ty)
@@ -232,6 +243,8 @@ bool isOverloadedFunction(TypeId ty)
 
 std::optional<TypeId> getMetatable(TypeId type)
 {
+    type = follow(type);
+
     if (const MetatableTypeVar* mtType = get<MetatableTypeVar>(type))
         return mtType->metatable;
     else if (const ClassTypeVar* classType = get<ClassTypeVar>(type))
@@ -284,6 +297,29 @@ const std::string* getName(TypeId type)
     return nullptr;
 }
 
+std::optional<ModuleName> getDefinitionModuleName(TypeId type)
+{
+    type = follow(type);
+
+    if (auto ttv = get<TableTypeVar>(type))
+    {
+        if (!ttv->definitionModuleName.empty())
+            return ttv->definitionModuleName;
+    }
+    else if (auto ftv = get<FunctionTypeVar>(type))
+    {
+        if (ftv->definition)
+            return ftv->definition->definitionModuleName;
+    }
+    else if (auto ctv = get<ClassTypeVar>(type))
+    {
+        if (!ctv->definitionModuleName.empty())
+            return ctv->definitionModuleName;
+    }
+
+    return std::nullopt;
+}
+
 bool isSubset(const UnionTypeVar& super, const UnionTypeVar& sub)
 {
     std::unordered_set<TypeId> superTypes;
@@ -315,6 +351,28 @@ bool isGeneric(TypeId ty)
 
 bool maybeGeneric(TypeId ty)
 {
+    if (FFlag::LuauMaybeGenericIntersectionTypes)
+    {
+        ty = follow(ty);
+
+        if (get<FreeTypeVar>(ty))
+            return true;
+
+        if (auto ttv = get<TableTypeVar>(ty))
+        {
+            // TODO: recurse on table types CLI-39914
+            (void)ttv;
+            return true;
+        }
+
+        if (auto itv = get<IntersectionTypeVar>(ty))
+        {
+            return std::any_of(begin(itv), end(itv), maybeGeneric);
+        }
+
+        return isGeneric(ty);
+    }
+
     ty = follow(ty);
     if (get<FreeTypeVar>(ty))
         return true;
@@ -349,8 +407,7 @@ bool hasLength(TypeId ty, DenseHashSet<TypeId>& seen, int* recursionCount)
     if (seen.contains(ty))
         return true;
 
-    bool isStr = FFlag::LuauDiscriminableUnions2 ? isString(ty) : isPrim(ty, PrimitiveTypeVar::String);
-    if (isStr || get<AnyTypeVar>(ty) || get<TableTypeVar>(ty) || get<MetatableTypeVar>(ty))
+    if (isString(ty) || get<AnyTypeVar>(ty) || get<TableTypeVar>(ty) || get<MetatableTypeVar>(ty))
         return true;
 
     if (auto uty = get<UnionTypeVar>(ty))
@@ -382,41 +439,58 @@ bool hasLength(TypeId ty, DenseHashSet<TypeId>& seen, int* recursionCount)
     return false;
 }
 
-FunctionTypeVar::FunctionTypeVar(TypePackId argTypes, TypePackId retType, std::optional<FunctionDefinition> defn, bool hasSelf)
+BlockedTypeVar::BlockedTypeVar()
+    : index(++nextIndex)
+{
+}
+
+int BlockedTypeVar::nextIndex = 0;
+
+PendingExpansionTypeVar::PendingExpansionTypeVar(TypeFun fn, std::vector<TypeId> typeArguments, std::vector<TypePackId> packArguments)
+    : fn(fn)
+    , typeArguments(typeArguments)
+    , packArguments(packArguments)
+    , index(++nextIndex)
+{
+}
+
+size_t PendingExpansionTypeVar::nextIndex = 0;
+
+FunctionTypeVar::FunctionTypeVar(TypePackId argTypes, TypePackId retTypes, std::optional<FunctionDefinition> defn, bool hasSelf)
     : argTypes(argTypes)
-    , retType(retType)
+    , retTypes(retTypes)
     , definition(std::move(defn))
     , hasSelf(hasSelf)
 {
 }
 
-FunctionTypeVar::FunctionTypeVar(TypeLevel level, TypePackId argTypes, TypePackId retType, std::optional<FunctionDefinition> defn, bool hasSelf)
+FunctionTypeVar::FunctionTypeVar(TypeLevel level, TypePackId argTypes, TypePackId retTypes, std::optional<FunctionDefinition> defn, bool hasSelf)
     : level(level)
     , argTypes(argTypes)
-    , retType(retType)
+    , retTypes(retTypes)
     , definition(std::move(defn))
     , hasSelf(hasSelf)
 {
 }
 
-FunctionTypeVar::FunctionTypeVar(std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes, TypePackId retType,
+FunctionTypeVar::FunctionTypeVar(std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes, TypePackId retTypes,
     std::optional<FunctionDefinition> defn, bool hasSelf)
     : generics(generics)
     , genericPacks(genericPacks)
     , argTypes(argTypes)
-    , retType(retType)
+    , retTypes(retTypes)
     , definition(std::move(defn))
     , hasSelf(hasSelf)
 {
 }
 
 FunctionTypeVar::FunctionTypeVar(TypeLevel level, std::vector<TypeId> generics, std::vector<TypePackId> genericPacks, TypePackId argTypes,
-    TypePackId retType, std::optional<FunctionDefinition> defn, bool hasSelf)
+    TypePackId retTypes, std::optional<FunctionDefinition> defn, bool hasSelf)
     : level(level)
     , generics(generics)
     , genericPacks(genericPacks)
     , argTypes(argTypes)
-    , retType(retType)
+    , retTypes(retTypes)
     , definition(std::move(defn))
     , hasSelf(hasSelf)
 {
@@ -462,7 +536,7 @@ bool areEqual(SeenSet& seen, const FunctionTypeVar& lhs, const FunctionTypeVar& 
     if (!areEqual(seen, *lhs.argTypes, *rhs.argTypes))
         return false;
 
-    if (!areEqual(seen, *lhs.retType, *rhs.retType))
+    if (!areEqual(seen, *lhs.retTypes, *rhs.retTypes))
         return false;
 
     return true;
@@ -619,6 +693,16 @@ TypeVar& TypeVar::operator=(TypeVariant&& rhs)
     return *this;
 }
 
+TypeVar& TypeVar::operator=(const TypeVar& rhs)
+{
+    LUAU_ASSERT(owningArena == rhs.owningArena);
+    LUAU_ASSERT(!rhs.persistent);
+
+    reassign(rhs);
+
+    return *this;
+}
+
 TypeId makeFunction(TypeArena& arena, std::optional<TypeId> selfType, std::initializer_list<TypeId> generics,
     std::initializer_list<TypePackId> genericPacks, std::initializer_list<TypeId> paramTypes, std::initializer_list<std::string> paramNames,
     std::initializer_list<TypeId> retTypes);
@@ -628,12 +712,17 @@ static TypeVar numberType_{PrimitiveTypeVar{PrimitiveTypeVar::Number}, /*persist
 static TypeVar stringType_{PrimitiveTypeVar{PrimitiveTypeVar::String}, /*persistent*/ true};
 static TypeVar booleanType_{PrimitiveTypeVar{PrimitiveTypeVar::Boolean}, /*persistent*/ true};
 static TypeVar threadType_{PrimitiveTypeVar{PrimitiveTypeVar::Thread}, /*persistent*/ true};
-static TypeVar anyType_{AnyTypeVar{}};
-static TypeVar errorType_{ErrorTypeVar{}};
-static TypeVar optionalNumberType_{UnionTypeVar{{&numberType_, &nilType_}}};
+static TypeVar trueType_{SingletonTypeVar{BooleanSingleton{true}}, /*persistent*/ true};
+static TypeVar falseType_{SingletonTypeVar{BooleanSingleton{false}}, /*persistent*/ true};
+static TypeVar anyType_{AnyTypeVar{}, /*persistent*/ true};
+static TypeVar unknownType_{UnknownTypeVar{}, /*persistent*/ true};
+static TypeVar neverType_{NeverTypeVar{}, /*persistent*/ true};
+static TypeVar errorType_{ErrorTypeVar{}, /*persistent*/ true};
 
-static TypePackVar anyTypePack_{VariadicTypePack{&anyType_}, true};
-static TypePackVar errorTypePack_{Unifiable::Error{}};
+static TypePackVar anyTypePack_{VariadicTypePack{&anyType_}, /*persistent*/ true};
+static TypePackVar errorTypePack_{Unifiable::Error{}, /*persistent*/ true};
+static TypePackVar neverTypePack_{VariadicTypePack{&neverType_}, /*persistent*/ true};
+static TypePackVar uninhabitableTypePack_{TypePack{{&neverType_}, &neverTypePack_}, /*persistent*/ true};
 
 SingletonTypes::SingletonTypes()
     : nilType(&nilType_)
@@ -641,9 +730,14 @@ SingletonTypes::SingletonTypes()
     , stringType(&stringType_)
     , booleanType(&booleanType_)
     , threadType(&threadType_)
+    , trueType(&trueType_)
+    , falseType(&falseType_)
     , anyType(&anyType_)
-    , optionalNumberType(&optionalNumberType_)
+    , unknownType(&unknownType_)
+    , neverType(&neverType_)
     , anyTypePack(&anyTypePack_)
+    , neverTypePack(&neverTypePack_)
+    , uninhabitableTypePack(&uninhabitableTypePack_)
     , arena(new TypeArena)
 {
     TypeId stringMetatable = makeStringMetatable();
@@ -670,7 +764,7 @@ TypeId SingletonTypes::makeStringMetatable()
 {
     const TypeId optionalNumber = arena->addType(UnionTypeVar{{nilType, numberType}});
     const TypeId optionalString = arena->addType(UnionTypeVar{{nilType, stringType}});
-    const TypeId optionalBoolean = arena->addType(UnionTypeVar{{nilType, &booleanType_}});
+    const TypeId optionalBoolean = arena->addType(UnionTypeVar{{nilType, booleanType}});
 
     const TypePackId oneStringPack = arena->addTypePack({stringType});
     const TypePackId anyTypePack = arena->addTypePack(TypePackVar{VariadicTypePack{anyType}, true});
@@ -691,17 +785,26 @@ TypeId SingletonTypes::makeStringMetatable()
     const TypeId gsubFunc = makeFunction(*arena, stringType, {}, {}, {stringType, replArgType, optionalNumber}, {}, {stringType, numberType});
     const TypeId gmatchFunc =
         makeFunction(*arena, stringType, {}, {}, {stringType}, {}, {arena->addType(FunctionTypeVar{emptyPack, stringVariadicList})});
+    attachMagicFunction(gmatchFunc, magicFunctionGmatch);
+
+    const TypeId matchFunc = arena->addType(FunctionTypeVar{arena->addTypePack({stringType, stringType, optionalNumber}),
+        arena->addTypePack(TypePackVar{VariadicTypePack{FFlag::LuauDeduceFindMatchReturnTypes ? stringType : optionalString}})});
+    attachMagicFunction(matchFunc, magicFunctionMatch);
+
+    const TypeId findFunc = arena->addType(FunctionTypeVar{arena->addTypePack({stringType, stringType, optionalNumber, optionalBoolean}),
+        arena->addTypePack(TypePack{{optionalNumber, optionalNumber}, stringVariadicList})});
+    attachMagicFunction(findFunc, magicFunctionFind);
 
     TableTypeVar::Props stringLib = {
         {"byte", {arena->addType(FunctionTypeVar{arena->addTypePack({stringType, optionalNumber, optionalNumber}), numberVariadicList})}},
-        {"char", {arena->addType(FunctionTypeVar{arena->addTypePack(TypePack{{numberType}, numberVariadicList}), arena->addTypePack({stringType})})}},
-        {"find", {makeFunction(*arena, stringType, {}, {}, {stringType, optionalNumber, optionalBoolean}, {}, {optionalNumber, optionalNumber})}},
+        {"char", {arena->addType(FunctionTypeVar{numberVariadicList, arena->addTypePack({stringType})})}},
+        {"find", {findFunc}},
         {"format", {formatFn}}, // FIXME
         {"gmatch", {gmatchFunc}},
         {"gsub", {gsubFunc}},
         {"len", {makeFunction(*arena, stringType, {}, {}, {}, {}, {numberType})}},
         {"lower", {stringToStringType}},
-        {"match", {makeFunction(*arena, stringType, {}, {}, {stringType, optionalNumber}, {}, {optionalString})}},
+        {"match", {matchFunc}},
         {"rep", {makeFunction(*arena, stringType, {}, {}, {numberType}, {}, {stringType})}},
         {"reverse", {stringToStringType}},
         {"sub", {makeFunction(*arena, stringType, {}, {}, {numberType, optionalNumber}, {}, {stringType})}},
@@ -741,18 +844,12 @@ TypePackId SingletonTypes::errorRecoveryTypePack()
 
 TypeId SingletonTypes::errorRecoveryType(TypeId guess)
 {
-    if (FFlag::LuauErrorRecoveryType)
-        return guess;
-    else
-        return &errorType_;
+    return guess;
 }
 
 TypePackId SingletonTypes::errorRecoveryTypePack(TypePackId guess)
 {
-    if (FFlag::LuauErrorRecoveryType)
-        return guess;
-    else
-        return &errorTypePack_;
+    return guess;
 }
 
 SingletonTypes& getSingletonTypes()
@@ -774,13 +871,14 @@ void persist(TypeId ty)
             continue;
 
         asMutable(t)->persistent = true;
+        asMutable(t)->normal = true; // all persistent types are assumed to be normal
 
         if (auto btv = get<BoundTypeVar>(t))
             queue.push_back(btv->boundTo);
         else if (auto ftv = get<FunctionTypeVar>(t))
         {
             persist(ftv->argTypes);
-            persist(ftv->retType);
+            persist(ftv->retTypes);
         }
         else if (auto ttv = get<TableTypeVar>(t))
         {
@@ -808,6 +906,11 @@ void persist(TypeId ty)
         else if (auto itv = get<IntersectionTypeVar>(t))
         {
             for (TypeId opt : itv->parts)
+                queue.push_back(opt);
+        }
+        else if (auto ctv = get<ConstrainedTypeVar>(t))
+        {
+            for (TypeId opt : ctv->parts)
                 queue.push_back(opt);
         }
         else if (auto mtv = get<MetatableTypeVar>(t))
@@ -862,6 +965,8 @@ const TypeLevel* getLevel(TypeId ty)
         return &ttv->level;
     else if (auto ftv = get<FunctionTypeVar>(ty))
         return &ftv->level;
+    else if (auto ctv = get<ConstrainedTypeVar>(ty))
+        return &ctv->level;
     else
         return nullptr;
 }
@@ -869,6 +974,16 @@ const TypeLevel* getLevel(TypeId ty)
 TypeLevel* getMutableLevel(TypeId ty)
 {
     return const_cast<TypeLevel*>(getLevel(ty));
+}
+
+std::optional<TypeLevel> getLevel(TypePackId tp)
+{
+    tp = follow(tp);
+
+    if (auto ftv = get<Unifiable::Free>(tp))
+        return ftv->level;
+    else
+        return std::nullopt;
 }
 
 const Property* lookupClassProp(const ClassTypeVar* cls, const Name& name)
@@ -906,94 +1021,19 @@ bool isSubclass(const ClassTypeVar* cls, const ClassTypeVar* parent)
     return false;
 }
 
-UnionTypeVarIterator::UnionTypeVarIterator(const UnionTypeVar* utv)
+const std::vector<TypeId>& getTypes(const UnionTypeVar* utv)
 {
-    LUAU_ASSERT(utv);
-
-    if (!utv->options.empty())
-        stack.push_front({utv, 0});
-
-    seen.insert(utv);
+    return utv->options;
 }
 
-UnionTypeVarIterator& UnionTypeVarIterator::operator++()
+const std::vector<TypeId>& getTypes(const IntersectionTypeVar* itv)
 {
-    advance();
-    descend();
-    return *this;
+    return itv->parts;
 }
 
-UnionTypeVarIterator UnionTypeVarIterator::operator++(int)
+const std::vector<TypeId>& getTypes(const ConstrainedTypeVar* ctv)
 {
-    UnionTypeVarIterator copy = *this;
-    ++copy;
-    return copy;
-}
-
-bool UnionTypeVarIterator::operator!=(const UnionTypeVarIterator& rhs)
-{
-    return !(*this == rhs);
-}
-
-bool UnionTypeVarIterator::operator==(const UnionTypeVarIterator& rhs)
-{
-    if (!stack.empty() && !rhs.stack.empty())
-        return stack.front() == rhs.stack.front();
-
-    return stack.empty() && rhs.stack.empty();
-}
-
-const TypeId& UnionTypeVarIterator::operator*()
-{
-    LUAU_ASSERT(!stack.empty());
-
-    descend();
-
-    auto [utv, currentIndex] = stack.front();
-    LUAU_ASSERT(utv);
-    LUAU_ASSERT(currentIndex < utv->options.size());
-
-    const TypeId& ty = utv->options[currentIndex];
-    LUAU_ASSERT(!get<UnionTypeVar>(follow(ty)));
-    return ty;
-}
-
-void UnionTypeVarIterator::advance()
-{
-    while (!stack.empty())
-    {
-        auto& [utv, currentIndex] = stack.front();
-        ++currentIndex;
-
-        if (currentIndex >= utv->options.size())
-            stack.pop_front();
-        else
-            break;
-    }
-}
-
-void UnionTypeVarIterator::descend()
-{
-    while (!stack.empty())
-    {
-        auto [utv, currentIndex] = stack.front();
-        if (auto innerUnion = get<UnionTypeVar>(follow(utv->options[currentIndex])))
-        {
-            // If we're about to descend into a cyclic UnionTypeVar, we should skip over this.
-            // Ideally this should never happen, but alas it does from time to time. :(
-            if (seen.find(innerUnion) != seen.end())
-                advance();
-            else
-            {
-                seen.insert(innerUnion);
-                stack.push_front({innerUnion, 0});
-            }
-
-            continue;
-        }
-
-        break;
-    }
+    return ctv->parts;
 }
 
 UnionTypeVarIterator begin(const UnionTypeVar* utv)
@@ -1006,9 +1046,30 @@ UnionTypeVarIterator end(const UnionTypeVar* utv)
     return UnionTypeVarIterator{};
 }
 
+IntersectionTypeVarIterator begin(const IntersectionTypeVar* itv)
+{
+    return IntersectionTypeVarIterator{itv};
+}
+
+IntersectionTypeVarIterator end(const IntersectionTypeVar* itv)
+{
+    return IntersectionTypeVarIterator{};
+}
+
+ConstrainedTypeVarIterator begin(const ConstrainedTypeVar* ctv)
+{
+    return ConstrainedTypeVarIterator{ctv};
+}
+
+ConstrainedTypeVarIterator end(const ConstrainedTypeVar* ctv)
+{
+    return ConstrainedTypeVarIterator{};
+}
+
+
 static std::vector<TypeId> parseFormatString(TypeChecker& typechecker, const char* data, size_t size)
 {
-    const char* options = "cdiouxXeEfgGqs";
+    const char* options = "cdiouxXeEfgGqs*";
 
     std::vector<TypeId> result;
 
@@ -1022,7 +1083,7 @@ static std::vector<TypeId> parseFormatString(TypeChecker& typechecker, const cha
                 continue;
 
             // we just ignore all characters (including flags/precision) up until first alphabetic character
-            while (i < size && !(data[i] > 0 && isalpha(data[i])))
+            while (i < size && !(data[i] > 0 && (isalpha(data[i]) || data[i] == '*')))
                 i++;
 
             if (i == size)
@@ -1030,6 +1091,8 @@ static std::vector<TypeId> parseFormatString(TypeChecker& typechecker, const cha
 
             if (data[i] == 'q' || data[i] == 's')
                 result.push_back(typechecker.stringType);
+            else if (data[i] == '*')
+                result.push_back(typechecker.unknownType);
             else if (strchr(options, data[i]))
                 result.push_back(typechecker.numberType);
             else
@@ -1040,10 +1103,10 @@ static std::vector<TypeId> parseFormatString(TypeChecker& typechecker, const cha
     return result;
 }
 
-std::optional<ExprResult<TypePackId>> magicFunctionFormat(
-    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, ExprResult<TypePackId> exprResult)
+std::optional<WithPredicate<TypePackId>> magicFunctionFormat(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate)
 {
-    auto [paramPack, _predicates] = exprResult;
+    auto [paramPack, _predicates] = withPredicate;
 
     TypeArena& arena = typechecker.currentModule->internalTypes;
 
@@ -1073,16 +1136,217 @@ std::optional<ExprResult<TypePackId>> magicFunctionFormat(
     {
         Location location = expr.args.data[std::min(i + dataOffset, expr.args.size - 1)]->location;
 
-        typechecker.unify(params[i + paramOffset], expected[i], location);
+        typechecker.unify(params[i + paramOffset], expected[i], scope, location);
     }
 
     // if we know the argument count or if we have too many arguments for sure, we can issue an error
-    size_t actualParamSize = params.size() - paramOffset;
+    if (FFlag::LuauStringFormatArgumentErrorFix)
+    {
+        size_t numActualParams = params.size();
+        size_t numExpectedParams = expected.size() + 1; // + 1 for the format string
 
-    if (expected.size() != actualParamSize && (!tail || expected.size() < actualParamSize))
-        typechecker.reportError(TypeError{expr.location, CountMismatch{expected.size(), actualParamSize}});
+        if (numExpectedParams != numActualParams && (!tail || numExpectedParams < numActualParams))
+            typechecker.reportError(TypeError{expr.location, CountMismatch{numExpectedParams, numActualParams}});
+    }
+    else
+    {
+        size_t actualParamSize = params.size() - paramOffset;
 
-    return ExprResult<TypePackId>{arena.addTypePack({typechecker.stringType})};
+        if (expected.size() != actualParamSize && (!tail || expected.size() < actualParamSize))
+            typechecker.reportError(TypeError{expr.location, CountMismatch{expected.size(), actualParamSize}});
+    }
+    return WithPredicate<TypePackId>{arena.addTypePack({typechecker.stringType})};
+}
+
+static std::vector<TypeId> parsePatternString(TypeChecker& typechecker, const char* data, size_t size)
+{
+    std::vector<TypeId> result;
+    int depth = 0;
+    bool parsingSet = false;
+
+    for (size_t i = 0; i < size; ++i)
+    {
+        if (data[i] == '%')
+        {
+            ++i;
+            if (!parsingSet && i < size && data[i] == 'b')
+                i += 2;
+        }
+        else if (!parsingSet && data[i] == '[')
+        {
+            parsingSet = true;
+            if (i + 1 < size && data[i + 1] == ']')
+                i += 1;
+        }
+        else if (parsingSet && data[i] == ']')
+        {
+            parsingSet = false;
+        }
+        else if (data[i] == '(')
+        {
+            if (parsingSet)
+                continue;
+
+            if (i + 1 < size && data[i + 1] == ')')
+            {
+                i++;
+                result.push_back(typechecker.numberType);
+                continue;
+            }
+
+            ++depth;
+            result.push_back(typechecker.stringType);
+        }
+        else if (data[i] == ')')
+        {
+            if (parsingSet)
+                continue;
+
+            --depth;
+
+            if (depth < 0)
+                break;
+        }
+    }
+
+    if (depth != 0 || parsingSet)
+        return std::vector<TypeId>();
+
+    if (result.empty())
+        result.push_back(typechecker.stringType);
+
+    return result;
+}
+
+static std::optional<WithPredicate<TypePackId>> magicFunctionGmatch(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate)
+{
+    if (!FFlag::LuauDeduceGmatchReturnTypes)
+        return std::nullopt;
+
+    auto [paramPack, _predicates] = withPredicate;
+    const auto& [params, tail] = flatten(paramPack);
+
+    if (params.size() != 2)
+        return std::nullopt;
+
+    TypeArena& arena = typechecker.currentModule->internalTypes;
+
+    AstExprConstantString* pattern = nullptr;
+    size_t index = expr.self ? 0 : 1;
+    if (expr.args.size > index)
+        pattern = expr.args.data[index]->as<AstExprConstantString>();
+
+    if (!pattern)
+        return std::nullopt;
+
+    std::vector<TypeId> returnTypes = parsePatternString(typechecker, pattern->value.data, pattern->value.size);
+
+    if (returnTypes.empty())
+        return std::nullopt;
+
+    typechecker.unify(params[0], typechecker.stringType, scope, expr.args.data[0]->location);
+
+    const TypePackId emptyPack = arena.addTypePack({});
+    const TypePackId returnList = arena.addTypePack(returnTypes);
+    const TypeId iteratorType = arena.addType(FunctionTypeVar{emptyPack, returnList});
+    return WithPredicate<TypePackId>{arena.addTypePack({iteratorType})};
+}
+
+static std::optional<WithPredicate<TypePackId>> magicFunctionMatch(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate)
+{
+    if (!FFlag::LuauDeduceFindMatchReturnTypes)
+        return std::nullopt;
+
+    auto [paramPack, _predicates] = withPredicate;
+    const auto& [params, tail] = flatten(paramPack);
+
+    if (params.size() < 2 || params.size() > 3)
+        return std::nullopt;
+
+    TypeArena& arena = typechecker.currentModule->internalTypes;
+
+    AstExprConstantString* pattern = nullptr;
+    size_t patternIndex = expr.self ? 0 : 1;
+    if (expr.args.size > patternIndex)
+        pattern = expr.args.data[patternIndex]->as<AstExprConstantString>();
+
+    if (!pattern)
+        return std::nullopt;
+
+    std::vector<TypeId> returnTypes = parsePatternString(typechecker, pattern->value.data, pattern->value.size);
+
+    if (returnTypes.empty())
+        return std::nullopt;
+
+    typechecker.unify(params[0], typechecker.stringType, scope, expr.args.data[0]->location);
+
+    const TypeId optionalNumber = arena.addType(UnionTypeVar{{typechecker.nilType, typechecker.numberType}});
+
+    size_t initIndex = expr.self ? 1 : 2;
+    if (params.size() == 3 && expr.args.size > initIndex)
+        typechecker.unify(params[2], optionalNumber, scope, expr.args.data[initIndex]->location);
+
+    const TypePackId returnList = arena.addTypePack(returnTypes);
+    return WithPredicate<TypePackId>{returnList};
+}
+
+static std::optional<WithPredicate<TypePackId>> magicFunctionFind(
+    TypeChecker& typechecker, const ScopePtr& scope, const AstExprCall& expr, WithPredicate<TypePackId> withPredicate)
+{
+    if (!FFlag::LuauDeduceFindMatchReturnTypes)
+        return std::nullopt;
+
+    auto [paramPack, _predicates] = withPredicate;
+    const auto& [params, tail] = flatten(paramPack);
+
+    if (params.size() < 2 || params.size() > 4)
+        return std::nullopt;
+
+    TypeArena& arena = typechecker.currentModule->internalTypes;
+
+    AstExprConstantString* pattern = nullptr;
+    size_t patternIndex = expr.self ? 0 : 1;
+    if (expr.args.size > patternIndex)
+        pattern = expr.args.data[patternIndex]->as<AstExprConstantString>();
+
+    if (!pattern)
+        return std::nullopt;
+
+    bool plain = false;
+    size_t plainIndex = expr.self ? 2 : 3;
+    if (expr.args.size > plainIndex)
+    {
+        AstExprConstantBool* p = expr.args.data[plainIndex]->as<AstExprConstantBool>();
+        plain = p && p->value;
+    }
+
+    std::vector<TypeId> returnTypes;
+    if (!plain)
+    {
+        returnTypes = parsePatternString(typechecker, pattern->value.data, pattern->value.size);
+
+        if (returnTypes.empty())
+            return std::nullopt;
+    }
+
+    typechecker.unify(params[0], typechecker.stringType, scope, expr.args.data[0]->location);
+
+    const TypeId optionalNumber = arena.addType(UnionTypeVar{{typechecker.nilType, typechecker.numberType}});
+    const TypeId optionalBoolean = arena.addType(UnionTypeVar{{typechecker.nilType, typechecker.booleanType}});
+
+    size_t initIndex = expr.self ? 1 : 2;
+    if (params.size() >= 3 && expr.args.size > initIndex)
+        typechecker.unify(params[2], optionalNumber, scope, expr.args.data[initIndex]->location);
+
+    if (params.size() == 4 && expr.args.size > plainIndex)
+        typechecker.unify(params[3], optionalBoolean, scope, expr.args.data[plainIndex]->location);
+
+    returnTypes.insert(returnTypes.begin(), {optionalNumber, optionalNumber});
+
+    const TypePackId returnList = arena.addTypePack(returnTypes);
+    return WithPredicate<TypePackId>{returnList};
 }
 
 std::vector<TypeId> filterMap(TypeId type, TypeIdPredicate predicate)
@@ -1167,6 +1431,21 @@ bool hasTag(TypeId ty, const std::string& tagName)
 bool hasTag(const Property& prop, const std::string& tagName)
 {
     return hasTag(prop.tags, tagName);
+}
+
+bool TypeFun::operator==(const TypeFun& rhs) const
+{
+    return type == rhs.type && typeParams == rhs.typeParams && typePackParams == rhs.typePackParams;
+}
+
+bool GenericTypeDefinition::operator==(const GenericTypeDefinition& rhs) const
+{
+    return ty == rhs.ty && defaultValue == rhs.defaultValue;
+}
+
+bool GenericTypePackDefinition::operator==(const GenericTypePackDefinition& rhs) const
+{
+    return tp == rhs.tp && defaultValue == rhs.defaultValue;
 }
 
 } // namespace Luau

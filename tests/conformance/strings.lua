@@ -130,6 +130,34 @@ assert(string.format('"-%20s.20s"', string.rep("%", 2000)) ==
 -- longest number that can be formated
 assert(string.len(string.format('%99.99f', -1e308)) >= 100)
 
+local function return_one_thing()
+	return "hi"
+end
+local function return_two_nils()
+	return nil, nil
+end
+
+assert(string.format("%*", return_one_thing()) == "hi")
+assert(string.format("%* %*", return_two_nils()) == "nil nil")
+assert(pcall(function()
+	string.format("%* %* %*", return_two_nils())
+end) == false)
+
+assert(string.format("%*", "a\0b\0c") == "a\0b\0c")
+assert(string.format("%*", string.rep("doge", 3000)) == string.rep("doge", 3000))
+assert(string.format("%*", 42) == "42")
+assert(string.format("%*", true) == "true")
+
+assert(string.format("%*", setmetatable({}, { __tostring = function() return "ok" end })) == "ok")
+
+local ud = newproxy(true)
+getmetatable(ud).__tostring = function() return "good" end
+assert(string.format("%*", ud) == "good")
+
+assert(pcall(function()
+	string.format("%#*", "bad form")
+end) == false)
+
 assert(loadstring("return 1\n--comentário sem EOL no final")() == 1)
 
 

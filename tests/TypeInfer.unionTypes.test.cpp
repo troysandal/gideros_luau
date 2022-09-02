@@ -6,8 +6,8 @@
 
 #include "doctest.h"
 
-LUAU_FASTFLAG(LuauEqConstraint)
-LUAU_FASTFLAG(LuauUseCommittingTxnLog)
+LUAU_FASTFLAG(LuauLowerBoundsCalculation)
+LUAU_FASTFLAG(LuauSpecialTypesAsterisked)
 
 using namespace Luau;
 
@@ -104,7 +104,7 @@ TEST_CASE_FIXTURE(Fixture, "optional_arguments_table2")
     REQUIRE(!result.errors.empty());
 }
 
-TEST_CASE_FIXTURE(Fixture, "error_takes_optional_arguments")
+TEST_CASE_FIXTURE(BuiltinsFixture, "error_takes_optional_arguments")
 {
     CheckResult result = check(R"(
         error("message")
@@ -200,7 +200,10 @@ TEST_CASE_FIXTURE(Fixture, "index_on_a_union_type_with_missing_property")
     CHECK_EQ(mup->missing[0], *bTy);
     CHECK_EQ(mup->key, "x");
 
-    CHECK_EQ("*unknown*", toString(requireType("r")));
+    if (FFlag::LuauSpecialTypesAsterisked)
+        CHECK_EQ("*error-type*", toString(requireType("r")));
+    else
+        CHECK_EQ("<error-type>", toString(requireType("r")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "index_on_a_union_type_with_one_property_of_type_any")
@@ -255,11 +258,11 @@ local c = bf.a.y
 TEST_CASE_FIXTURE(Fixture, "optional_union_functions")
 {
     CheckResult result = check(R"(
-local a = {}
-function a.foo(x:number, y:number) return x + y end
-type A = typeof(a)
-local b: A? = a
-local c = b.foo(1, 2)
+        local a = {}
+        function a.foo(x:number, y:number) return x + y end
+        type A = typeof(a)
+        local b: A? = a
+        local c = b.foo(1, 2)
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
@@ -282,24 +285,22 @@ local c = b:foo(1, 2)
     CHECK_EQ("Value of type 'A?' could be nil", toString(result.errors[0]));
 }
 
-TEST_CASE("optional_union_follow")
+TEST_CASE_FIXTURE(Fixture, "optional_union_follow")
 {
-    Fixture fix(FFlag::LuauUseCommittingTxnLog);
-
-    CheckResult result = fix.check(R"(
+    CheckResult result = check(R"(
 local y: number? = 2
 local x = y
 local function f(a: number, b: typeof(x), c: typeof(x)) return -a end
 return f()
     )");
 
-    REQUIRE_EQ(result.errors.size(), 1);
-    // LUAU_REQUIRE_ERROR_COUNT(1, result);
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
 
     auto acm = get<CountMismatch>(result.errors[0]);
     REQUIRE(acm);
     CHECK_EQ(1, acm->expected);
     CHECK_EQ(0, acm->actual);
+    CHECK_FALSE(acm->isVariadic);
 }
 
 TEST_CASE_FIXTURE(Fixture, "optional_field_access_error")
@@ -359,7 +360,10 @@ a.x = 2
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ("Value of type '({| x: number |} & {| y: number |})?' could be nil", toString(result.errors[0]));
+    if (FFlag::LuauLowerBoundsCalculation)
+        CHECK_EQ("Value of type '{| x: number, y: number |}?' could be nil", toString(result.errors[0]));
+    else
+        CHECK_EQ("Value of type '({| x: number |} & {| y: number |})?' could be nil", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "optional_length_error")
@@ -428,12 +432,6 @@ y = x
 
 TEST_CASE_FIXTURE(Fixture, "unify_sealed_table_union_check")
 {
-    ScopedFastFlag sffs[] = {
-        {"LuauTableSubtypingVariance2", true},
-        {"LuauUnsealedTableLiteral", true},
-        {"LuauSubtypingAddOptPropsToUnsealedTables", true},
-    };
-
     CheckResult result = check(R"(
  -- the difference between this and unify_unsealed_table_union_check is the type annotation on x
 local t = { x = 3, y = true }
@@ -499,5 +497,49 @@ local a: X? = { w = 4 }
 caused by:
   None of the union options are compatible. For example: Table type 'a' not compatible with type 'X' because the former is missing field 'x')");
 }
+
+// We had a bug where a cyclic union caused a stack overflow.
+// ex type U = number | U
+TEST_CASE_FIXTURE(Fixture, "dont_allow_cyclic_unions_to_be_inferred")
+{
+    CheckResult result = check(R"(
+        --!strict
+
+        function f(a, b)
+            a:g(b or {})
+            a:g(b)
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "table_union_write_indirect")
+{
+    CheckResult result = check(R"(
+        type A = { x: number, y: (number) -> string } | { z: number, y: (number) -> string }
+
+        local a:A = nil
+
+        function a.y(x)
+            return tostring(x * 2)
+        end
+
+        function a.y(x: string): number
+            return tonumber(x) or 0
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    // NOTE: union normalization will improve this message
+    if (FFlag::LuauLowerBoundsCalculation)
+        CHECK_EQ(toString(result.errors[0]), "Type '(string) -> number' could not be converted into '(number) -> string'\n"
+                                             "caused by:\n"
+                                             "  Argument #1 type is not compatible. Type 'number' could not be converted into 'string'");
+    else
+        CHECK_EQ(toString(result.errors[0]),
+            R"(Type '(string) -> number' could not be converted into '((number) -> string) | ((number) -> string)'; none of the union options are compatible)");
+}
+
 
 TEST_SUITE_END();

@@ -11,6 +11,7 @@ option(LUAU_BUILD_TESTS "Build tests" ON)
 option(LUAU_BUILD_WEB "Build Web module" OFF)
 option(LUAU_WERROR "Warnings as errors" OFF)
 option(LUAU_STATIC_CRT "Link with the static CRT (/MT)" OFF)
+option(LUAU_EXTERN_C "Use extern C for all APIs" OFF)
 
 if(LUAU_STATIC_CRT)
     cmake_minimum_required(VERSION 3.15)
@@ -19,9 +20,11 @@ if(LUAU_STATIC_CRT)
 endif()
 
 project(Luau LANGUAGES CXX C)
+add_library(Luau.Common INTERFACE)
 add_library(Luau.Ast STATIC)
 add_library(Luau.Compiler STATIC)
 add_library(Luau.Analysis STATIC)
+add_library(Luau.CodeGen STATIC)
 add_library(Luau.VM STATIC)
 add_library(isocline STATIC)
 
@@ -29,11 +32,13 @@ if(LUAU_BUILD_CLI)
     add_executable(Luau.Repl.CLI)
     add_executable(Luau.Analyze.CLI)
     add_executable(Luau.Ast.CLI)
+    add_executable(Luau.Reduce.CLI)
 
     # This also adds target `name` on Linux/macOS and `name.exe` on Windows
     set_target_properties(Luau.Repl.CLI PROPERTIES OUTPUT_NAME luau)
     set_target_properties(Luau.Analyze.CLI PROPERTIES OUTPUT_NAME luau-analyze)
     set_target_properties(Luau.Ast.CLI PROPERTIES OUTPUT_NAME luau-ast)
+    set_target_properties(Luau.Reduce.CLI PROPERTIES OUTPUT_NAME luau-reduce)
 endif()
 
 if(LUAU_BUILD_TESTS)
@@ -46,10 +51,14 @@ if(LUAU_BUILD_WEB)
     add_executable(Luau.Web)
 endif()
 
+
 include(Sources.cmake)
+
+target_include_directories(Luau.Common INTERFACE Common/include)
 
 target_compile_features(Luau.Ast PUBLIC cxx_std_17)
 target_include_directories(Luau.Ast PUBLIC Ast/include)
+target_link_libraries(Luau.Ast PUBLIC Luau.Common)
 
 target_compile_features(Luau.Compiler PUBLIC cxx_std_17)
 target_include_directories(Luau.Compiler PUBLIC Compiler/include)
@@ -59,8 +68,13 @@ target_compile_features(Luau.Analysis PUBLIC cxx_std_17)
 target_include_directories(Luau.Analysis PUBLIC Analysis/include)
 target_link_libraries(Luau.Analysis PUBLIC Luau.Ast)
 
+target_compile_features(Luau.CodeGen PRIVATE cxx_std_17)
+target_include_directories(Luau.CodeGen PUBLIC CodeGen/include)
+target_link_libraries(Luau.CodeGen PUBLIC Luau.Common)
+
 target_compile_features(Luau.VM PRIVATE cxx_std_11)
 target_include_directories(Luau.VM PUBLIC VM/include)
+target_link_libraries(Luau.VM PUBLIC Luau.Common)
 
 target_include_directories(isocline PUBLIC extern/isocline/include)
 
@@ -71,6 +85,12 @@ if(MSVC)
     list(APPEND LUAU_OPTIONS /MP) # Distribute single project compilation across multiple cores
 else()
     list(APPEND LUAU_OPTIONS -Wall) # All warnings
+endif()
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Some gcc versions treat var in `if (type var = val)` as unused
+    # Some gcc versions treat variables used in constexpr if blocks as unused
+    list(APPEND LUAU_OPTIONS -Wno-unused)
 endif()
 
 # Enabled in CI; we should be warning free on our main compiler versions but don't guarantee being warning free everywhere
@@ -95,8 +115,17 @@ endif()
 
 target_compile_options(Luau.Ast PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.Analysis PRIVATE ${LUAU_OPTIONS})
+target_compile_options(Luau.CodeGen PRIVATE ${LUAU_OPTIONS})
 target_compile_options(Luau.VM PRIVATE ${LUAU_OPTIONS})
 target_compile_options(isocline PRIVATE ${LUAU_OPTIONS} ${ISOCLINE_OPTIONS})
+
+if(LUAU_EXTERN_C)
+    # enable extern "C" for VM (lua.h, lualib.h) and Compiler (luacode.h) to make Luau friendlier to use from non-C++ languages
+    # note that we enable LUA_USE_LONGJMP=1 as well; otherwise functions like luaL_error will throw C++ exceptions, which can't be done from extern "C" functions
+    target_compile_definitions(Luau.VM PUBLIC LUA_USE_LONGJMP=1)
+    target_compile_definitions(Luau.VM PUBLIC LUA_API=extern\"C\")
+    target_compile_definitions(Luau.Compiler PUBLIC LUACODE_API=extern\"C\")
+endif()
 
 if (MSVC AND MSVC_VERSION GREATER_EQUAL 1924)
     # disable partial redundancy elimination which regresses interpreter codegen substantially in VS2022:
@@ -104,10 +133,17 @@ if (MSVC AND MSVC_VERSION GREATER_EQUAL 1924)
     set_source_files_properties(VM/src/lvmexecute.cpp PROPERTIES COMPILE_FLAGS /d2ssa-pre-)
 endif()
 
+if(MSVC AND LUAU_BUILD_CLI)
+    # the default stack size that MSVC linker uses is 1 MB; we need more stack space in Debug because stack frames are larger
+    set_target_properties(Luau.Analyze.CLI PROPERTIES LINK_FLAGS_DEBUG /STACK:2097152)
+    set_target_properties(Luau.Repl.CLI PROPERTIES LINK_FLAGS_DEBUG /STACK:2097152)
+endif()
+
 # embed .natvis inside the library debug information
 if(MSVC)
     target_link_options(Luau.Ast INTERFACE /NATVIS:${CMAKE_CURRENT_SOURCE_DIR}/tools/natvis/Ast.natvis)
     target_link_options(Luau.Analysis INTERFACE /NATVIS:${CMAKE_CURRENT_SOURCE_DIR}/tools/natvis/Analysis.natvis)
+    target_link_options(Luau.CodeGen INTERFACE /NATVIS:${CMAKE_CURRENT_SOURCE_DIR}/tools/natvis/CodeGen.natvis)
     target_link_options(Luau.VM INTERFACE /NATVIS:${CMAKE_CURRENT_SOURCE_DIR}/tools/natvis/VM.natvis)
 endif()
 
@@ -115,6 +151,7 @@ endif()
 if(MSVC_IDE)
     target_sources(Luau.Ast PRIVATE tools/natvis/Ast.natvis)
     target_sources(Luau.Analysis PRIVATE tools/natvis/Analysis.natvis)
+    target_sources(Luau.CodeGen PRIVATE tools/natvis/CodeGen.natvis)
     target_sources(Luau.VM PRIVATE tools/natvis/VM.natvis)
 endif()
 
@@ -137,12 +174,17 @@ if(LUAU_BUILD_CLI)
     target_link_libraries(Luau.Analyze.CLI PRIVATE Luau.Analysis)
 
     target_link_libraries(Luau.Ast.CLI PRIVATE Luau.Ast Luau.Analysis)
+
+    target_compile_features(Luau.Reduce.CLI PRIVATE cxx_std_17)
+    target_include_directories(Luau.Reduce.CLI PUBLIC Reduce/include)
+    target_link_libraries(Luau.Reduce.CLI PRIVATE Luau.Common Luau.Ast Luau.Analysis)
 endif()
 
 if(LUAU_BUILD_TESTS)
     target_compile_options(Luau.UnitTest PRIVATE ${LUAU_OPTIONS})
+    target_compile_definitions(Luau.UnitTest PRIVATE DOCTEST_CONFIG_DOUBLE_STRINGIFY)
     target_include_directories(Luau.UnitTest PRIVATE extern)
-    target_link_libraries(Luau.UnitTest PRIVATE Luau.Analysis Luau.Compiler)
+    target_link_libraries(Luau.UnitTest PRIVATE Luau.Analysis Luau.Compiler Luau.CodeGen)
 
     target_compile_options(Luau.Conformance PRIVATE ${LUAU_OPTIONS})
     target_include_directories(Luau.Conformance PRIVATE extern)

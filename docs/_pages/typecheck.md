@@ -31,20 +31,6 @@ foo = 1
 
 However, given the second snippet in strict mode, the type checker would be able to infer `number` for `foo`.
 
-## Unknown symbols
-
-Consider how often you're likely to assign a new value to a local variable. What if you accidentally misspelled it? Oops, it's now assigned globally and your local variable is still using the old value.
-
-```lua
-local someLocal = 1
-
-soeLocal = 2 -- the bug
-
-print(someLocal)
-```
-
-Because of this, Luau type checker currently emits an error in strict mode; use local variables instead.
-
 ## Structural type system
 
 Luau's type system is structural by default, which is to say that we inspect the shape of two tables to see if they are similar enough. This was the obvious choice because Lua 5.1 is inherently structural.
@@ -62,7 +48,7 @@ local b2: B = a1 -- not ok
 
 ## Primitive types
 
-Lua VM supports 8 primitive types: `nil`, `string`, `number`, `boolean`, `table`, `function`, `thread`, and `userdata`. Of these, `table` and `function` are not represented by name, but have their dedicated syntax as covered in this [syntax document](syntax), and `userdata` is represented by [concrete types](#Roblox-types); other types can be specified by their name.
+Lua VM supports 8 primitive types: `nil`, `string`, `number`, `boolean`, `table`, `function`, `thread`, and `userdata`. Of these, `table` and `function` are not represented by name, but have their dedicated syntax as covered in this [syntax document](syntax), and `userdata` is represented by [concrete types](#roblox-types); other types can be specified by their name.
 
 Additionally, we also have `any` which is a special built-in type. It effectively disables all type checking, and thus should be used as last resort.
 
@@ -118,15 +104,15 @@ From the type checker perspective, each table can be in one of three states. The
 
 ### Unsealed tables
 
-An unsealed table is a table whose properties could still be tacked on. This occurs when the table constructor literal had zero expressions. This is one way to accumulate knowledge of the shape of this table.
+An unsealed table is a table which supports adding new properties, which updates the tables type. Unsealed tables are created using table literals. This is one way to accumulate knowledge of the shape of this table.
 
 ```lua
-local t = {} -- {}
-t.x = 1      -- {x: number}
-t.y = 2      -- {x: number, y: number}
+local t = {x = 1} -- {x: number}
+t.y = 2           -- {x: number, y: number}
+t.z = 3           -- {x: number, y: number, z: number}
 ```
 
-However, if this local were written as `local t: {} = {}`, it ends up sealing the table, so the two assignments henceforth will not be ok.
+However, if this local were written as `local t: { x: number } = { x = 1 }`, it ends up sealing the table, so the two assignments henceforth will not be ok.
 
 Furthermore, once we exit the scope where this unsealed table was created in, we seal it.
 
@@ -142,13 +128,31 @@ local v2 = vec2(1, 2)
 v2.z = 3 -- not ok
 ```
 
-### Sealed tables
-
-A sealed table is a table that is now locked down. This occurs when the table constructor literal had 1 or more expression, or when the table type is spelt out explicitly via a type annotation.
+Unsealed tables are *exact* in that any property of the table must be named by the type. Since Luau treats missing properties as having value `nil`, this means that we can treat an unsealed table which does not mention a property as if it mentioned the property, as long as that property is optional.
 
 ```lua
-local t = {x = 1} -- {x: number}
-t.y = 2           -- not ok
+local t = {x = 1}
+local u : { x : number, y : number? } = t -- ok because y is optional
+local v : { x : number, z : number } = t  -- not ok because z is not optional
+```
+
+### Sealed tables
+
+A sealed table is a table that is now locked down. This occurs when the table type is spelled out explicitly via a type annotation, or if it is returned from a function.
+
+```lua
+local t : { x: number } = {x = 1}
+t.y = 2 -- not ok
+```
+
+Sealed tables are *inexact* in that the table may have properties which are not mentioned in the type.
+As a result, sealed tables support *width subtyping*, which allows a table with more properties to be used as a table with fewer
+
+```lua
+type Point1D = { x : number }
+type Point2D = { x : number, y : number }
+local p : Point2D = { x = 5, y = 37 }
+local q : Point1D = p -- ok because Point2D has more properties than Point1D
 ```
 
 ### Generic tables
@@ -267,6 +271,23 @@ Note: it's impossible to create an intersection type of some primitive types, e.
 
 Note: Luau still does not support user-defined overloaded functions. Some of Roblox and Lua 5.1 functions have different function signature, so inherently requires overloaded functions.
 
+## Singleton types (aka literal types)
+
+Luau's type system also supports singleton types, which means it's a type that represents one single value at runtime. At this time, both string and booleans are representable in types.
+
+> We do not currently support numbers as types. For now, this is intentional.
+
+```lua
+local foo: "Foo" = "Foo" -- ok
+local bar: "Bar" = foo   -- not ok
+local baz: string = foo  -- ok
+
+local t: true = true -- ok
+local f: false = false -- ok
+```
+
+This happens all the time, especially through [type refinements](#type-refinements) and is also incredibly useful when you want to enforce program invariants in the type system! See [tagged unions](#tagged-unions) for more information.
+
 ## Variadic types
 
 Luau permits assigning a type to the `...` variadic symbol like any other parameter:
@@ -375,22 +396,42 @@ local account: Account = Account.new("Alexander", 500)
              --^^^^^^^ not ok, 'Account' does not exist
 ```
 
+## Tagged unions
+
+Tagged unions are just union types! In particular, they're union types of tables where they have at least _some_ common properties but the structure of the tables are different enough. Here's one example:
+
+```lua
+type Ok<T> = { type: "ok", value: T }
+type Err<E> = { type: "err", error: E }
+type Result<T, E> = Ok<T> | Err<E>
+```
+
+This `Result<T, E>` type can be discriminated by using type refinements on the property `type`, like so:
+
+```lua
+if result.type == "ok" then
+    -- result is known to be Ok<T>
+    -- and attempting to index for error here will fail
+    print(result.value)
+elseif result.type == "err" then
+    -- result is known to be Err<E>
+    -- and attempting to index for value here will fail
+    print(result.error)
+end
+```
+
+Which works out because `value: T` exists only when `type` is in actual fact `"ok"`, and `error: E` exists only when `type` is in actual fact `"err"`.
+
 ## Type refinements
 
-When we check the type of a value, what we're doing is we're refining the type, hence "type refinement." Currently, the support for this is somewhat basic.
+When we check the type of any lvalue (a global, a local, or a property), what we're doing is we're refining the type, hence "type refinement." The support for this is arbitrarily complex, so go crazy!
 
-Using `type` comparison:
-```lua
-local stringOrNumber: string | number = "foo"
+Here are all the ways you can refine:
+1. Truthy test: `if x then` will refine `x` to be truthy.
+2. Type guards: `if type(x) == "number" then` will refine `x` to be `number`.
+3. Equality: `x == "hello"` will refine `x` to be a singleton type `"hello"`.
 
-if type(x) == "string" then
-    local onlyString: string = stringOrNumber -- ok
-    local onlyNumber: number = stringOrNumber -- not ok
-end
-
-local onlyString: string = stringOrNumber -- not ok
-local onlyNumber: number = stringOrNumber -- not ok
-```
+And they can be composed with many of `and`/`or`/`not`. `not`, just like `~=`, will flip the resulting refinements, that is `not x` will refine `x` to be falsy.
 
 Using truthy test:
 ```lua
@@ -398,10 +439,55 @@ local maybeString: string? = nil
 
 if maybeString then
     local onlyString: string = maybeString -- ok
+    local onlyNil: nil = maybeString       -- not ok
+end
+
+if not maybeString then
+    local onlyString: string = maybeString -- not ok
+    local onlyNil: nil = maybeString       -- ok
 end
 ```
 
-And using `assert` will work with the above type guards:
+Using `type` test:
+```lua
+local stringOrNumber: string | number = "foo"
+
+if type(stringOrNumber) == "string" then
+    local onlyString: string = stringOrNumber -- ok
+    local onlyNumber: number = stringOrNumber -- not ok
+end
+
+if type(stringOrNumber) ~= "string" then
+    local onlyString: string = stringOrNumber -- not ok
+    local onlyNumber: number = stringOrNumber -- ok
+end
+```
+
+Using equality test:
+```lua
+local myString: string = f()
+
+if myString == "hello" then
+    local hello: "hello" = myString -- ok because it is absolutely "hello"!
+    local copy: string = myString   -- ok
+end
+```
+
+And as said earlier, we can compose as many of `and`/`or`/`not` as we wish with these refinements:
+```lua
+local function f(x: any, y: any)
+    if (x == "hello" or x == "bye") and type(y) == "string" then
+        -- x is of type "hello" | "bye"
+        -- y is of type string
+    end
+
+    if not (x ~= "hi") then
+        -- x is of type "hi"
+    end
+end
+```
+
+`assert` can also be used to refine in all the same ways:
 ```lua
 local stringOrNumber: string | number = "foo"
 
@@ -411,7 +497,7 @@ local onlyString: string = stringOrNumber -- ok
 local onlyNumber: number = stringOrNumber -- not ok
 ```
 
-## Typecasts
+## Type casts
 
 Expressions may be typecast using `::`.  Typecasting is useful for specifying the type of an expression when the automatically inferred type is too generic.
 

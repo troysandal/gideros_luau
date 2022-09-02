@@ -2,8 +2,6 @@
 
 #include "Luau/Scope.h"
 
-LUAU_FASTFLAG(LuauTwoPassAliasDefinitionFix);
-
 namespace Luau
 {
 
@@ -19,25 +17,8 @@ Scope::Scope(const ScopePtr& parent, int subLevel)
     , returnType(parent->returnType)
     , level(parent->level.incr())
 {
-    if (FFlag::LuauTwoPassAliasDefinitionFix)
-        level = level.incr();
+    level = level.incr();
     level.subLevel = subLevel;
-}
-
-std::optional<TypeId> Scope::lookup(const Symbol& name)
-{
-    Scope* scope = this;
-
-    while (scope)
-    {
-        auto it = scope->bindings.find(name);
-        if (it != scope->bindings.end())
-            return it->second.typeId;
-
-        scope = scope->parent.get();
-    }
-
-    return std::nullopt;
 }
 
 std::optional<TypeFun> Scope::lookupType(const Name& name)
@@ -122,6 +103,23 @@ std::optional<Binding> Scope::linearSearchForBinding(const std::string& name, bo
     }
 
     return std::nullopt;
+}
+
+std::optional<TypeId> Scope::lookup(Symbol sym)
+{
+    Scope* s = this;
+
+    while (true)
+    {
+        auto it = s->bindings.find(sym);
+        if (it != s->bindings.end())
+            return it->second.typeId;
+
+        if (s->parent)
+            s = s->parent.get();
+        else
+            return std::nullopt;
+    }
 }
 
 } // namespace Luau

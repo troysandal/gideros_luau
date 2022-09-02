@@ -6,6 +6,7 @@
 #include "Luau/Transpiler.h"
 
 #include "Fixture.h"
+#include "ScopedFlags.h"
 
 #include "doctest.h"
 
@@ -388,7 +389,7 @@ TEST_CASE_FIXTURE(Fixture, "type_lists_should_be_emitted_correctly")
 
     std::string actual = decorateWithTypes(code);
 
-    CHECK_EQ(expected, decorateWithTypes(code));
+    CHECK_EQ(expected, actual);
 }
 
 TEST_CASE_FIXTURE(Fixture, "function_type_location")
@@ -583,7 +584,7 @@ TEST_CASE_FIXTURE(Fixture, "transpile_error_expr")
     auto names = AstNameTable{allocator};
     ParseResult parseResult = Parser::parse(code.data(), code.size(), names, allocator, {});
 
-    CHECK_EQ("local a = (error-expr: f.%error-id%)-(error-expr)", transpileWithTypes(*parseResult.root));
+    CHECK_EQ("local a = (error-expr: f:%error-id%)-(error-expr)", transpileWithTypes(*parseResult.root));
 }
 
 TEST_CASE_FIXTURE(Fixture, "transpile_error_stat")
@@ -651,14 +652,47 @@ local a: Packed<number>
 
 TEST_CASE_FIXTURE(Fixture, "transpile_singleton_types")
 {
-    ScopedFastFlag luauParseSingletonTypes{"LuauParseSingletonTypes", true};
-
     std::string code = R"(
 type t1 = 'hello'
 type t2 = true
 type t3 = ''
 type t4 = false
     )";
+
+    CHECK_EQ(code, transpile(code, {}, true).code);
+}
+
+TEST_CASE_FIXTURE(Fixture, "transpile_array_types")
+{
+    std::string code = R"(
+type t1 = {number}
+type t2 = {[string]: number}
+    )";
+
+    CHECK_EQ(code, transpile(code, {}, true).code);
+}
+
+TEST_CASE_FIXTURE(Fixture, "transpile_for_in_multiple_types")
+{
+    std::string code = "for k:string,v:boolean in next,{}do end";
+
+    CHECK_EQ(code, transpile(code, {}, true).code);
+}
+
+TEST_CASE_FIXTURE(Fixture, "transpile_string_interp")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    std::string code = R"( local _ = `hello {name}` )";
+
+    CHECK_EQ(code, transpile(code, {}, true).code);
+}
+
+TEST_CASE_FIXTURE(Fixture, "transpile_string_literal_escape")
+{
+    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
+
+    std::string code = R"( local _ = ` bracket = \{, backtick = \` = {'ok'} ` )";
 
     CHECK_EQ(code, transpile(code, {}, true).code);
 }

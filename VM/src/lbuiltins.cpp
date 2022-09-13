@@ -976,7 +976,9 @@ static int luauF_rawget(lua_State* L, StkId res, TValue* arg0, int nresults, Stk
 {
     if (nparams >= 2 && nresults <= 1 && ttistable(arg0))
     {
+    	lualock_table(hvalue(arg0));
         setobj2s(L, res, luaH_get(hvalue(arg0), args));
+    	luaunlock_table(hvalue(arg0));
         return 1;
     }
 
@@ -999,7 +1001,9 @@ static int luauF_rawset(lua_State* L, StkId res, TValue* arg0, int nresults, Stk
             return -1;
 
         setobj2s(L, res, arg0);
+    	lualock_table(hvalue(arg0));
         setobj2t(L, luaH_set(L, hvalue(arg0), args), args + 1);
+    	luaunlock_table(hvalue(arg0));
         luaC_barriert(L, hvalue(arg0), args + 1);
         return 1;
     }
@@ -1014,8 +1018,10 @@ static int luauF_tinsert(lua_State* L, StkId res, TValue* arg0, int nresults, St
         if (hvalue(arg0)->readonly)
             return -1;
 
+    	lualock_table(hvalue(arg0));
         int pos = luaH_getn(hvalue(arg0)) + 1;
         setobj2t(L, luaH_setnum(L, hvalue(arg0), pos), args);
+    	luaunlock_table(hvalue(arg0));
         luaC_barriert(L, hvalue(arg0), args);
         return 0;
     }
@@ -1030,6 +1036,7 @@ static int luauF_tunpack(lua_State* L, StkId res, TValue* arg0, int nresults, St
         Table* t = hvalue(arg0);
         int n = -1;
 
+    	lualock_table(t);
         if (nparams == 1)
             n = luaH_getn(t);
         else if (nparams == 3 && ttisnumber(args) && ttisnumber(args + 1) && nvalue(args) == 1.0)
@@ -1040,9 +1047,11 @@ static int luauF_tunpack(lua_State* L, StkId res, TValue* arg0, int nresults, St
             TValue* array = t->array;
             for (int i = 0; i < n; ++i)
                 setobj2s(L, res + i, array + i);
+        	luaunlock_table(t);
             expandstacklimit(L, res + n);
             return n;
         }
+    	luaunlock_table(t);
     }
 
     return -1;
@@ -1156,7 +1165,9 @@ static int luauF_rawlen(lua_State* L, StkId res, TValue* arg0, int nresults, Stk
         if (ttistable(arg0))
         {
             Table* h = hvalue(arg0);
+        	lualock_table(h);
             setnvalue(res, double(luaH_getn(h)));
+        	luaunlock_table(h);
             return 1;
         }
         else if (ttisstring(arg0))

@@ -223,6 +223,29 @@ typedef struct global_State
 } global_State;
 // clang-format on
 
+#ifdef LUAU_MULTITHREAD
+//Acquire/Release a lock on global state
+#define lualock_global() if (lua_hasThreads) lua_globalLock.lock()
+#define luaunlock_global() if (lua_hasThreads) lua_globalLock.unlock()
+//Acquire/Release a lock on GC. This should be very fast as this will be run often
+#define lualock_gc() //if (lua_hasThreads) L->global->gc_lock->lock()
+#define luaunlock_gc() //if (lua_hasThreads) L->global->gc_lock->unlock()
+#define lualock_gcstep() (!lua_hasThreads)
+#define luaunlock_gcstep()
+
+#else
+
+//Acquire/Release a lock on global state
+#define lualock_global()
+#define luaunlock_global()
+//Acquire/Release a lock on GC. This should be very fast as this will be run often
+#define lualock_gc()
+#define luaunlock_gc()
+#define lualock_gcstep()
+#define luaunlock_gcstep()
+
+#endif
+
 /*
 ** `per thread' state
 */

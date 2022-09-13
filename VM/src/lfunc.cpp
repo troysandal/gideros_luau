@@ -115,11 +115,13 @@ UpVal* luaF_findupval(lua_State* L, StkId level)
     }
 
     // double link the upvalue in the global open upvalue list
+    lualock_global();
     uv->u.open.prev = &g->uvhead;
     uv->u.open.next = g->uvhead.u.open.next;
     uv->u.open.next->u.open.prev = uv;
     g->uvhead.u.open.next = uv;
     LUAU_ASSERT(uv->u.open.next->u.open.prev == uv && uv->u.open.prev->u.open.next == uv);
+    luaunlock_global();
 
     return uv;
 }
@@ -128,6 +130,7 @@ void luaF_unlinkupval(UpVal* uv)
 {
     LUAU_ASSERT(!FFlag::LuauSimplerUpval);
 
+    lualock_global();
     // unlink upvalue from the global open upvalue list
     LUAU_ASSERT(uv->u.open.next->u.open.prev == uv && uv->u.open.prev->u.open.next == uv);
     uv->u.open.next->u.open.prev = uv->u.open.prev;
@@ -138,6 +141,7 @@ void luaF_unlinkupval(UpVal* uv)
 
     if (UpVal* next = uv->u.open.threadnext)
         next->u.open.threadprev = uv->u.open.threadprev;
+    luaunlock_global();
 }
 
 void luaF_freeupval(lua_State* L, UpVal* uv, lua_Page* page)
@@ -190,10 +194,12 @@ void luaF_closeupval(lua_State* L, UpVal* uv, bool dead)
 {
     LUAU_ASSERT(FFlag::LuauSimplerUpval);
 
+    lualock_global();
     // unlink value from all lists *before* closing it since value storage overlaps
     LUAU_ASSERT(uv->u.open.next->u.open.prev == uv && uv->u.open.prev->u.open.next == uv);
     uv->u.open.next->u.open.prev = uv->u.open.prev;
     uv->u.open.prev->u.open.next = uv->u.open.next;
+    luaunlock_global();
 
     if (dead)
         return;

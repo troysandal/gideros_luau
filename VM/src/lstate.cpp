@@ -58,6 +58,9 @@ static void f_luaopen(lua_State* L, void* ud)
     stack_init(L, L);                             // init stack
     L->gt = luaH_new(L, 0, 2);                    // table of globals
     sethvalue(L, registry(L), luaH_new(L, 0, 2)); // registry
+#ifdef LUAU_MULTITHREADING
+    registry(L)->value.gc->h.shared=true;
+#endif
     luaS_resize(L, LUA_MINSTRTABSIZE);            // initial size of string table
     luaT_init(L);
     luaS_fix(luaS_newliteral(L, LUA_MEMERRMSG)); // pin to make sure we can always throw this error

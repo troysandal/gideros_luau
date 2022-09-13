@@ -136,6 +136,7 @@ static void moveelements(lua_State* L, int srct, int dstt, int f, int e, int t)
 static int tinsert(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
+    lualock_table(hvalue(L->base));
     int n = lua_objlen(L, 1);
     int pos; // where to insert new element
     switch (lua_gettop(L))
@@ -156,27 +157,34 @@ static int tinsert(lua_State* L)
     }
     default:
     {
+        luaunlock_table(hvalue(L->base));
         luaL_error(L, "wrong number of arguments to 'insert'");
     }
     }
     lua_rawseti(L, 1, pos); // t[pos] = v
+    luaunlock_table(hvalue(L->base));
     return 0;
 }
 
 static int tremove(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
+    lualock_table(hvalue(L->base));
     int n = lua_objlen(L, 1);
     int pos = luaL_optinteger(L, 2, n);
 
     if (!(1 <= pos && pos <= n)) // position is outside bounds?
+    {
+        luaunlock_table(hvalue(L->base));
         return 0;                // nothing to remove
+    }
     lua_rawgeti(L, 1, pos);      // result = t[pos]
 
     moveelements(L, 1, 1, pos + 1, n, pos);
 
     lua_pushnil(L);
     lua_rawseti(L, 1, n); // t[n] = nil
+    luaunlock_table(hvalue(L->base));
     return 1;
 }
 
@@ -206,12 +214,16 @@ static int tmove(lua_State* L)
         if (dst->readonly) // also checked in moveelements, but this blocks resizes of r/o tables
             luaG_readonlyerror(L);
 
+    	lualock_table(dst);
+    	lualock_table(hvalue(L->base));
         if (t > 0 && (t - 1) <= dst->sizearray && (t - 1 + n) > dst->sizearray)
         { // grow the destination table array
             luaH_resizearray(L, dst, t - 1 + n);
         }
 
         moveelements(L, 1, tt, f, e, t);
+    	luaunlock_table(hvalue(L->base));
+    	luaunlock_table(dst);
     }
     lua_pushvalue(L, tt); // return destination table
     return 1;
@@ -270,20 +282,26 @@ static int tunpack(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
     Table* t = hvalue(L->base);
+	lualock_table(t);
 
     int i = luaL_optinteger(L, 2, 1);
     int e = luaL_opt(L, luaL_checkinteger, 3, lua_objlen(L, 1));
-    if (i > e)
+    if (i > e) {
+    	luaunlock_table(t);
         return 0;                 // empty range
+    }
     unsigned n = (unsigned)e - i; // number of elements minus 1 (avoid overflows)
-    if (n >= (unsigned int)INT_MAX || !lua_checkstack(L, (int)(++n)))
+    if (n >= (unsigned int)INT_MAX || !lua_checkstack(L, (int)(++n))) {
+    	luaunlock_table(t);
         luaL_error(L, "too many results to unpack");
+    }
 
     // fast-path: direct array-to-stack copy
     if (i == 1 && int(n) <= t->sizearray)
     {
         for (i = 0; i < int(n); i++)
             setobj2s(L, L->top + i, &t->array[i]);
+    	luaunlock_table(t);
         L->top += n;
     }
     else
@@ -292,6 +310,7 @@ static int tunpack(lua_State* L)
         for (; i < e; i++)
             lua_rawgeti(L, 1, i);
         lua_rawgeti(L, 1, e); // push last element
+    	luaunlock_table(t);
     }
     return (int)n;
 }
@@ -458,6 +477,7 @@ static int tfind(lua_State* L)
 
     Table* t = hvalue(L->base);
     StkId v = L->base + 1;
+	lualock_table(t);
 
     for (int i = init;; ++i)
     {
@@ -467,10 +487,12 @@ static int tfind(lua_State* L)
 
         if (equalobj(L, v, e))
         {
+        	luaunlock_table(t);
             lua_pushinteger(L, i);
             return 1;
         }
     }
+	luaunlock_table(t);
 
     lua_pushnil(L);
     return 1;
@@ -484,7 +506,9 @@ static int tclear(lua_State* L)
     if (tt->readonly)
         luaG_readonlyerror(L);
 
+	lualock_table(tt);
     luaH_clear(tt);
+	luaunlock_table(tt);
     return 0;
 }
 
@@ -535,7 +559,9 @@ static int tclone(lua_State* L)
     	deep=lua_toboolean(L,2);
         if (!deep) {
         	//Fast Path, use luau infra
+        	lualock_table(hvalue(L->base));
             Table* tt = luaH_clone(L, hvalue(L->base));
+        	luaunlock_table(hvalue(L->base));
 
             TValue v;
             sethvalue(L, &v, tt);
@@ -556,6 +582,15 @@ static int tclone(lua_State* L)
     return 1; //T
 }
 
+static int tshare(lua_State* L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    hvalue(L->base)->shared=true;
+
+    lua_pushboolean(L, lua_getreadonly(L, 1));
+    return 0;
+}
+
 static const luaL_Reg tab_funcs[] = {
     {"concat", tconcat},
     {"foreach", foreach},
@@ -574,6 +609,7 @@ static const luaL_Reg tab_funcs[] = {
     {"freeze", tfreeze},
     {"isfrozen", tisfrozen},
     {"clone", tclone},
+    {"share", tshare},
     {NULL, NULL},
 };
 

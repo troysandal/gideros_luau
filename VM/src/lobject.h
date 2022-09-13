@@ -5,6 +5,67 @@
 #include "lua.h"
 #include "lcommon.h"
 
+#define LUAU_MULTITHREAD
+
+#ifdef LUAU_MULTITHREAD
+#include <atomic>
+#include <thread>
+#if 1
+class LuaSpinLock {
+    std::atomic_flag locked = ATOMIC_FLAG_INIT ;
+    std::thread::id lockedid;
+    void * lid=nullptr;
+    int lock_count = 0;
+public:
+    void lock() {
+        if (lockedid==std::this_thread::get_id())
+            lock_count++;
+        else {
+            int i=0;
+            while (locked.test_and_set(std::memory_order_acquire)) {
+                if (++i % 10000 == 0) std::this_thread::yield();
+            }
+            lockedid= std::this_thread::get_id();
+        }
+
+    }
+    void unlock() {
+        if (lock_count)
+            lock_count--;
+        else {
+            lockedid=std::thread::id();
+            locked.clear(std::memory_order_release);
+        }
+    }
+    void lockt(void *L) {
+        if (lid==L)
+            lock_count++;
+        else {
+            int i=0;
+            while (locked.test_and_set(std::memory_order_acquire)) {
+                if (++i % 10000 == 0) std::this_thread::yield();
+            }
+            lid= L;
+        }
+
+    }
+    void unlockt(void *L) {
+        if (lock_count)
+            lock_count--;
+        else {
+            lid=nullptr;
+            locked.clear(std::memory_order_release);
+        }
+    }
+};
+#else
+#define LuaSpinLock sf::contention_free_shared_mutex<>
+#endif
+
+extern LuaSpinLock lua_globalLock;
+extern int lua_hasThreads;
+#endif
+
 /*
 ** Union of all collectible objects
 */
@@ -134,66 +195,82 @@ typedef struct lua_TValue
 
 #define setsvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TSTRING; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define setuvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TUSERDATA; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define setthvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TTHREAD; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define setclvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TFUNCTION; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define sethvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TTABLE; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define setptvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TPROTO; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define setupvalue(L, obj, x) \
     { \
+        lualock_gc(); \
         TValue* i_o = (obj); \
         i_o->value.gc = cast_to(GCObject*, (x)); \
         i_o->tt = LUA_TUPVAL; \
         checkliveness(L->global, i_o); \
+        luaunlock_gc(); \
     }
 
 #define setobj(L, obj1, obj2) \
     { \
+        lualock_gc(); \
         const TValue* o2 = (obj2); \
         TValue* o1 = (obj1); \
         *o1 = *o2; \
         checkliveness(L->global, o1); \
+        luaunlock_gc(); \
     }
 
 /*
@@ -442,8 +519,21 @@ typedef struct Table
     TValue* array;  // array part
     LuaNode* node;
     GCObject* gclist;
+
+#ifdef LUAU_MULTITHREAD
+    uint8_t shared;
+    LuaSpinLock lock;
+#endif
 } Table;
 // clang-format on
+
+#ifdef LUAU_MULTITHREAD
+#define lualock_table(t) if (lua_hasThreads&&(t->shared)) t->lock.lockt(L)
+#define luaunlock_table(t) if (lua_hasThreads&&(t->shared)) t->lock.unlockt(L)
+#else
+#define lualock_table(t)
+#define luaunlock_table(t)
+#endif
 
 /*
 ** `module' operation for hashing (size is always a power of 2)

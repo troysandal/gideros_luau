@@ -46,6 +46,7 @@ unsigned int luaS_hash(const char* str, size_t len)
 
 void luaS_resize(lua_State* L, int newsize)
 {
+    lualock_global();
     TString** newhash = luaM_newarray(L, newsize, TString*, 0);
     stringtable* tb = &L->global->strt;
     for (int i = 0; i < newsize; i++)
@@ -68,6 +69,7 @@ void luaS_resize(lua_State* L, int newsize)
     luaM_freearray(L, tb->hash, tb->size, TString*, 0);
     tb->size = newsize;
     tb->hash = newhash;
+    luaunlock_global();
 }
 
 static TString* newlstr(lua_State* L, const char* str, size_t l, unsigned int h)
@@ -126,6 +128,7 @@ TString* luaS_bufstart(lua_State* L, size_t size)
 
     global_State* g = L->global;
 
+    lualock_global();
     TString* ts = luaM_newgco(L, TString, sizestring(size), L->activememcat);
     luaC_init(L, ts, LUA_TSTRING);
     ts->atom = ATOM_UNDEF;
@@ -141,6 +144,7 @@ TString* luaS_bufstart(lua_State* L, size_t size)
         ts->next = g->strbufgc;
         g->strbufgc = ts;
     }
+    luaunlock_global();
 
     return ts;
 }
@@ -149,6 +153,7 @@ TString* luaS_buffinish(lua_State* L, TString* ts)
 {
     unsigned int h = luaS_hash(ts->data, ts->len);
     stringtable* tb = &L->global->strt;
+    lualock_global();
     int bucket = lmod(h, tb->size);
 
     // search if we already have this string in the hash table
@@ -160,6 +165,7 @@ TString* luaS_buffinish(lua_State* L, TString* ts)
             if (isdead(L->global, obj2gco(el)))
                 changewhite(obj2gco(el));
 
+            luaunlock_global();
             return el;
         }
     }
@@ -179,12 +185,14 @@ TString* luaS_buffinish(lua_State* L, TString* ts)
     if (tb->nuse > cast_to(uint32_t, tb->size) && tb->size <= INT_MAX / 2)
         luaS_resize(L, tb->size * 2); // too crowded
 
+    luaunlock_global();
     return ts;
 }
 
 TString* luaS_newlstr(lua_State* L, const char* str, size_t l)
 {
     unsigned int h = luaS_hash(str, l);
+    lualock_global();
     for (TString* el = L->global->strt.hash[lmod(h, L->global->strt.size)]; el != NULL; el = el->next)
     {
         if (el->len == l && (memcmp(str, getstr(el), l) == 0))
@@ -192,10 +200,13 @@ TString* luaS_newlstr(lua_State* L, const char* str, size_t l)
             // string may be dead
             if (isdead(L->global, obj2gco(el)))
                 changewhite(obj2gco(el));
+            luaunlock_global();
             return el;
         }
     }
-    return newlstr(L, str, l, h); // not found
+    TString *ts=newlstr(L, str, l, h); // not found
+    luaunlock_global();
+    return ts;
 }
 
 static bool unlinkstr(lua_State* L, TString* ts)
@@ -222,6 +233,7 @@ static bool unlinkstr(lua_State* L, TString* ts)
 
 void luaS_free(lua_State* L, TString* ts, lua_Page* page)
 {
+    lualock_global();
     if (FFlag::LuauNoStrbufLink)
     {
         if (unlinkstr(L, ts))
@@ -239,4 +251,5 @@ void luaS_free(lua_State* L, TString* ts, lua_Page* page)
     }
 
     luaM_freegco(L, ts, sizestring(ts->len), ts->memcat, page);
+    luaunlock_global();
 }

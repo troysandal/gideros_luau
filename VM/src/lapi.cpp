@@ -151,6 +151,8 @@ void lua_xmove(lua_State* from, lua_State* to, int n)
 {
     if (from == to)
         return;
+    lua_State* L=from;
+
     api_checknelems(from, n);
     api_check(from, from->global == to->global);
     api_check(from, to->ci->top - to->top >= n);
@@ -169,6 +171,7 @@ void lua_xmove(lua_State* from, lua_State* to, int n)
 
 void lua_xpush(lua_State* from, lua_State* to, int idx)
 {
+    lua_State* L=from;
     api_check(from, from->global == to->global);
     luaC_threadbarrier(to);
     setobj2s(to, to->top, index2addr(from, idx));
@@ -187,6 +190,10 @@ lua_State* lua_newthread(lua_State* L)
     if (g->cb.userthread)
         g->cb.userthread(L, L1);
     return L1;
+}
+
+void lua_enableThreads(lua_State* L,int count) {
+    lua_hasThreads+=count;
 }
 
 lua_State* lua_mainthread(lua_State* L)
@@ -489,7 +496,13 @@ int lua_objlen(lua_State* L, int idx)
     case LUA_TUSERDATA:
         return uvalue(o)->len;
     case LUA_TTABLE:
-        return luaH_getn(hvalue(o));
+    {
+    	Table *t=hvalue(o);
+    	lualock_table(t);
+    	int n=luaH_getn(t);
+    	luaunlock_table(t);
+    	return n;
+    }
     default:
         return 0;
     }
@@ -724,7 +737,10 @@ int lua_rawgetfield(lua_State* L, int idx, const char* k)
     api_check(L, ttistable(t));
     TValue key;
     setsvalue(L, &key, luaS_new(L, k));
-    setobj2s(L, L->top, luaH_getstr(hvalue(t), tsvalue(&key)));
+    Table *tt=hvalue(t);
+	lualock_table(tt);
+    setobj2s(L, L->top, luaH_getstr(tt, tsvalue(&key)));
+	luaunlock_table(tt);
     api_incr_top(L);
     return ttype(L->top - 1);
 }
@@ -734,7 +750,10 @@ int lua_rawget(lua_State* L, int idx)
     luaC_threadbarrier(L);
     StkId t = index2addr(L, idx);
     api_check(L, ttistable(t));
-    setobj2s(L, L->top - 1, luaH_get(hvalue(t), L->top - 1));
+    Table *tt=hvalue(t);
+	lualock_table(tt);
+    setobj2s(L, L->top - 1, luaH_get(tt, L->top - 1));
+	luaunlock_table(tt);
     return ttype(L->top - 1);
 }
 
@@ -743,7 +762,10 @@ int lua_rawgeti(lua_State* L, int idx, int n)
     luaC_threadbarrier(L);
     StkId t = index2addr(L, idx);
     api_check(L, ttistable(t));
-    setobj2s(L, L->top, luaH_getnum(hvalue(t), n));
+    Table *tt=hvalue(t);
+	lualock_table(tt);
+    setobj2s(L, L->top, luaH_getnum(tt, n));
+	luaunlock_table(tt);
     api_incr_top(L);
     return ttype(L->top - 1);
 }
@@ -864,8 +886,11 @@ void lua_rawset(lua_State* L, int idx)
     api_check(L, ttistable(t));
     if (hvalue(t)->readonly)
         luaG_readonlyerror(L);
-    setobj2t(L, luaH_set(L, hvalue(t), L->top - 2), L->top - 1);
-    luaC_barriert(L, hvalue(t), L->top - 1);
+    Table *tt=hvalue(t);
+	lualock_table(tt);
+    setobj2t(L, luaH_set(L, tt, L->top - 2), L->top - 1);
+	luaunlock_table(tt);
+    luaC_barriert(L, tt, L->top - 1);
     L->top -= 2;
     return;
 }
@@ -877,8 +902,11 @@ void lua_rawseti(lua_State* L, int idx, int n)
     api_check(L, ttistable(o));
     if (hvalue(o)->readonly)
         luaG_readonlyerror(L);
-    setobj2t(L, luaH_setnum(L, hvalue(o), n), L->top - 1);
-    luaC_barriert(L, hvalue(o), L->top - 1);
+    Table *tt=hvalue(o);
+	lualock_table(tt);
+    setobj2t(L, luaH_setnum(L, tt, n), L->top - 1);
+	luaunlock_table(tt);
+    luaC_barriert(L, tt, L->top - 1);
     L->top--;
     return;
 }
@@ -1181,7 +1209,9 @@ int lua_next(lua_State* L, int idx)
     luaC_threadbarrier(L);
     StkId t = index2addr(L, idx);
     api_check(L, ttistable(t));
+	lualock_table(hvalue(t));
     int more = luaH_next(L, hvalue(t), L->top - 1);
+	luaunlock_table(hvalue(t));
     if (more)
     {
         api_incr_top(L);
@@ -1303,6 +1333,7 @@ int lua_ref(lua_State* L, int idx)
     StkId p = index2addr(L, idx);
     if (!ttisnil(p))
     {
+        lualock_global();
         Table* reg = hvalue(registry(L));
 
         if (g->registryfree != 0)
@@ -1318,6 +1349,8 @@ int lua_ref(lua_State* L, int idx)
         TValue* slot = luaH_setnum(L, reg, ref);
         if (g->registryfree != 0)
             g->registryfree = int(nvalue(slot));
+
+        luaunlock_global();
         setobj2t(L, slot, p);
         luaC_barriert(L, reg, p);
     }
@@ -1330,10 +1363,12 @@ void lua_unref(lua_State* L, int ref)
         return;
 
     global_State* g = L->global;
+    lualock_global();
     Table* reg = hvalue(registry(L));
     TValue* slot = luaH_setnum(L, reg, ref);
     setnvalue(slot, g->registryfree); // NB: no barrier needed because value isn't collectable
     g->registryfree = ref;
+    luaunlock_global();
     return;
 }
 

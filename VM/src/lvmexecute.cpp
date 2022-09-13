@@ -562,6 +562,8 @@ static void luau_execute(lua_State* L)
                 if (ttistable(rb))
                 {
                     Table* h = hvalue(rb);
+                    lualock_table(h);
+
 
                     int slot = LUAU_INSN_C(insn) & h->nodemask8;
                     LuaNode* n = &h->node[slot];
@@ -570,6 +572,7 @@ static void luau_execute(lua_State* L)
                     if (LUAU_LIKELY(ttisstring(gkey(n)) && tsvalue(gkey(n)) == tsvalue(kv) && !ttisnil(gval(n))))
                     {
                         setobj2s(L, ra, gval(n));
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                     else if (!h->metatable)
@@ -585,6 +588,7 @@ static void luau_execute(lua_State* L)
                         }
 
                         setobj2s(L, ra, res);
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                     else
@@ -594,6 +598,7 @@ static void luau_execute(lua_State* L)
                         VM_PROTECT(luaV_gettable(L, rb, kv, ra));
                         // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                         VM_PATCH_C(pc - 2, L->cachedslot);
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                 }
@@ -676,6 +681,7 @@ static void luau_execute(lua_State* L)
                 if (ttistable(rb))
                 {
                     Table* h = hvalue(rb);
+                    lualock_table(h);
 
                     int slot = LUAU_INSN_C(insn) & h->nodemask8;
                     LuaNode* n = &h->node[slot];
@@ -685,6 +691,7 @@ static void luau_execute(lua_State* L)
                     {
                         setobj2t(L, gval(n), ra);
                         luaC_barriert(L, h, ra);
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                     else if (fastnotm(h->metatable, TM_NEWINDEX) && !h->readonly)
@@ -697,6 +704,7 @@ static void luau_execute(lua_State* L)
                         VM_PATCH_C(pc - 2, cachedslot);
                         setobj2t(L, res, ra);
                         luaC_barriert(L, h, ra);
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                     else
@@ -706,6 +714,7 @@ static void luau_execute(lua_State* L)
                         VM_PROTECT(luaV_settable(L, rb, kv, ra));
                         // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                         VM_PATCH_C(pc - 2, L->cachedslot);
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                 }
@@ -2144,10 +2153,12 @@ static void luau_execute(lua_State* L)
                 if (ttistable(rb))
                 {
                     Table* h = hvalue(rb);
+                    lualock_table(h);
 
                     if (fastnotm(h->metatable, TM_LEN))
                     {
                         setnvalue(ra, cast_num(luaH_getn(h)));
+                        luaunlock_table(h);
                         VM_NEXT();
                     }
                     else
@@ -2190,7 +2201,9 @@ static void luau_execute(lua_State* L)
                 StkId ra = VM_REG(LUAU_INSN_A(insn));
                 TValue* kv = VM_KV(LUAU_INSN_D(insn));
 
+                lualock_table(hvalue(kv));
                 sethvalue(L, ra, luaH_clone(L, hvalue(kv)));
+                luaunlock_table(hvalue(kv));
                 VM_PROTECT(luaC_checkGC(L));
                 VM_NEXT();
             }
@@ -2214,6 +2227,7 @@ static void luau_execute(lua_State* L)
                 if (!ttistable(ra))
                     return; // temporary workaround to weaken a rather powerful exploitation primitive in case of a MITM attack on bytecode
 
+                lualock_table(h);
                 int last = index + c - 1;
                 if (last > h->sizearray)
                     luaH_resizearray(L, h, last);
@@ -2224,6 +2238,7 @@ static void luau_execute(lua_State* L)
                     setobj2t(L, &array[index + i - 1], rb + i);
 
                 luaC_barrierfast(L, h);
+                luaunlock_table(h);
                 VM_NEXT();
             }
 

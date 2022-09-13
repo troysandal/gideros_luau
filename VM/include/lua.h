@@ -105,6 +105,7 @@ LUA_API lua_State* lua_newthread(lua_State* L);
 LUA_API lua_State* lua_mainthread(lua_State* L);
 LUA_API void lua_resetthread(lua_State* L);
 LUA_API int lua_isthreadreset(lua_State* L);
+LUA_API void lua_enableThreads(lua_State* L,int count);
 
 /*
 ** basic stack manipulation

@@ -489,6 +489,10 @@ Table* luaH_new(lua_State* L, int narray, int nhash)
         setarrayvector(L, t, narray);
     if (nhash > 0)
         setnodevector(L, t, nhash);
+#ifdef LUAU_MULTITHREAD
+    t->shared=0;
+    new (&t->lock) LuaSpinLock();
+#endif
     return t;
 }
 
@@ -787,6 +791,10 @@ Table* luaH_clone(lua_State* L, Table* tt)
     t->safeenv = 0;
     t->node = cast_to(LuaNode*, dummynode);
     t->lastfree = 0;
+#ifdef LUAU_MULTITHREAD
+    t->shared=0;
+    new (&t->lock) LuaSpinLock();
+#endif
 
     if (tt->sizearray)
     {

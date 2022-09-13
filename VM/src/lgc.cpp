@@ -1075,6 +1075,7 @@ size_t luaC_step(lua_State* L, bool assist)
 
     GC_INTERRUPT(0);
 
+    if (!lualock_gcstep()) return 0;
     // at the start of the new cycle
     if (g->gcstate == GCSpause)
         g->gcstats.starttimestamp = lua_clock();
@@ -1122,6 +1123,8 @@ size_t luaC_step(lua_State* L, bool assist)
             g->GCthreshold -= debt;
     }
 
+    luaunlock_gcstep();
+
     GC_INTERRUPT(lastgcstate);
     luaC_postgc(L);
 
@@ -1131,6 +1134,8 @@ size_t luaC_step(lua_State* L, bool assist)
 void luaC_fullgc(lua_State* L)
 {
     global_State* g = L->global;
+
+    if (!lualock_gcstep()) return;
 
 #ifdef LUAI_GCMETRICS
     if (g->gcstate == GCSpause)
@@ -1198,14 +1203,19 @@ void luaC_fullgc(lua_State* L)
     finishGcCycleMetrics(g);
 #endif
 
+    luaunlock_gcstep();
+
     luaC_postgc(L);
 }
 
 void luaC_postgc(lua_State *L)
 {
     global_State* g = L->global;
+	if (g->destructors.empty()) return;
+    lualock_global();
     std::vector<global_State::gc_Destructor> dlist=g->destructors;
     g->destructors.clear();
+    luaunlock_global();
     for (auto it=dlist.begin();it!=dlist.end();it++)
         it->dtor(L,it->data);
 }
@@ -1216,22 +1226,27 @@ void luaC_addpostgc(lua_State *L,int (*dtor)(lua_State *L,void*),void *data)
     global_State::gc_Destructor d;
     d.dtor=dtor;
     d.data=data;
+    lualock_global();
     g->destructors.push_back(d);
+    luaunlock_global();
 }
 
 void luaC_barrierupval(lua_State* L, GCObject* v)
 {
     LUAU_ASSERT(!FFlag::LuauSimplerUpval);
     global_State* g = L->global;
+    lualock_gc();
     LUAU_ASSERT(iswhite(v) && !isdead(g, v));
 
     if (keepinvariant(g))
         reallymarkobject(g, v);
+    luaunlock_gc();
 }
 
 void luaC_barrierf(lua_State* L, GCObject* o, GCObject* v)
 {
     global_State* g = L->global;
+    lualock_gc();
     LUAU_ASSERT(isblack(o) && iswhite(v) && !isdead(g, v) && !isdead(g, o));
     LUAU_ASSERT(g->gcstate != GCSpause);
     // must keep invariant?
@@ -1239,11 +1254,13 @@ void luaC_barrierf(lua_State* L, GCObject* o, GCObject* v)
         reallymarkobject(g, v); // restore invariant
     else                        // don't mind
         makewhite(g, o);        // mark as white just to avoid other barriers
+    luaunlock_gc();
 }
 
 void luaC_barriertable(lua_State* L, Table* t, GCObject* v)
 {
     global_State* g = L->global;
+    lualock_gc();
     GCObject* o = obj2gco(t);
 
     // in the second propagation stage, table assignment barrier works as a forward barrier
@@ -1259,22 +1276,26 @@ void luaC_barriertable(lua_State* L, Table* t, GCObject* v)
     black2gray(o); // make table gray (again)
     t->gclist = g->grayagain;
     g->grayagain = o;
+    luaunlock_gc();
 }
 
 void luaC_barrierback(lua_State* L, GCObject* o, GCObject** gclist)
 {
     global_State* g = L->global;
+    lualock_gc();
     LUAU_ASSERT(isblack(o) && !isdead(g, o));
     LUAU_ASSERT(g->gcstate != GCSpause);
 
     black2gray(o); // make object gray (again)
     *gclist = g->grayagain;
     g->grayagain = o;
+    luaunlock_gc();
 }
 
 void luaC_upvalclosed(lua_State* L, UpVal* uv)
 {
     global_State* g = L->global;
+    lualock_gc();
     GCObject* o = obj2gco(uv);
 
     LUAU_ASSERT(!upisopen(uv)); // upvalue was closed but needs GC state fixup
@@ -1292,6 +1313,7 @@ void luaC_upvalclosed(lua_State* L, UpVal* uv)
             LUAU_ASSERT(g->gcstate != GCSpause);
         }
     }
+    luaunlock_gc();
 }
 
 // measure the allocation rate in bytes/sec
@@ -1328,6 +1350,7 @@ void luaC_wakethread(lua_State* L)
 
     global_State* g = L->global;
 
+    lualock_gc();
     resetbit(L->stackstate, THREAD_SLEEPINGBIT);
 
     if (keepinvariant(g))
@@ -1341,6 +1364,7 @@ void luaC_wakethread(lua_State* L)
 
         black2gray(o);
     }
+    luaunlock_gc();
 }
 
 const char* luaC_statename(int state)

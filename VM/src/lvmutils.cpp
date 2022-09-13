@@ -102,6 +102,7 @@ void luaV_gettable(lua_State* L, const TValue* t, TValue* key, StkId val)
         if (ttistable(t))
         { // `t' is a table?
             Table* h = hvalue(t);
+            lualock_table(h);
 
             const TValue* res = luaH_get(h, key); // do a primitive get
 
@@ -112,8 +113,10 @@ void luaV_gettable(lua_State* L, const TValue* t, TValue* key, StkId val)
                 || (tm = fasttm(L, h->metatable, TM_INDEX)) == NULL)
             { // or no TM?
                 setobj2s(L, val, res);
+                luaunlock_table(h);
                 return;
             }
+            luaunlock_table(h);
             // t isn't a table, so see if it has an INDEX meta-method to look up the key with
         }
         else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_INDEX)))
@@ -138,14 +141,17 @@ void luaV_settable(lua_State* L, const TValue* t, TValue* key, StkId val)
         if (ttistable(t))
         { // `t' is a table?
             Table* h = hvalue(t);
+            lualock_table(h);
 
             const TValue* oldval = luaH_get(h, key);
 
             // should we assign the key? (if key is valid or __newindex is not set)
             if (!ttisnil(oldval) || (tm = fasttm(L, h->metatable, TM_NEWINDEX)) == NULL)
             {
-                if (h->readonly)
+                if (h->readonly) {
+                    luaunlock_table(h);
                     luaG_readonlyerror(L);
+                }
 
                 // luaH_set would work but would repeat the lookup so we use luaH_setslot that can reuse oldval if it's safe
                 TValue* newval = luaH_setslot(L, h, oldval, key);
@@ -154,8 +160,10 @@ void luaV_settable(lua_State* L, const TValue* t, TValue* key, StkId val)
 
                 setobj2t(L, newval, val);
                 luaC_barriert(L, h, val);
+                luaunlock_table(h);
                 return;
             }
+            luaunlock_table(h);
 
             // fallthrough to metamethod
         }
@@ -489,7 +497,9 @@ void luaV_dolen(lua_State* L, StkId ra, const TValue* rb)
         Table* h = hvalue(rb);
         if ((tm = fasttm(L, h->metatable, TM_LEN)) == NULL)
         {
+            lualock_table(h);
             setnvalue(ra, cast_num(luaH_getn(h)));
+            luaunlock_table(h);
             return;
         }
         break;

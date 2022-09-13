@@ -464,12 +464,16 @@ void* luaM_new_(lua_State* L, size_t nsize, uint8_t memcat)
 
     int nclass = sizeclass(nsize);
 
+    lualock_global();
     void* block = nclass >= 0 ? newblock(L, nclass) : (*g->frealloc)(g->ud, NULL, 0, nsize);
-    if (block == NULL && nsize > 0)
+    if (block == NULL && nsize > 0) {
+        luaunlock_global();
         luaD_throw(L, LUA_ERRMEM);
+    }
 
     g->totalbytes += nsize;
     g->memcatbytes[memcat] += nsize;
+    luaunlock_global();
 
     return block;
 }
@@ -484,6 +488,7 @@ GCObject* luaM_newgco_(lua_State* L, size_t nsize, uint8_t memcat)
     int nclass = sizeclass(nsize);
 
     void* block = NULL;
+    lualock_global();
 
     if (nclass >= 0)
     {
@@ -501,10 +506,14 @@ GCObject* luaM_newgco_(lua_State* L, size_t nsize, uint8_t memcat)
     }
 
     if (block == NULL && nsize > 0)
+    {
+        luaunlock_global();
         luaD_throw(L, LUA_ERRMEM);
+    }
 
     g->totalbytes += nsize;
     g->memcatbytes[memcat] += nsize;
+    luaunlock_global();
 
     return (GCObject*)block;
 }
@@ -515,6 +524,7 @@ void luaM_free_(lua_State* L, void* block, size_t osize, uint8_t memcat)
     LUAU_ASSERT((osize == 0) == (block == NULL));
 
     int oclass = sizeclass(osize);
+    lualock_global();
 
     if (oclass >= 0)
         freeblock(L, oclass, block);
@@ -523,6 +533,7 @@ void luaM_free_(lua_State* L, void* block, size_t osize, uint8_t memcat)
 
     g->totalbytes -= osize;
     g->memcatbytes[memcat] -= osize;
+    luaunlock_global();
 }
 
 void luaM_freegco_(lua_State* L, GCObject* block, size_t osize, uint8_t memcat, lua_Page* page)
@@ -531,6 +542,7 @@ void luaM_freegco_(lua_State* L, GCObject* block, size_t osize, uint8_t memcat, 
     LUAU_ASSERT((osize == 0) == (block == NULL));
 
     int oclass = sizeclass(osize);
+    lualock_global();
 
     if (oclass >= 0)
     {
@@ -549,6 +561,7 @@ void luaM_freegco_(lua_State* L, GCObject* block, size_t osize, uint8_t memcat, 
 
     g->totalbytes -= osize;
     g->memcatbytes[memcat] -= osize;
+    luaunlock_global();
 }
 
 void* luaM_realloc_(lua_State* L, void* block, size_t osize, size_t nsize, uint8_t memcat)
@@ -560,12 +573,15 @@ void* luaM_realloc_(lua_State* L, void* block, size_t osize, size_t nsize, uint8
     int oclass = sizeclass(osize);
     void* result;
 
+    lualock_global();
     // if either block needs to be allocated using a block allocator, we can't use realloc directly
     if (nclass >= 0 || oclass >= 0)
     {
         result = nclass >= 0 ? newblock(L, nclass) : (*g->frealloc)(g->ud, NULL, 0, nsize);
-        if (result == NULL && nsize > 0)
+        if (result == NULL && nsize > 0) {
+            luaunlock_global();
             luaD_throw(L, LUA_ERRMEM);
+        }
 
         if (osize > 0 && nsize > 0)
             memcpy(result, block, osize < nsize ? osize : nsize);
@@ -578,13 +594,16 @@ void* luaM_realloc_(lua_State* L, void* block, size_t osize, size_t nsize, uint8
     else
     {
         result = (*g->frealloc)(g->ud, block, osize, nsize);
-        if (result == NULL && nsize > 0)
+        if (result == NULL && nsize > 0) {
+            luaunlock_global();
             luaD_throw(L, LUA_ERRMEM);
+        }
     }
 
     LUAU_ASSERT((nsize == 0) == (result == NULL));
     g->totalbytes = (g->totalbytes - osize) + nsize;
     g->memcatbytes[memcat] += nsize - osize;
+    luaunlock_global();
     return result;
 }
 

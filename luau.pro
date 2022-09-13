@@ -14,6 +14,8 @@ win32 {
 DEFINES += LUA_BUILD_AS_DLL LUA_CORE
 }
 
+//QMAKE_CXXFLAGS_DEBUG += -O2
+
 defineReplace(expand) {
     names = $$1
     prefix=$$2

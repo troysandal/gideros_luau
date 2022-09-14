@@ -59,6 +59,8 @@ static void f_luaopen(lua_State* L, void* ud)
     L->gt = luaH_new(L, 0, 2);                    // table of globals
     sethvalue(L, registry(L), luaH_new(L, 0, 2)); // registry
 #ifdef LUAU_MULTITHREADING
+    //Globals table and registry are shared by default
+    L->gt.shared=true;
     registry(L)->value.gc->h.shared=true;
 #endif
     luaS_resize(L, LUA_MINSTRTABSIZE);            // initial size of string table

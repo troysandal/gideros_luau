@@ -960,9 +960,15 @@ int lua_setfenv(lua_State* L, int idx)
     switch (ttype(o))
     {
     case LUA_TFUNCTION:
+#ifdef LUAU_MULTITHREADING
+    	hvalue(L->top - 1)->shared=true;
+#endif
         clvalue(o)->env = hvalue(L->top - 1);
         break;
     case LUA_TTHREAD:
+#ifdef LUAU_MULTITHREADING
+    	hvalue(L->top - 1)->shared=true;
+#endif
         thvalue(o)->gt = hvalue(L->top - 1);
         break;
     default:

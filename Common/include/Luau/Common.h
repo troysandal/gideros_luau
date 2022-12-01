@@ -41,7 +41,7 @@ inline int assertCallHandler(const char* expression, const char* file, int line,
 
 } // namespace Luau
 
-#if !defined(NDEBUG) || defined(LUAU_ENABLE_ASSERT)
+#if defined(LUAU_ENABLE_ASSERT)
 #define LUAU_ASSERT(expr) ((void)(!!(expr) || (Luau::assertCallHandler(#expr, __FILE__, __LINE__, __FUNCTION__) && (LUAU_DEBUGBREAK(), 0))))
 #define LUAU_ASSERTENABLED
 #else

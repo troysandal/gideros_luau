@@ -357,7 +357,7 @@ static char unescape(char ch)
     case 'b':
         return '\b';
     case 'e':
-        return '\e';
+        return (char)27; //Some compilers, visual C for one, don't understand '\e'
     case 'f':
         return '\f';
     case 'n':

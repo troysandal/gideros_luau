@@ -565,6 +565,7 @@ static int tclone(lua_State* L)
 
             TValue v;
             sethvalue(L, &v, tt);
+            profiletable(L, tt, NULL);
             luaA_pushobject(L, &v);
 
             return 1;

@@ -774,8 +774,10 @@ void lua_createtable(lua_State* L, int narray, int nrec)
 {
     luaC_checkGC(L);
     luaC_threadbarrier(L);
-    sethvalue(L, L->top, luaH_new(L, narray, nrec));
+    Table *tnew = luaH_new(L, narray, nrec);
+    sethvalue(L, L->top, tnew);
     api_incr_top(L);
+    profiletable(L, tnew, NULL);
     return;
 }
 

@@ -2190,7 +2190,11 @@ static void luau_execute(lua_State* L)
                 int b = LUAU_INSN_B(insn);
                 uint32_t aux = *pc++;
 
-                sethvalue(L, ra, luaH_new(L, aux, b == 0 ? 0 : (1 << (b - 1))));
+                Table *tnew = luaH_new(L, aux, b == 0 ? 0 : (1 << (b - 1)));
+                sethvalue(L, ra, tnew);
+                profiletable(L, tnew, pc);
+                if (L->profileTableAllocs)
+                    base = L->base; // stack may have been reallocated, so we need to refresh base ptr
                 VM_PROTECT(luaC_checkGC(L));
                 VM_NEXT();
             }
@@ -2202,8 +2206,12 @@ static void luau_execute(lua_State* L)
                 TValue* kv = VM_KV(LUAU_INSN_D(insn));
 
                 lualock_table(hvalue(kv));
-                sethvalue(L, ra, luaH_clone(L, hvalue(kv)));
+                Table *tnew = luaH_clone(L, hvalue(kv));
+                sethvalue(L, ra, tnew);
                 luaunlock_table(hvalue(kv));
+                profiletable(L, tnew, pc);
+                if (L->profileTableAllocs)
+                    base = L->base; // stack may have been reallocated, so we need to refresh base ptr
                 VM_PROTECT(luaC_checkGC(L));
                 VM_NEXT();
             }

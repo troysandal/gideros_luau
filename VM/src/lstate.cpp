@@ -88,6 +88,7 @@ static void preinit_state(lua_State* L, global_State* g)
     L->activememcat = 0;
     L->userdata = NULL;
     L->profilerHook = NULL;
+    L->profileTableAllocs = false;
 }
 
 static void close_state(lua_State* L)
@@ -276,4 +277,47 @@ LUA_API int lua_isclosing(lua_State *L)
 {
 	return L->global->closing;
 }
+
+void lua_profileTableAllocation(lua_State *L,Table *t,const uint32_t *pc)
+{
+    if (!lua_checkstack(L,3)) return;
+    lua_getglobal(L,"__tableAllocationProfiler__");
+    if (lua_isnil(L,-1)) {
+        Table *tnew = luaH_new(L, 0, 0);
+        sethvalue(L, L->top-1, tnew);
+        sethvalue(L, L->top, tnew);
+        L->top++;
+        lua_setglobal(L,"__tableAllocationProfiler__");
+        Table *tmeta = luaH_new(L, 0, 0);
+        sethvalue(L, L->top, tmeta);
+        L->top++;
+        lua_pushstring(L, "k");                             // t mt v
+        lua_setfield(L, -2, "__mode");                      // t mt
+        lua_setmetatable(L, -2);                            // t
+    }
+    sethvalue(L, L->top, t);
+    L->top++;
+    CallInfo *ci=L->ci;
+    if ((!pc)&&ci>L->base_ci) ci--;
+    if(ttisfunction(ci->func))
+    {
+        Closure *cl=ci_func(ci);
+        if (cl->isC)
+        {
+            if (cl->c.debugname)
+                lua_pushfstring(L,"=[C] %p(%s)",cl->c.f,cl->c.debugname);
+            else
+                lua_pushfstring(L,"=[C] %p",cl->c.f);
+        }
+        else {
+            lua_pushfstring(L,"%s:%d:%p",getstr(cl->l.p->source),luaG_getline(cl->l.p, pcRel(pc?pc:ci->savedpc, cl->l.p)),cl->l.p);
+        }
+    }
+    else
+        lua_pushstring(L,"Internal");
+    lua_settable(L,-3);
+    L->top--;
+}
+#define profiletable(L,t) if (L->profileTableAllocs) lua_profileTableAllocation(L,t);
+
 

@@ -291,6 +291,8 @@ struct lua_State
 
     void* userdata;
     void (*profilerHook)(lua_State*,int);
+
+    bool profileTableAllocs; //enable gathering table allocations in a global weak table called '__tableAllocationProfiler__'
 };
 // clang-format on
 
@@ -323,3 +325,6 @@ union GCObject
 
 LUAI_FUNC lua_State* luaE_newthread(lua_State* L);
 LUAI_FUNC void luaE_freethread(lua_State* L, lua_State* L1, struct lua_Page* page);
+
+LUAI_FUNC void lua_profileTableAllocation(lua_State *L,Table *t, const uint32_t *pc);
+#define profiletable(L,t,pc) if (L->profileTableAllocs) lua_profileTableAllocation(L,t,pc);

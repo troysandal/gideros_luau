@@ -318,6 +318,5 @@ void lua_profileTableAllocation(lua_State *L,Table *t,const uint32_t *pc)
     lua_settable(L,-3);
     L->top--;
 }
-#define profiletable(L,t) if (L->profileTableAllocs) lua_profileTableAllocation(L,t);
 
 

@@ -447,6 +447,7 @@ LUA_API int lua_getpseudocode(lua_State* L, int idx);
 LUA_API int lua_pushint64(lua_State *L, long long z);
 LUA_API long long luaL_checkint64(lua_State *L, int n);
 LUA_API int lua_isclosing(lua_State *L);
+LUA_API int lua_findreferences(lua_State* L);
 
 
 /******************************************************************************

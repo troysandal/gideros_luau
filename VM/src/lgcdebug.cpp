@@ -605,3 +605,184 @@ void luaC_dump(lua_State* L, void* file, const char* (*categoryName)(lua_State* 
     fprintf(f, "}\n");
     fprintf(f, "}}\n");
 }
+
+
+struct searchState {
+    GCObject *obj;
+    lua_State *L;
+    global_State *g;
+    TValue parent;
+    std::vector<TValue> refs;
+};
+
+
+static void searchref(searchState* f, GCObject* o)
+{
+    if (f->obj==o) {
+        f->refs.push_back(f->parent);
+    }
+}
+
+static void searchrefs(searchState* f, TValue* data, size_t size)
+{
+    for (size_t i = 0; i < size; ++i)
+    {
+        if (iscollectable(&data[i]))
+            searchref(f, gcvalue(&data[i]));
+    }
+}
+
+static const char* gettablemode(global_State* g, Table* h)
+{
+    const TValue* mode = gfasttm(g, h->metatable, TM_MODE);
+
+    if (mode && ttisstring(mode))
+        return svalue(mode);
+
+    return NULL;
+}
+
+static void searchtable(searchState* f, Table* h)
+{
+    int weakkey = 0;
+    int weakvalue = 0;
+
+    // is there a weak mode?
+    if (const char* modev = gettablemode(f->g, h))
+    {
+        weakkey = (strchr(modev, 'k') != NULL);
+        weakvalue = (strchr(modev, 'v') != NULL);
+    }
+
+    if (h->node != &luaH_dummynode)
+    {
+        for (int i = 0; i < sizenode(h); ++i)
+        {
+            const LuaNode& n = h->node[i];
+
+            if (!ttisnil(&n.val) && (iscollectable(&n.key) || iscollectable(&n.val)))
+            {
+                if ((!weakkey)&&iscollectable(&n.key))
+                    searchref(f, gcvalue(&n.key));
+
+                if ((!weakvalue)&&iscollectable(&n.val))
+                    searchref(f, gcvalue(&n.val));
+            }
+        }
+    }
+    if (h->sizearray&&(!weakvalue))
+        searchrefs(f, h->array, h->sizearray);
+    if (h->metatable)
+        searchref(f, obj2gco(h->metatable));
+}
+
+static void searchclosure(searchState* f, Closure* cl)
+{
+    searchref(f, obj2gco(cl->env));
+
+    if (cl->isC)
+    {
+        if (cl->nupvalues)
+            searchrefs(f, cl->c.upvals, cl->nupvalues);
+    }
+    else
+    {
+        if (cl->nupvalues)
+            searchrefs(f, cl->l.uprefs, cl->nupvalues);
+    }
+}
+
+static void searchudata(searchState* f, Udata* u)
+{
+    if (u->metatable)
+        searchref(f, obj2gco(u->metatable));
+}
+
+static void searchthread(searchState* f, lua_State* th)
+{
+    searchref(f, obj2gco(th->gt));
+
+    if (th->top > th->stack)
+        searchrefs(f, th->stack, th->top - th->stack);
+}
+
+static void searchupval(searchState* f, UpVal* uv)
+{
+    if (iscollectable(uv->v))
+        searchref(f, gcvalue(uv->v));
+}
+
+
+
+static bool searchgco(void* context, lua_Page* /*page*/, GCObject* o)
+{
+    searchState* f = (searchState*)context;
+    f->parent.value.gc=o;
+    f->parent.tt=o->gch.tt;
+
+    switch (o->gch.tt)
+    {
+
+    case LUA_TTABLE:
+        searchtable(f, gco2h(o));
+        break;
+
+    case LUA_TFUNCTION:
+        searchclosure(f, gco2cl(o));
+        break;
+
+    case LUA_TUSERDATA:
+        searchudata(f, gco2u(o));
+        break;
+
+    case LUA_TTHREAD:
+        if (gco2th(o)==f->L)
+            break;
+        searchthread(f, gco2th(o));
+        break;
+
+    case LUA_TUPVAL:
+        searchupval(f, gco2uv(o));
+        break;
+    }
+
+    return false;
+}
+
+int lua_findreferences(lua_State* L)
+{
+    global_State* g = L->global;
+    searchState st;
+    st.obj=(L->top-1)->value.gc;
+    st.g=g;
+    st.L=L;
+
+    searchgco(&st, NULL, obj2gco(g->mainthread));
+    luaM_visitgco(L, &st, searchgco);
+
+    lua_pop(L,1);
+    lua_newtable(L);
+    for (size_t k=0;k<st.refs.size();k++) {
+        lua_pushnil(L);
+        luaC_threadbarrier(L);
+        setobj2s(L, L->top-1, &st.refs[k]);
+        if(ttisfunction(L->top-1))
+        {
+            Closure *cl=&((L->top-1)->value.gc->cl);
+            if (cl->isC)
+            {
+                if (cl->c.debugname)
+                    lua_pushfstring(L,"=[C] %p(%s)",cl->c.f,cl->c.debugname);
+                else
+                    lua_pushfstring(L,"=[C] %p",cl->c.f);
+            }
+            else {
+                lua_pushfstring(L,"%s:%d:%p",getstr(cl->l.p->source),luaG_getline(cl->l.p, 0),cl->l.p);
+            }
+        }
+        else
+            lua_pushboolean(L,true);
+        lua_rawset(L,-3);
+    }
+    return 1;
+}

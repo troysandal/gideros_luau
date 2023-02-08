@@ -881,6 +881,18 @@ void lua_setfield(lua_State* L, int idx, const char* k)
     return;
 }
 
+void lua_rawsetfield(lua_State* L, int idx, const char* k)
+{
+    api_checknelems(L, 1);
+    StkId t = index2addr(L, idx);
+    api_check(L, ttistable(t));
+    if (hvalue(t)->readonly)
+        luaG_readonlyerror(L);
+    setobj2t(L, luaH_setstr(L, hvalue(t), luaS_new(L, k)), L->top - 1);
+    luaC_barriert(L, hvalue(t), L->top - 1);
+    L->top--;
+}
+
 void lua_rawset(lua_State* L, int idx)
 {
     api_checknelems(L, 2);
@@ -1408,6 +1420,38 @@ void lua_clonefunction(lua_State* L, int idx)
     api_incr_top(L);
 }
 
+void lua_clonetable(lua_State* L, int idx)
+{
+    luaC_checkGC(L);
+    luaC_threadbarrier(L);
+    const TValue* o = index2addr(L, idx);
+    api_check(L, ttistable(o));
+    Table* t = hvalue(o);
+    api_check(L, t != hvalue(registry(L)));
+    lualock_table(t);
+    Table* tt = luaH_clone(L, t);
+    luaunlock_table(t);
+    sethvalue(L, L->top, tt);
+    api_incr_top(L);
+    profiletable(L, tt, NULL);
+}
+
+void lua_remaptable(lua_State* L, int idx, int mapIdx)
+{
+    luaC_checkGC(L);
+    luaC_threadbarrier(L);
+    const TValue* o = index2addr(L, idx);
+    api_check(L, ttistable(o));
+    Table* t = hvalue(o);
+    api_check(L, t != hvalue(registry(L)));
+    const TValue* mo = index2addr(L, mapIdx);
+    api_check(L, ttistable(mo));
+    Table *lt = hvalue(mo);
+    lualock_table(t);
+    luaH_remaptable(t, lt);
+    luaunlock_table(t);
+}
+
 lua_Callbacks* lua_callbacks(lua_State* L)
 {
     return &L->global->cb;
@@ -1423,4 +1467,54 @@ size_t lua_totalbytes(lua_State* L, int category)
 {
     api_check(L, category < LUA_MEMORY_CATEGORIES);
     return category < 0 ? L->global->totalbytes : L->global->memcatbytes[category];
+}
+
+size_t lua_newtoken(lua_State* L, const char *str)
+{
+	TString *ts=luaS_new(L, str);
+    lualock_global();
+    size_t ntok=L->global->ttoken.size();
+    L->global->ttoken.push_back(ts);
+    luaS_fix(ts); // never collect tokens
+    luaunlock_global();
+    return ntok;
+}
+
+void lua_pushtoken(lua_State* L, int token)
+{
+	api_check(L, token<L->global->ttoken.size());
+    luaC_checkGC(L);
+    luaC_threadbarrier(L);
+    setsvalue2s(L, L->top, L->global->ttoken[token]);
+    api_incr_top(L);
+    return;
+}
+
+int lua_rawgettoken(lua_State* L, int idx, int token)
+{
+	api_check(L, token<L->global->ttoken.size());
+    luaC_threadbarrier(L);
+    StkId t = index2addr(L, idx);
+    api_check(L, ttistable(t));
+    TValue key;
+    setsvalue(L, &key, L->global->ttoken[token]);
+    Table *tt=hvalue(t);
+	lualock_table(tt);
+    setobj2s(L, L->top, luaH_getstr(tt, tsvalue(&key)));
+	luaunlock_table(tt);
+    api_incr_top(L);
+    return ttype(L->top - 1);
+}
+
+void lua_rawsettoken(lua_State* L, int idx, int token)
+{
+	api_check(L, token<L->global->ttoken.size());
+    api_checknelems(L, 1);
+    StkId t = index2addr(L, idx);
+    api_check(L, ttistable(t));
+    if (hvalue(t)->readonly)
+        luaG_readonlyerror(L);
+    setobj2t(L, luaH_setstr(L, hvalue(t), L->global->ttoken[token]), L->top - 1);
+    luaC_barriert(L, hvalue(t), L->top - 1);
+    L->top--;
 }

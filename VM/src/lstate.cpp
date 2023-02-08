@@ -234,7 +234,8 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
     g->printfuncdata = NULL;
     g->closing = 0;
     new (&g->destructors) std::vector<global_State::gc_Destructor>;
-  
+    new (&g->ttoken) std::vector<TString *>;
+
 
 #ifdef LUAI_GCMETRICS
     g->gcmetrics = GCMetrics();

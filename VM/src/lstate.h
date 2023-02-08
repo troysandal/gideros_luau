@@ -217,6 +217,7 @@ typedef struct global_State
         void *data;
     };
     std::vector<gc_Destructor> destructors;
+    std::vector<TString *> ttoken; //Token strings, strings used frequently by C API that can be referred to by a numeric token
 #ifdef LUAI_GCMETRICS
     GCMetrics gcmetrics;
 #endif

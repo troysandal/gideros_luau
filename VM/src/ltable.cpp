@@ -818,6 +818,28 @@ Table* luaH_clone(lua_State* L, Table* tt)
     return t;
 }
 
+void luaH_remaptable(Table* t, Table *lt)
+{
+    if (t->sizearray)
+    {
+        for (int k=0;k<t->sizearray;k++) {
+            const TValue *m=luaH_get(lt,t->array+k);
+            if (m!=luaO_nilobject)
+                t->array[k]=*m;
+        }
+    }
+
+    if (t->node != dummynode)
+    {
+        int size = 1 << t->lsizenode;
+        for (int k=0;k<size;k++) {
+            const TValue *m=luaH_get(lt,&((t->node+k)->val));
+            if (m!=luaO_nilobject)
+                (t->node+k)->val=*m;
+        }
+    }
+}
+
 void luaH_clear(Table* tt)
 {
     // clear array part

@@ -202,6 +202,7 @@ LUA_API void lua_getfenv(lua_State* L, int idx);
 */
 LUA_API void lua_settable(lua_State* L, int idx);
 LUA_API void lua_setfield(lua_State* L, int idx, const char* k);
+LUA_API void lua_rawsetfield(lua_State* L, int idx, const char* k);
 LUA_API void lua_rawset(lua_State* L, int idx);
 LUA_API void lua_rawseti(lua_State* L, int idx, int n);
 LUA_API int lua_setmetatable(lua_State* L, int objindex);
@@ -424,6 +425,14 @@ typedef struct lua_Callbacks lua_Callbacks;
 
 LUA_API lua_Callbacks* lua_callbacks(lua_State* L);
 
+/*
+** GIDEROS/TOKEN
+*/
+LUA_API size_t lua_newtoken(lua_State* L, const char *str);
+LUA_API void lua_pushtoken(lua_State* L, int token);
+LUA_API int lua_rawgettoken(lua_State* L, int idx, int token);
+LUA_API void lua_rawsettoken(lua_State* L, int idx, int token);
+
 //GIDEROS
 #define LUA_DTOR_UDATA(p) (p)
 #define lua_pushcnfunction(L, fn, debugname) lua_pushcclosurek(L, fn, debugname, 0, NULL)
@@ -448,6 +457,8 @@ LUA_API int lua_pushint64(lua_State *L, long long z);
 LUA_API long long luaL_checkint64(lua_State *L, int n);
 LUA_API int lua_isclosing(lua_State *L);
 LUA_API int lua_findreferences(lua_State* L);
+LUA_API void lua_clonetable(lua_State* L, int idx);
+LUA_API void lua_remaptable(lua_State* L, int idx, int mapIdx);
 
 
 /******************************************************************************

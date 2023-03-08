@@ -110,7 +110,9 @@ static void close_state(lua_State* L)
     LUAU_ASSERT(g->memcatbytes[0] == sizeof(LG));
     for (int i = 1; i < LUA_MEMORY_CATEGORIES; i++)
         LUAU_ASSERT(g->memcatbytes[i] == 0);
-    g->destructors.clear();
+    g->destructors.~vector<global_State::gc_Destructor>();
+    g->ttoken.~vector<TString *>();
+    //g->destructors.clear();
     (*g->frealloc)(g->ud, L, sizeof(LG), 0);
 }
 
@@ -235,7 +237,7 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
     g->closing = 0;
     new (&g->destructors) std::vector<global_State::gc_Destructor>;
     new (&g->ttoken) std::vector<TString *>;
-
+    g->ttoken.reserve(128); //Pre-reserve 128 tokens
 
 #ifdef LUAI_GCMETRICS
     g->gcmetrics = GCMetrics();

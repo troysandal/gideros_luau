@@ -17,9 +17,6 @@
 #include <string.h>
 #include <math.h>
 
-LUAU_FASTFLAG(LuauSimplerUpval)
-LUAU_FASTFLAG(LuauNoSleepBit)
-
 // Disable c99-designator to avoid the warning in CGOTO dispatch table
 #ifdef __clang__
 #if __has_warning("-Wc99-designator")
@@ -71,11 +68,6 @@ LUAU_FASTFLAG(LuauNoSleepBit)
 #define VM_PATCH_C(pc, slot) *const_cast<Instruction*>(pc) = ((uint8_t(slot) << 24) | (0x00ffffffu & *(pc)))
 #define VM_PATCH_E(pc, slot) *const_cast<Instruction*>(pc) = ((uint32_t(slot) << 8) | (0x000000ffu & *(pc)))
 
-// NOTE: If debugging the Luau code, disable this macro to prevent timeouts from
-// occurring when tracing code in Visual Studio / XCode
-#if 0
-#define VM_INTERRUPT()
-#else
 #define VM_INTERRUPT() \
     { \
         void (*interrupt)(lua_State*, int) = L->global->cb.interrupt; \
@@ -89,7 +81,6 @@ LUAU_FASTFLAG(LuauNoSleepBit)
             } \
         } \
     }
-#endif
 
 
 #define VM_DISPATCH_OP(op) &&CASE_##op
@@ -109,10 +100,10 @@ LUAU_FASTFLAG(LuauNoSleepBit)
         VM_DISPATCH_OP(LOP_POWK), VM_DISPATCH_OP(LOP_AND), VM_DISPATCH_OP(LOP_OR), VM_DISPATCH_OP(LOP_ANDK), VM_DISPATCH_OP(LOP_ORK), \
         VM_DISPATCH_OP(LOP_CONCAT), VM_DISPATCH_OP(LOP_NOT), VM_DISPATCH_OP(LOP_MINUS), VM_DISPATCH_OP(LOP_LENGTH), VM_DISPATCH_OP(LOP_NEWTABLE), \
         VM_DISPATCH_OP(LOP_DUPTABLE), VM_DISPATCH_OP(LOP_SETLIST), VM_DISPATCH_OP(LOP_FORNPREP), VM_DISPATCH_OP(LOP_FORNLOOP), \
-        VM_DISPATCH_OP(LOP_FORGLOOP), VM_DISPATCH_OP(LOP_FORGPREP_INEXT), VM_DISPATCH_OP(LOP_FORGLOOP_INEXT), VM_DISPATCH_OP(LOP_FORGPREP_NEXT), \
-        VM_DISPATCH_OP(LOP_FORGLOOP_NEXT), VM_DISPATCH_OP(LOP_GETVARARGS), VM_DISPATCH_OP(LOP_DUPCLOSURE), VM_DISPATCH_OP(LOP_PREPVARARGS), \
+        VM_DISPATCH_OP(LOP_FORGLOOP), VM_DISPATCH_OP(LOP_FORGPREP_INEXT), VM_DISPATCH_OP(LOP_DEP_FORGLOOP_INEXT), VM_DISPATCH_OP(LOP_FORGPREP_NEXT), \
+        VM_DISPATCH_OP(LOP_DEP_FORGLOOP_NEXT), VM_DISPATCH_OP(LOP_GETVARARGS), VM_DISPATCH_OP(LOP_DUPCLOSURE), VM_DISPATCH_OP(LOP_PREPVARARGS), \
         VM_DISPATCH_OP(LOP_LOADKX), VM_DISPATCH_OP(LOP_JUMPX), VM_DISPATCH_OP(LOP_FASTCALL), VM_DISPATCH_OP(LOP_COVERAGE), \
-        VM_DISPATCH_OP(LOP_CAPTURE), VM_DISPATCH_OP(LOP_JUMPIFEQK), VM_DISPATCH_OP(LOP_JUMPIFNOTEQK), VM_DISPATCH_OP(LOP_FASTCALL1), \
+        VM_DISPATCH_OP(LOP_CAPTURE), VM_DISPATCH_OP(LOP_DEP_JUMPIFEQK), VM_DISPATCH_OP(LOP_DEP_JUMPIFNOTEQK), VM_DISPATCH_OP(LOP_FASTCALL1), \
         VM_DISPATCH_OP(LOP_FASTCALL2), VM_DISPATCH_OP(LOP_FASTCALL2K), VM_DISPATCH_OP(LOP_FORGPREP), VM_DISPATCH_OP(LOP_JUMPXEQKNIL), \
 		VM_DISPATCH_OP(LOP_JUMPXEQKB), VM_DISPATCH_OP(LOP_JUMPXEQKN), VM_DISPATCH_OP(LOP_JUMPXEQKS), \
         VM_DISPATCH_OP(LOP_DIVINT), VM_DISPATCH_OP(LOP_MINOF), VM_DISPATCH_OP(LOP_MAXOF), \
@@ -146,110 +137,6 @@ LUAU_FASTFLAG(LuauNoSleepBit)
     dispatchOp = uint8_t(op); \
     goto dispatchContinue
 #endif
-
-LUAU_NOINLINE static void luau_prepareFORN(lua_State* L, StkId plimit, StkId pstep, StkId pinit)
-{
-    if (!ttisnumber(pinit) && !luaV_tonumber(pinit, pinit))
-        luaG_forerror(L, pinit, "initial value");
-    if (!ttisnumber(plimit) && !luaV_tonumber(plimit, plimit))
-        luaG_forerror(L, plimit, "limit");
-    if (!ttisnumber(pstep) && !luaV_tonumber(pstep, pstep))
-        luaG_forerror(L, pstep, "step");
-}
-
-LUAU_NOINLINE static bool luau_loopFORG(lua_State* L, int a, int c)
-{
-    // note: it's safe to push arguments past top for complicated reasons (see top of the file)
-    StkId ra = &L->base[a];
-    LUAU_ASSERT(ra + 3 <= L->top);
-
-    setobjs2s(L, ra + 3 + 2, ra + 2);
-    setobjs2s(L, ra + 3 + 1, ra + 1);
-    setobjs2s(L, ra + 3, ra);
-
-    L->top = ra + 3 + 3; // func. + 2 args (state and index)
-    LUAU_ASSERT(L->top <= L->stack_last);
-
-    luaD_call(L, ra + 3, c);
-    L->top = L->ci->top;
-
-    // recompute ra since stack might have been reallocated
-    ra = &L->base[a];
-    LUAU_ASSERT(ra < L->top);
-
-    // copy first variable back into the iteration index
-    setobjs2s(L, ra + 2, ra + 3);
-
-    return ttisnil(ra + 2);
-}
-
-// calls a C function f with no yielding support; optionally save one resulting value to the res register
-// the function and arguments have to already be pushed to L->top
-LUAU_NOINLINE static void luau_callTM(lua_State* L, int nparams, int res)
-{
-    ++L->nCcalls;
-
-    if (L->nCcalls >= LUAI_MAXCCALLS)
-        luaD_checkCstack(L);
-
-    luaD_checkstack(L, LUA_MINSTACK);
-
-    StkId top = L->top;
-    StkId fun = top - nparams - 1;
-
-    CallInfo* ci = incr_ci(L);
-    ci->func = fun;
-    ci->base = fun + 1;
-    ci->top = top + LUA_MINSTACK;
-    ci->savedpc = NULL;
-    ci->flags = 0;
-    ci->nresults = (res >= 0);
-    LUAU_ASSERT(ci->top <= L->stack_last);
-
-    LUAU_ASSERT(ttisfunction(ci->func));
-    LUAU_ASSERT(clvalue(ci->func)->isC);
-
-    L->base = fun + 1;
-    LUAU_ASSERT(L->top == L->base + nparams);
-
-    lua_CFunction func = clvalue(fun)->c.f;
-    int n = func(L);
-    LUAU_ASSERT(n >= 0); // yields should have been blocked by nCcalls
-
-    // ci is our callinfo, cip is our parent
-    // note that we read L->ci again since it may have been reallocated by the call
-    CallInfo* cip = L->ci - 1;
-
-    // copy return value into parent stack
-    if (res >= 0)
-    {
-        if (n > 0)
-        {
-            setobj2s(L, &cip->base[res], L->top - n);
-        }
-        else
-        {
-            setnilvalue(&cip->base[res]);
-        }
-    }
-
-    L->ci = cip;
-    L->base = cip->base;
-    L->top = cip->top;
-
-    --L->nCcalls;
-}
-
-LUAU_NOINLINE static void luau_tryfuncTM(lua_State* L, StkId func)
-{
-    const TValue* tm = luaT_gettmbyobj(L, func, TM_CALL);
-    if (!ttisfunction(tm))
-        luaG_typeerror(L, func, "call");
-    for (StkId p = L->top; p > func; p--) // open space for metamethod
-        setobjs2s(L, p, p - 1);
-    L->top++;              // stack space pre-allocated by the caller
-    setobj2s(L, func, tm); // tag method is the new function to be called
-}
 
 LUAU_NOINLINE void luau_callhook(lua_State* L, lua_Hook hook, void* userdata)
 {
@@ -326,9 +213,22 @@ static void luau_execute(lua_State* L)
     const Instruction* pc;
 
     LUAU_ASSERT(isLua(L->ci));
-    LUAU_ASSERT(luaC_threadactive(L));
-    LUAU_ASSERT(!luaC_threadsleeping(L));
-    LUAU_ASSERT(!FFlag::LuauNoSleepBit || !isblack(obj2gco(L))); // we don't use luaC_threadbarrier because active threads never turn black
+    LUAU_ASSERT(L->isactive);
+    LUAU_ASSERT(!isblack(obj2gco(L))); // we don't use luaC_threadbarrier because active threads never turn black
+
+#if LUA_CUSTOM_EXECUTION
+    Proto* p = clvalue(L->ci->func)->l.p;
+
+    if (p->execdata)
+    {
+        if (L->global->ecb.enter(L, p) == 0)
+            return;
+    }
+
+reentry:
+#endif
+
+    LUAU_ASSERT(isLua(L->ci));
 
     pc = L->ci->savedpc;
     cl = clvalue(L->ci->func);
@@ -508,8 +408,6 @@ static void luau_execute(lua_State* L)
 
                 setobj(L, uv->v, ra);
                 luaC_barrier(L, uv, ra);
-                if (!FFlag::LuauSimplerUpval)
-                    luaC_upvalbarrier(L, uv, uv->v);
                 VM_NEXT();
             }
 
@@ -617,7 +515,7 @@ static void luau_execute(lua_State* L)
                         L->top = top + 3;
 
                         L->cachedslot = LUAU_INSN_C(insn);
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                         VM_PATCH_C(pc - 2, L->cachedslot);
                         VM_NEXT();
@@ -651,7 +549,7 @@ static void luau_execute(lua_State* L)
                             L->top = top + 3;
 
                             L->cachedslot = LUAU_INSN_C(insn);
-                            VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                            VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                             // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                             VM_PATCH_C(pc - 2, L->cachedslot);
                             VM_NEXT();
@@ -734,7 +632,7 @@ static void luau_execute(lua_State* L)
                         L->top = top + 4;
 
                         L->cachedslot = LUAU_INSN_C(insn);
-                        VM_PROTECT(luau_callTM(L, 3, -1));
+                        VM_PROTECT(luaV_callTM(L, 3, -1));
                         // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                         VM_PATCH_C(pc - 2, L->cachedslot);
                         VM_NEXT();
@@ -766,7 +664,7 @@ static void luau_execute(lua_State* L)
                             L->top = top + 4;
 
                             L->cachedslot = LUAU_INSN_C(insn);
-                            VM_PROTECT(luau_callTM(L, 3, -1));
+                            VM_PROTECT(luaV_callTM(L, 3, -1));
                             // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
                             VM_PATCH_C(pc - 2, L->cachedslot);
                             VM_NEXT();
@@ -913,6 +811,8 @@ static void luau_execute(lua_State* L)
                 Proto* pv = cl->l.p->p[LUAU_INSN_D(insn)];
                 LUAU_ASSERT(unsigned(LUAU_INSN_D(insn)) < unsigned(cl->l.p->sizep));
 
+                VM_PROTECT_PC(); // luaF_newLclosure may fail due to OOM
+
                 // note: we save closure to stack early in case the code below wants to capture it by value
                 Closure* ncl = luaF_newLclosure(L, pv->nups, cl->env, pv);
                 setclvalue(L, ra, ncl);
@@ -938,6 +838,7 @@ static void luau_execute(lua_State* L)
 
                     default:
                         LUAU_ASSERT(!"Unknown upvalue capture type");
+                        LUAU_UNREACHABLE(); // improves switch() codegen by eliding opcode bounds checks
                     }
                 }
 
@@ -1066,7 +967,7 @@ static void luau_execute(lua_State* L)
                 // slow-path: not a function call
                 if (LUAU_UNLIKELY(!ttisfunction(ra)))
                 {
-                    VM_PROTECT(luau_tryfuncTM(L, ra));
+                    VM_PROTECT(luaV_tryfuncTM(L, ra));
                     argtop++; // __call adds an extra self
                 }
 
@@ -1105,6 +1006,18 @@ static void luau_execute(lua_State* L)
                         setnilvalue(argi++); // complete missing arguments
                     L->top = p->is_vararg ? argi : ci->top;
 
+#if LUA_CUSTOM_EXECUTION
+                    if (p->execdata)
+                    {
+                        LUAU_ASSERT(L->global->ecb.enter);
+
+                        if (L->global->ecb.enter(L, p) == 1)
+                            goto reentry;
+                        else
+                            goto exit;
+                    }
+#endif
+
                     // reentry
                     pc = p->code;
                     cl = ccl;
@@ -1136,7 +1049,7 @@ static void luau_execute(lua_State* L)
 
                     int i;
                     for (i = nresults; i != 0 && vali < valend; i--)
-                        setobjs2s(L, res++, vali++);
+                        setobj2s(L, res++, vali++);
                     while (i-- > 0)
                         setnilvalue(res++);
 
@@ -1176,7 +1089,7 @@ static void luau_execute(lua_State* L)
                 // note: in MULTRET context nresults starts as -1 so i != 0 condition never activates intentionally
                 int i;
                 for (i = nresults; i != 0 && vali < valend; i--)
-                    setobjs2s(L, res++, vali++);
+                    setobj2s(L, res++, vali++);
                 while (i-- > 0)
                     setnilvalue(res++);
 
@@ -1194,11 +1107,26 @@ static void luau_execute(lua_State* L)
 
                 LUAU_ASSERT(isLua(L->ci));
 
+                Closure* nextcl = clvalue(cip->func);
+                Proto* nextproto = nextcl->l.p;
+
+#if LUA_CUSTOM_EXECUTION
+                if (nextproto->execdata)
+                {
+                    LUAU_ASSERT(L->global->ecb.enter);
+
+                    if (L->global->ecb.enter(L, nextproto) == 1)
+                        goto reentry;
+                    else
+                        goto exit;
+                }
+#endif
+
                 // reentry
                 pc = cip->savedpc;
-                cl = clvalue(cip->func);
+                cl = nextcl;
                 base = L->base;
-                k = cl->l.p->k;
+                k = nextproto->k;
                 VM_NEXT();
             }
 
@@ -1314,7 +1242,7 @@ static void luau_execute(lua_State* L)
                                 int res = int(top - base);
                                 L->top = top + 3;
 
-                                VM_PROTECT(luau_callTM(L, 2, res));
+                                VM_PROTECT(luaV_callTM(L, 2, res));
                                 pc += !l_isfalse(&base[res]) ? LUAU_INSN_D(insn) : 1;
                                 LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                                 VM_NEXT();
@@ -1323,7 +1251,9 @@ static void luau_execute(lua_State* L)
                         // slow path after switch()
                         break;
 
-                    default:;
+                    default:
+                        LUAU_ASSERT(!"Unknown value type");
+                        LUAU_UNREACHABLE(); // improves switch() codegen by eliding opcode bounds checks
                     }
 
                     // slow-path: tables with metatables and userdata values
@@ -1426,7 +1356,7 @@ static void luau_execute(lua_State* L)
                                 int res = int(top - base);
                                 L->top = top + 3;
 
-                                VM_PROTECT(luau_callTM(L, 2, res));
+                                VM_PROTECT(luaV_callTM(L, 2, res));
                                 pc += l_isfalse(&base[res]) ? LUAU_INSN_D(insn) : 1;
                                 LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                                 VM_NEXT();
@@ -1435,7 +1365,9 @@ static void luau_execute(lua_State* L)
                         // slow path after switch()
                         break;
 
-                    default:;
+                    default:
+                        LUAU_ASSERT(!"Unknown value type");
+                        LUAU_UNREACHABLE(); // improves switch() codegen by eliding opcode bounds checks
                     }
 
                     // slow-path: tables with metatables and userdata values
@@ -1621,7 +1553,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 2, rc);
                         L->top = top + 3;
 
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -1667,7 +1599,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 2, rc);
                         L->top = top + 3;
 
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -1728,7 +1660,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 2, rc);
                         L->top = top + 3;
 
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -1789,7 +1721,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 2, rc);
                         L->top = top + 3;
 
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -1921,7 +1853,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 2, kv);
                         L->top = top + 3;
 
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -1967,7 +1899,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 2, kv);
                         L->top = top + 3;
 
-                        VM_PROTECT(luau_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -2084,7 +2016,7 @@ static void luau_execute(lua_State* L)
 
                 StkId ra = VM_REG(LUAU_INSN_A(insn));
 
-                setobjs2s(L, ra, base + b);
+                setobj2s(L, ra, base + b);
                 VM_PROTECT(luaC_checkGC(L));
                 VM_NEXT();
             }
@@ -2131,7 +2063,7 @@ static void luau_execute(lua_State* L)
                         setobj2s(L, top + 1, rb);
                         L->top = top + 2;
 
-                        VM_PROTECT(luau_callTM(L, 1, LUAU_INSN_A(insn)));
+                        VM_PROTECT(luaV_callTM(L, 1, LUAU_INSN_A(insn)));
                         VM_NEXT();
                     }
                     else
@@ -2190,6 +2122,7 @@ static void luau_execute(lua_State* L)
                 int b = LUAU_INSN_B(insn);
                 uint32_t aux = *pc++;
 
+				VM_PROTECT_PC(); // luaH_new may fail due to OOM
                 Table *tnew = luaH_new(L, aux, b == 0 ? 0 : (1 << (b - 1)));
                 sethvalue(L, ra, tnew);
                 profiletable(L, tnew, pc);
@@ -2205,6 +2138,7 @@ static void luau_execute(lua_State* L)
                 StkId ra = VM_REG(LUAU_INSN_A(insn));
                 TValue* kv = VM_KV(LUAU_INSN_D(insn));
 
+				VM_PROTECT_PC(); // luaH_clone may fail due to OOM
                 lualock_table(hvalue(kv));
                 Table *tnew = luaH_clone(L, hvalue(kv));
                 sethvalue(L, ra, tnew);
@@ -2232,13 +2166,18 @@ static void luau_execute(lua_State* L)
 
                 Table* h = hvalue(ra);
 
+                // TODO: we really don't need this anymore
                 if (!ttistable(ra))
                     return; // temporary workaround to weaken a rather powerful exploitation primitive in case of a MITM attack on bytecode
 
                 lualock_table(h);
                 int last = index + c - 1;
                 if (last > h->sizearray)
+                {
+                    VM_PROTECT_PC(); // luaH_resizearray may fail due to OOM
+
                     luaH_resizearray(L, h, last);
+                }
 
                 TValue* array = h->array;
 
@@ -2261,7 +2200,7 @@ static void luau_execute(lua_State* L)
                     // Note: this doesn't reallocate stack so we don't need to recompute ra/base
                     VM_PROTECT_PC();
 
-                    luau_prepareFORN(L, ra + 0, ra + 1, ra + 2);
+                    luaV_prepareFORN(L, ra + 0, ra + 1, ra + 2);
                 }
 
                 double limit = nvalue(ra + 0);
@@ -2331,7 +2270,8 @@ static void luau_execute(lua_State* L)
                         // protect against __iter returning nil, since nil is used as a marker for builtin iteration in FORGLOOP
                         if (ttisnil(ra))
                         {
-                            VM_PROTECT(luaG_typeerror(L, ra, "call"));
+                            VM_PROTECT_PC(); // next call always errors
+                            luaG_typeerror(L, ra, "call");
                         }
                     }
                     else if (fasttm(L, mt, TM_CALL))
@@ -2348,7 +2288,8 @@ static void luau_execute(lua_State* L)
                     }
                     else
                     {
-                        VM_PROTECT(luaG_typeerror(L, ra, "iterate over"));
+                        VM_PROTECT_PC(); // next call always errors
+                        luaG_typeerror(L, ra, "iterate over");
                     }
                 }
 
@@ -2434,9 +2375,9 @@ static void luau_execute(lua_State* L)
                 else
                 {
                     // note: it's safe to push arguments past top for complicated reasons (see top of the file)
-                    setobjs2s(L, ra + 3 + 2, ra + 2);
-                    setobjs2s(L, ra + 3 + 1, ra + 1);
-                    setobjs2s(L, ra + 3, ra);
+                    setobj2s(L, ra + 3 + 2, ra + 2);
+                    setobj2s(L, ra + 3 + 1, ra + 1);
+                    setobj2s(L, ra + 3, ra);
 
                     L->top = ra + 3 + 3; // func + 2 args (state and index)
                     LUAU_ASSERT(L->top <= L->stack_last);
@@ -2448,7 +2389,7 @@ static void luau_execute(lua_State* L)
                     ra = VM_REG(LUAU_INSN_A(insn));
 
                     // copy first variable back into the iteration index
-                    setobjs2s(L, ra + 2, ra + 3);
+                    setobj2s(L, ra + 2, ra + 3);
 
                     // note that we need to increment pc by 1 to exit the loop since we need to skip over aux
                     pc += ttisnil(ra + 3) ? 1 : LUAU_INSN_D(insn);
@@ -2471,7 +2412,8 @@ static void luau_execute(lua_State* L)
                 }
                 else if (!ttisfunction(ra))
                 {
-                    VM_PROTECT(luaG_typeerror(L, ra, "iterate over"));
+                    VM_PROTECT_PC(); // next call always errors
+                    luaG_typeerror(L, ra, "iterate over");
                 }
 
                 pc += LUAU_INSN_D(insn);
@@ -2479,54 +2421,10 @@ static void luau_execute(lua_State* L)
                 VM_NEXT();
             }
 
-            VM_CASE(LOP_FORGLOOP_INEXT)
+            VM_CASE(LOP_DEP_FORGLOOP_INEXT)
             {
-                VM_INTERRUPT();
-                Instruction insn = *pc++;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-
-                // fast-path: ipairs/inext
-                if (ttisnil(ra) && ttistable(ra + 1) && ttislightuserdata(ra + 2))
-                {
-                    Table* h = hvalue(ra + 1);
-                    int index = int(reinterpret_cast<uintptr_t>(pvalue(ra + 2)));
-
-                    // if 1-based index of the last iteration is in bounds, this means 0-based index of the current iteration is in bounds
-                    if (unsigned(index) < unsigned(h->sizearray))
-                    {
-                        // note that nil elements inside the array terminate the traversal
-                        if (!ttisnil(&h->array[index]))
-                        {
-                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)));
-                            setnvalue(ra + 3, double(index + 1));
-                            setobj2s(L, ra + 4, &h->array[index]);
-
-                            pc += LUAU_INSN_D(insn);
-                            LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                            VM_NEXT();
-                        }
-                        else
-                        {
-                            // fallthrough to exit
-                            VM_NEXT();
-                        }
-                    }
-                    else
-                    {
-                        // fallthrough to exit
-                        VM_NEXT();
-                    }
-                }
-                else
-                {
-                    // slow-path; can call Lua/C generators
-                    bool stop;
-                    VM_PROTECT(stop = luau_loopFORG(L, LUAU_INSN_A(insn), 2));
-
-                    pc += stop ? 0 : LUAU_INSN_D(insn);
-                    LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                    VM_NEXT();
-                }
+                LUAU_ASSERT(!"Unsupported deprecated opcode");
+                LUAU_UNREACHABLE();
             }
 
             VM_CASE(LOP_FORGPREP_NEXT)
@@ -2543,7 +2441,8 @@ static void luau_execute(lua_State* L)
                 }
                 else if (!ttisfunction(ra))
                 {
-                    VM_PROTECT(luaG_typeerror(L, ra, "iterate over"));
+                    VM_PROTECT_PC(); // next call always errors
+                    luaG_typeerror(L, ra, "iterate over");
                 }
 
                 pc += LUAU_INSN_D(insn);
@@ -2551,70 +2450,10 @@ static void luau_execute(lua_State* L)
                 VM_NEXT();
             }
 
-            VM_CASE(LOP_FORGLOOP_NEXT)
+            VM_CASE(LOP_DEP_FORGLOOP_NEXT)
             {
-                VM_INTERRUPT();
-                Instruction insn = *pc++;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-
-                // fast-path: pairs/next
-                if (ttisnil(ra) && ttistable(ra + 1) && ttislightuserdata(ra + 2))
-                {
-                    Table* h = hvalue(ra + 1);
-                    int index = int(reinterpret_cast<uintptr_t>(pvalue(ra + 2)));
-
-                    int sizearray = h->sizearray;
-                    int sizenode = 1 << h->lsizenode;
-
-                    // first we advance index through the array portion
-                    while (unsigned(index) < unsigned(sizearray))
-                    {
-                        if (!ttisnil(&h->array[index]))
-                        {
-                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)));
-                            setnvalue(ra + 3, double(index + 1));
-                            setobj2s(L, ra + 4, &h->array[index]);
-
-                            pc += LUAU_INSN_D(insn);
-                            LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                            VM_NEXT();
-                        }
-
-                        index++;
-                    }
-
-                    // then we advance index through the hash portion
-                    while (unsigned(index - sizearray) < unsigned(sizenode))
-                    {
-                        LuaNode* n = &h->node[index - sizearray];
-
-                        if (!ttisnil(gval(n)))
-                        {
-                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)));
-                            getnodekey(L, ra + 3, n);
-                            setobj2s(L, ra + 4, gval(n));
-
-                            pc += LUAU_INSN_D(insn);
-                            LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                            VM_NEXT();
-                        }
-
-                        index++;
-                    }
-
-                    // fallthrough to exit
-                    VM_NEXT();
-                }
-                else
-                {
-                    // slow-path; can call Lua/C generators
-                    bool stop;
-                    VM_PROTECT(stop = luau_loopFORG(L, LUAU_INSN_A(insn), 2));
-
-                    pc += stop ? 0 : LUAU_INSN_D(insn);
-                    LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                    VM_NEXT();
-                }
+                LUAU_ASSERT(!"Unsupported deprecated opcode");
+                LUAU_UNREACHABLE();
             }
 
             VM_CASE(LOP_GETVARARGS)
@@ -2629,7 +2468,7 @@ static void luau_execute(lua_State* L)
                     StkId ra = VM_REG(LUAU_INSN_A(insn)); // previous call may change the stack
 
                     for (int j = 0; j < n; j++)
-                        setobjs2s(L, ra + j, base - n + j);
+                        setobj2s(L, ra + j, base - n + j);
 
                     L->top = ra + n;
                     VM_NEXT();
@@ -2639,7 +2478,7 @@ static void luau_execute(lua_State* L)
                     StkId ra = VM_REG(LUAU_INSN_A(insn));
 
                     for (int j = 0; j < b && j < n; j++)
-                        setobjs2s(L, ra + j, base - n + j);
+                        setobj2s(L, ra + j, base - n + j);
                     for (int j = n; j < b; j++)
                         setnilvalue(ra + j);
                     VM_NEXT();
@@ -2653,6 +2492,8 @@ static void luau_execute(lua_State* L)
                 TValue* kv = VM_KV(LUAU_INSN_D(insn));
 
                 Closure* kcl = clvalue(kv);
+
+                VM_PROTECT_PC(); // luaF_newLclosure may fail due to OOM
 
                 // clone closure if the environment is not shared
                 // note: we save closure to stack early in case the code below wants to capture it by value
@@ -2718,7 +2559,7 @@ static void luau_execute(lua_State* L)
 
                 for (int i = 0; i < numparams; ++i)
                 {
-                    setobjs2s(L, base + i, fixed + i);
+                    setobj2s(L, base + i, fixed + i);
                     setnilvalue(fixed + i);
                 }
 
@@ -2780,15 +2621,18 @@ static void luau_execute(lua_State* L)
                 nparams = (nparams == LUA_MULTRET) ? int(L->top - ra - 1) : nparams;
 
                 luau_FastFunction f = luauF_table[bfid];
+                LUAU_ASSERT(f);
 
-                if (cl->env->safeenv && f)
+                if (cl->env->safeenv)
                 {
-                    VM_PROTECT_PC();
+                    VM_PROTECT_PC(); // f may fail due to OOM
 
                     int n = f(L, ra, ra + 1, nresults, ra + 2, nparams);
 
                     if (n >= 0)
                     {
+                        // when nresults != MULTRET, L->top might be pointing to the middle of stack frame if nparams is equal to MULTRET
+                        // instead of restoring L->top to L->ci->top if nparams is MULTRET, we do it unconditionally to skip an extra check
                         L->top = (nresults == LUA_MULTRET) ? ra + n : L->ci->top;
 
                         pc += skip + 1; // skip instructions that compute function as well as CALL
@@ -2826,94 +2670,16 @@ static void luau_execute(lua_State* L)
                 LUAU_UNREACHABLE();
             }
 
-            VM_CASE(LOP_JUMPIFEQK)
+            VM_CASE(LOP_DEP_JUMPIFEQK)
             {
-                Instruction insn = *pc++;
-                uint32_t aux = *pc;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-                TValue* rb = VM_KV(aux);
-
-                // Note that all jumps below jump by 1 in the "false" case to skip over aux
-                if (ttype(ra) == ttype(rb))
-                {
-                    switch (ttype(ra))
-                    {
-                    case LUA_TNIL:
-                        pc += LUAU_INSN_D(insn);
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    case LUA_TBOOLEAN:
-                        pc += bvalue(ra) == bvalue(rb) ? LUAU_INSN_D(insn) : 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    case LUA_TNUMBER:
-                        pc += nvalue(ra) == nvalue(rb) ? LUAU_INSN_D(insn) : 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    case LUA_TSTRING:
-                        pc += gcvalue(ra) == gcvalue(rb) ? LUAU_INSN_D(insn) : 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    default:;
-                    }
-
-                    LUAU_ASSERT(!"Constant is expected to be of primitive type");
-                }
-                else
-                {
-                    pc += 1;
-                    LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                    VM_NEXT();
-                }
+                LUAU_ASSERT(!"Unsupported deprecated opcode");
+                LUAU_UNREACHABLE();
             }
 
-            VM_CASE(LOP_JUMPIFNOTEQK)
+            VM_CASE(LOP_DEP_JUMPIFNOTEQK)
             {
-                Instruction insn = *pc++;
-                uint32_t aux = *pc;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-                TValue* rb = VM_KV(aux);
-
-                // Note that all jumps below jump by 1 in the "true" case to skip over aux
-                if (ttype(ra) == ttype(rb))
-                {
-                    switch (ttype(ra))
-                    {
-                    case LUA_TNIL:
-                        pc += 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    case LUA_TBOOLEAN:
-                        pc += bvalue(ra) != bvalue(rb) ? LUAU_INSN_D(insn) : 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    case LUA_TNUMBER:
-                        pc += nvalue(ra) != nvalue(rb) ? LUAU_INSN_D(insn) : 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    case LUA_TSTRING:
-                        pc += gcvalue(ra) != gcvalue(rb) ? LUAU_INSN_D(insn) : 1;
-                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                        VM_NEXT();
-
-                    default:;
-                    }
-
-                    LUAU_ASSERT(!"Constant is expected to be of primitive type");
-                }
-                else
-                {
-                    pc += LUAU_INSN_D(insn);
-                    LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
-                    VM_NEXT();
-                }
+                LUAU_ASSERT(!"Unsupported deprecated opcode");
+                LUAU_UNREACHABLE();
             }
 
             VM_CASE(LOP_FASTCALL1)
@@ -2934,16 +2700,18 @@ static void luau_execute(lua_State* L)
                 int nresults = LUAU_INSN_C(call) - 1;
 
                 luau_FastFunction f = luauF_table[bfid];
+                LUAU_ASSERT(f);
 
-                if (cl->env->safeenv && f)
+                if (cl->env->safeenv)
                 {
-                    VM_PROTECT_PC();
+                    VM_PROTECT_PC(); // f may fail due to OOM
 
                     int n = f(L, ra, arg, nresults, NULL, nparams);
 
                     if (n >= 0)
                     {
-                        L->top = (nresults == LUA_MULTRET) ? ra + n : L->ci->top;
+                        if (nresults == LUA_MULTRET)
+                            L->top = ra + n;
 
                         pc += skip + 1; // skip instructions that compute function as well as CALL
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -2982,16 +2750,18 @@ static void luau_execute(lua_State* L)
                 int nresults = LUAU_INSN_C(call) - 1;
 
                 luau_FastFunction f = luauF_table[bfid];
+                LUAU_ASSERT(f);
 
-                if (cl->env->safeenv && f)
+                if (cl->env->safeenv)
                 {
-                    VM_PROTECT_PC();
+                    VM_PROTECT_PC(); // f may fail due to OOM
 
                     int n = f(L, ra, arg1, nresults, arg2, nparams);
 
                     if (n >= 0)
                     {
-                        L->top = (nresults == LUA_MULTRET) ? ra + n : L->ci->top;
+                        if (nresults == LUA_MULTRET)
+                            L->top = ra + n;
 
                         pc += skip + 1; // skip instructions that compute function as well as CALL
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -3030,16 +2800,18 @@ static void luau_execute(lua_State* L)
                 int nresults = LUAU_INSN_C(call) - 1;
 
                 luau_FastFunction f = luauF_table[bfid];
+                LUAU_ASSERT(f);
 
-                if (cl->env->safeenv && f)
+                if (cl->env->safeenv)
                 {
-                    VM_PROTECT_PC();
+                    VM_PROTECT_PC(); // f may fail due to OOM
 
                     int n = f(L, ra, arg1, nresults, arg2, nparams);
 
                     if (n >= 0)
                     {
-                        L->top = (nresults == LUA_MULTRET) ? ra + n : L->ci->top;
+                        if (nresults == LUA_MULTRET)
+                            L->top = ra + n;
 
                         pc += skip + 1; // skip instructions that compute function as well as CALL
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -3497,7 +3269,16 @@ static void luau_execute(lua_State* L)
                 TValue* kv = VM_KV(aux & 0xffffff);
                 LUAU_ASSERT(ttisnumber(kv));
 
+#if defined(__aarch64__)
+                // On several ARM chips (Apple M1/M2, Neoverse N1), comparing the result of a floating-point comparison is expensive, and a branch
+                // is much cheaper; on some 32-bit ARM chips (Cortex A53) the performance is about the same so we prefer less branchy variant there
+                if (aux >> 31)
+                    pc += !(ttisnumber(ra) && nvalue(ra) == nvalue(kv)) ? LUAU_INSN_D(insn) : 1;
+                else
+                    pc += (ttisnumber(ra) && nvalue(ra) == nvalue(kv)) ? LUAU_INSN_D(insn) : 1;
+#else
                 pc += int(ttisnumber(ra) && nvalue(ra) == nvalue(kv)) != (aux >> 31) ? LUAU_INSN_D(insn) : 1;
+#endif
                 LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                 VM_NEXT();
             }
@@ -3538,7 +3319,7 @@ int luau_precall(lua_State* L, StkId func, int nresults)
 {
     if (!ttisfunction(func))
     {
-        luau_tryfuncTM(L, func);
+        luaV_tryfuncTM(L, func);
         // L->top is incremented by tryfuncTM
     }
 
@@ -3600,7 +3381,7 @@ int luau_precall(lua_State* L, StkId func, int nresults)
 
         int i;
         for (i = nresults; i != 0 && vali < valend; i--)
-            setobjs2s(L, res++, vali++);
+            setobj2s(L, res++, vali++);
         while (i-- > 0)
             setnilvalue(res++);
 
@@ -3631,7 +3412,7 @@ void luau_poscall(lua_State* L, StkId first)
 
     int i;
     for (i = ci->nresults; i != 0 && vali < valend; i--)
-        setobjs2s(L, res++, vali++);
+        setobj2s(L, res++, vali++);
     while (i-- > 0)
         setnilvalue(res++);
 

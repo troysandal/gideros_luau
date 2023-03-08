@@ -3,11 +3,13 @@
 
 #include "Luau/Error.h"
 #include "Luau/Location.h"
+#include "Luau/ParseOptions.h"
 #include "Luau/Scope.h"
+#include "Luau/Substitution.h"
 #include "Luau/TxnLog.h"
 #include "Luau/TypeArena.h"
-#include "Luau/TypeInfer.h"
 #include "Luau/UnifierSharedState.h"
+#include "Normalize.h"
 
 #include <unordered_set>
 
@@ -23,10 +25,13 @@ enum Variance
 // A substitution which replaces singleton types by their wider types
 struct Widen : Substitution
 {
-    Widen(TypeArena* arena)
+    Widen(TypeArena* arena, NotNull<BuiltinTypes> builtinTypes)
         : Substitution(TxnLog::empty(), arena)
+        , builtinTypes(builtinTypes)
     {
     }
+
+    NotNull<BuiltinTypes> builtinTypes;
 
     bool isDirty(TypeId ty) override;
     bool isDirty(TypePackId ty) override;
@@ -47,6 +52,8 @@ struct UnifierOptions
 struct Unifier
 {
     TypeArena* const types;
+    NotNull<BuiltinTypes> builtinTypes;
+    NotNull<Normalizer> normalizer;
     Mode mode;
 
     NotNull<Scope> scope; // const Scope maybe
@@ -54,12 +61,21 @@ struct Unifier
     ErrorVec errors;
     Location location;
     Variance variance = Covariant;
-    bool anyIsTop = false; // If true, we consider any to be a top type.  If false, it is a familiar but weird mix of top and bottom all at once.
+    bool normalize = true;      // Normalize unions and intersections if necessary
+    bool checkInhabited = true; // Normalize types to check if they are inhabited
+    bool useScopes = false;     // If true, we use the scope hierarchy rather than TypeLevels
     CountMismatch::Context ctx = CountMismatch::Arg;
 
     UnifierSharedState& sharedState;
 
-    Unifier(TypeArena* types, Mode mode, NotNull<Scope> scope, const Location& location, Variance variance, UnifierSharedState& sharedState, TxnLog* parentLog = nullptr);
+    // When the Unifier is forced to unify two blocked types (or packs), they
+    // get added to these vectors.  The ConstraintSolver can use this to know
+    // when it is safe to reattempt dispatching a constraint.
+    std::vector<TypeId> blockedTypes;
+    std::vector<TypePackId> blockedTypePacks;
+
+    Unifier(
+        NotNull<Normalizer> normalizer, Mode mode, NotNull<Scope> scope, const Location& location, Variance variance, TxnLog* parentLog = nullptr);
 
     // Test whether the two type vars unify.  Never commits the result.
     ErrorVec canUnify(TypeId subTy, TypeId superTy);
@@ -73,10 +89,12 @@ struct Unifier
 
 private:
     void tryUnify_(TypeId subTy, TypeId superTy, bool isFunctionCall = false, bool isIntersection = false);
-    void tryUnifyUnionWithType(TypeId subTy, const UnionTypeVar* uv, TypeId superTy);
-    void tryUnifyTypeWithUnion(TypeId subTy, TypeId superTy, const UnionTypeVar* uv, bool cacheEnabled, bool isFunctionCall);
-    void tryUnifyTypeWithIntersection(TypeId subTy, TypeId superTy, const IntersectionTypeVar* uv);
-    void tryUnifyIntersectionWithType(TypeId subTy, const IntersectionTypeVar* uv, TypeId superTy, bool cacheEnabled, bool isFunctionCall);
+    void tryUnifyUnionWithType(TypeId subTy, const UnionType* uv, TypeId superTy);
+    void tryUnifyTypeWithUnion(TypeId subTy, TypeId superTy, const UnionType* uv, bool cacheEnabled, bool isFunctionCall);
+    void tryUnifyTypeWithIntersection(TypeId subTy, TypeId superTy, const IntersectionType* uv);
+    void tryUnifyIntersectionWithType(TypeId subTy, const IntersectionType* uv, TypeId superTy, bool cacheEnabled, bool isFunctionCall);
+    void tryUnifyNormalizedTypes(TypeId subTy, TypeId superTy, const NormalizedType& subNorm, const NormalizedType& superNorm, std::string reason,
+        std::optional<TypeError> error = std::nullopt);
     void tryUnifyPrimitives(TypeId subTy, TypeId superTy);
     void tryUnifySingletons(TypeId subTy, TypeId superTy);
     void tryUnifyFunctions(TypeId subTy, TypeId superTy, bool isFunctionCall = false);
@@ -84,6 +102,9 @@ private:
     void tryUnifyScalarShape(TypeId subTy, TypeId superTy, bool reversed);
     void tryUnifyWithMetatable(TypeId subTy, TypeId superTy, bool reversed);
     void tryUnifyWithClass(TypeId subTy, TypeId superTy, bool reversed);
+    void tryUnifyNegations(TypeId subTy, TypeId superTy);
+
+    TypePackId tryApplyOverloadedFunction(TypeId function, const NormalizedFunctionType& overloads, TypePackId args);
 
     TypeId widen(TypeId ty);
     TypePackId widen(TypePackId tp);
@@ -105,12 +126,10 @@ private:
 
     std::optional<TypeId> findTablePropertyRespectingMeta(TypeId lhsType, Name name);
 
-    void tryUnifyWithConstrainedSubTypeVar(TypeId subTy, TypeId superTy);
-    void tryUnifyWithConstrainedSuperTypeVar(TypeId subTy, TypeId superTy);
+    TxnLog combineLogsIntoIntersection(std::vector<TxnLog> logs);
+    TxnLog combineLogsIntoUnion(std::vector<TxnLog> logs);
 
 public:
-    void unifyLowerBound(TypePackId subTy, TypePackId superTy, TypeLevel demotedLevel);
-
     // Returns true if the type "needle" already occurs within "haystack" and reports an "infinite type error"
     bool occursCheck(TypeId needle, TypeId haystack);
     bool occursCheck(DenseHashSet<TypeId>& seen, TypeId needle, TypeId haystack);
@@ -120,9 +139,11 @@ public:
     Unifier makeChildUnifier();
 
     void reportError(TypeError err);
+    LUAU_NOINLINE void reportError(Location location, TypeErrorData data);
 
 private:
     bool isNonstrictMode() const;
+    TypeMismatch::Context mismatchContext();
 
     void checkChildUnifierTypeMismatch(const ErrorVec& innerErrors, TypeId wantedType, TypeId givenType);
     void checkChildUnifierTypeMismatch(const ErrorVec& innerErrors, const std::string& prop, TypeId wantedType, TypeId givenType);
@@ -134,6 +155,7 @@ private:
     std::optional<int> firstPackErrorPos;
 };
 
-void promoteTypeLevels(TxnLog& log, const TypeArena* arena, TypeLevel minLevel, TypePackId tp);
+void promoteTypeLevels(TxnLog& log, const TypeArena* arena, TypeLevel minLevel, Scope* outerScope, bool useScope, TypePackId tp);
+std::optional<TypeError> hasUnificationTooComplex(const ErrorVec& errors);
 
 } // namespace Luau

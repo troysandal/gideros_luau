@@ -1,7 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 
 #include "Fixture.h"
 
@@ -77,7 +77,7 @@ TEST_CASE_FIXTURE(Fixture, "function_return_annotations_are_checked")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId fiftyType = requireType("fifty");
-    const FunctionTypeVar* ftv = get<FunctionTypeVar>(fiftyType);
+    const FunctionType* ftv = get<FunctionType>(fiftyType);
     REQUIRE(ftv != nullptr);
 
     TypePackId retPack = follow(ftv->retTypes);
@@ -182,8 +182,8 @@ TEST_CASE_FIXTURE(Fixture, "table_annotation")
     )");
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    CHECK_EQ(PrimitiveTypeVar::Number, getPrimitiveType(follow(requireType("y"))));
-    CHECK_EQ(PrimitiveTypeVar::String, getPrimitiveType(follow(requireType("z"))));
+    CHECK_EQ(PrimitiveType::Number, getPrimitiveType(follow(requireType("y"))));
+    CHECK_EQ(PrimitiveType::String, getPrimitiveType(follow(requireType("z"))));
 }
 
 TEST_CASE_FIXTURE(Fixture, "function_annotation")
@@ -196,7 +196,7 @@ TEST_CASE_FIXTURE(Fixture, "function_annotation")
     dumpErrors(result);
 
     TypeId fType = requireType("f");
-    const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(fType));
+    const FunctionType* ftv = get<FunctionType>(follow(fType));
 
     REQUIRE(ftv != nullptr);
 }
@@ -208,7 +208,7 @@ TEST_CASE_FIXTURE(Fixture, "function_annotation_with_a_defined_function")
     )");
 
     TypeId fType = requireType("f");
-    const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(fType));
+    const FunctionType* ftv = get<FunctionType>(follow(fType));
 
     REQUIRE(ftv != nullptr);
     LUAU_REQUIRE_NO_ERRORS(result);
@@ -319,17 +319,17 @@ TEST_CASE_FIXTURE(Fixture, "self_referential_type_alias")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    std::optional<TypeFun> res = getMainModule()->getModuleScope()->lookupType("O");
+    std::optional<TypeId> res = lookupType("O");
     REQUIRE(res);
 
-    TypeId oType = follow(res->type);
-    const TableTypeVar* oTable = get<TableTypeVar>(oType);
+    TypeId oType = follow(*res);
+    const TableType* oTable = get<TableType>(oType);
     REQUIRE(oTable);
 
     std::optional<Property> incr = get(oTable->props, "incr");
     REQUIRE(incr);
 
-    const FunctionTypeVar* incrFunc = get<FunctionTypeVar>(incr->type);
+    const FunctionType* incrFunc = get<FunctionType>(incr->type);
     REQUIRE(incrFunc);
 
     std::optional<TypeId> firstArg = first(incrFunc->argTypes);
@@ -347,6 +347,8 @@ TEST_CASE_FIXTURE(Fixture, "define_generic_type_alias")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     ModulePtr mainModule = getMainModule();
+    REQUIRE(mainModule);
+    REQUIRE(mainModule->hasModuleScope());
 
     auto it = mainModule->getModuleScope()->privateTypeBindings.find("Array");
     REQUIRE(it != mainModule->getModuleScope()->privateTypeBindings.end());
@@ -441,7 +443,7 @@ TEST_CASE_FIXTURE(Fixture, "corecursive_types_error_on_tight_loop")
     )");
 
     TypeId fType = requireType("aa");
-    const AnyTypeVar* ftv = get<AnyTypeVar>(follow(fType));
+    const AnyType* ftv = get<AnyType>(follow(fType));
     REQUIRE(ftv != nullptr);
     REQUIRE(!result.errors.empty());
 }
@@ -475,15 +477,15 @@ TEST_CASE_FIXTURE(Fixture, "interface_types_belong_to_interface_arena")
 
     Module& mod = *getMainModule();
 
-    const TypeFun& a = mod.getModuleScope()->exportedTypeBindings["A"];
+    const TypeFun& a = mod.exportedTypeBindings["A"];
 
     CHECK(isInArena(a.type, mod.interfaceTypes));
     CHECK(!isInArena(a.type, typeChecker.globalTypes));
 
-    std::optional<TypeId> exportsType = first(mod.getModuleScope()->returnType);
+    std::optional<TypeId> exportsType = first(mod.returnType);
     REQUIRE(exportsType);
 
-    TableTypeVar* exportsTable = getMutable<TableTypeVar>(*exportsType);
+    TableType* exportsTable = getMutable<TableType>(*exportsType);
     REQUIRE(exportsTable != nullptr);
 
     TypeId n = exportsTable->props["n"].type;
@@ -501,7 +503,7 @@ TEST_CASE_FIXTURE(Fixture, "generic_aliases_are_cloned_properly")
     dumpErrors(result);
 
     Module& mod = *getMainModule();
-    const auto& typeBindings = mod.getModuleScope()->exportedTypeBindings;
+    const auto& typeBindings = mod.exportedTypeBindings;
 
     auto it = typeBindings.find("Array");
     REQUIRE(typeBindings.end() != it);
@@ -509,7 +511,7 @@ TEST_CASE_FIXTURE(Fixture, "generic_aliases_are_cloned_properly")
 
     REQUIRE_EQ(1, array.typeParams.size());
 
-    const TableTypeVar* arrayTable = get<TableTypeVar>(array.type);
+    const TableType* arrayTable = get<TableType>(array.type);
     REQUIRE(arrayTable != nullptr);
 
     CHECK_EQ(0, arrayTable->props.size());
@@ -533,12 +535,12 @@ TEST_CASE_FIXTURE(Fixture, "cloned_interface_maintains_pointers_between_definiti
 
     Module& mod = *getMainModule();
 
-    TypeId recordType = mod.getModuleScope()->exportedTypeBindings["Record"].type;
+    TypeId recordType = mod.exportedTypeBindings["Record"].type;
 
-    std::optional<TypeId> exportsType = first(mod.getModuleScope()->returnType);
+    std::optional<TypeId> exportsType = first(mod.returnType);
     REQUIRE(exportsType);
 
-    TableTypeVar* exportsTable = getMutable<TableTypeVar>(*exportsType);
+    TableType* exportsTable = getMutable<TableType>(*exportsType);
     REQUIRE(exportsTable != nullptr);
 
     TypeId aType = exportsTable->props["a"].type;
@@ -557,7 +559,7 @@ TEST_CASE_FIXTURE(Fixture, "cloned_interface_maintains_pointers_between_definiti
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "use_type_required_from_another_file")
 {
-    addGlobalBinding(frontend.typeChecker, "script", frontend.typeChecker.anyType, "@test");
+    addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
 
     fileResolver.source["Modules/Main"] = R"(
         --!strict
@@ -583,7 +585,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "use_type_required_from_another_file")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cannot_use_nonexported_type")
 {
-    addGlobalBinding(frontend.typeChecker, "script", frontend.typeChecker.anyType, "@test");
+    addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
 
     fileResolver.source["Modules/Main"] = R"(
         --!strict
@@ -609,7 +611,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "cannot_use_nonexported_type")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "builtin_types_are_not_exported")
 {
-    addGlobalBinding(frontend.typeChecker, "script", frontend.typeChecker.anyType, "@test");
+    addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
 
     fileResolver.source["Modules/Main"] = R"(
         --!strict
@@ -657,56 +659,15 @@ struct AssertionCatcher
 int AssertionCatcher::tripped;
 } // namespace
 
-TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice")
-{
-    ScopedFastFlag sffs[] = {
-        {"DebugLuauMagicTypes", true},
-        {"LuauUseInternalCompilerErrorException", false},
-    };
-
-    AssertionCatcher ac;
-
-    CHECK_THROWS_AS(check(R"(
-            local a: _luau_ice = 55
-        )"),
-        std::runtime_error);
-
-    LUAU_ASSERT(1 == AssertionCatcher::tripped);
-}
-
-TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_handler")
-{
-    ScopedFastFlag sffs[] = {
-        {"DebugLuauMagicTypes", true},
-        {"LuauUseInternalCompilerErrorException", false},
-    };
-
-    bool caught = false;
-
-    frontend.iceHandler.onInternalError = [&](const char*) {
-        caught = true;
-    };
-
-    CHECK_THROWS_AS(check(R"(
-            local a: _luau_ice = 55
-        )"),
-        std::runtime_error);
-
-    CHECK_EQ(true, caught);
-}
-
 TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_exception_with_flag")
 {
-    ScopedFastFlag sffs[] = {
-        {"DebugLuauMagicTypes", true},
-        {"LuauUseInternalCompilerErrorException", true},
-    };
+    ScopedFastFlag sffs{"DebugLuauMagicTypes", true};
 
     AssertionCatcher ac;
 
     CHECK_THROWS_AS(check(R"(
-            local a: _luau_ice = 55
-        )"),
+        local a: _luau_ice = 55
+    )"),
         InternalCompilerError);
 
     LUAU_ASSERT(1 == AssertionCatcher::tripped);
@@ -714,10 +675,7 @@ TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_exception_with_flag")
 
 TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_exception_with_flag_handler")
 {
-    ScopedFastFlag sffs[] = {
-        {"DebugLuauMagicTypes", true},
-        {"LuauUseInternalCompilerErrorException", true},
-    };
+    ScopedFastFlag sffs{"DebugLuauMagicTypes", true};
 
     bool caught = false;
 
@@ -726,8 +684,8 @@ TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_exception_with_flag_handler
     };
 
     CHECK_THROWS_AS(check(R"(
-            local a: _luau_ice = 55
-        )"),
+        local a: _luau_ice = 55
+    )"),
         InternalCompilerError);
 
     CHECK_EQ(true, caught);
@@ -745,7 +703,12 @@ TEST_CASE_FIXTURE(Fixture, "luau_ice_is_not_special_without_the_flag")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "luau_print_is_magic_if_the_flag_is_set")
 {
-    // Luau::resetPrintLine();
+    static std::vector<std::string> output;
+    output.clear();
+    Luau::setPrintLine([](const std::string& s) {
+        output.push_back(s);
+    });
+
     ScopedFastFlag sffs{"DebugLuauMagicTypes", true};
 
     CheckResult result = check(R"(
@@ -753,6 +716,8 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "luau_print_is_magic_if_the_flag_is_set")
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
+
+    REQUIRE(1 == output.size());
 }
 
 TEST_CASE_FIXTURE(Fixture, "luau_print_is_not_special_without_the_flag")
@@ -777,8 +742,8 @@ TEST_CASE_FIXTURE(Fixture, "instantiate_type_fun_should_not_trip_rbxassert")
 }
 
 #if 0
-// This is because, after visiting all nodes in a block, we check if each type alias still points to a FreeTypeVar.
-// Doing it that way is wrong, but I also tried to make typeof(x) return a BoundTypeVar, with no luck.
+// This is because, after visiting all nodes in a block, we check if each type alias still points to a FreeType.
+// Doing it that way is wrong, but I also tried to make typeof(x) return a BoundType, with no luck.
 // Not important enough to fix today.
 TEST_CASE_FIXTURE(Fixture, "pulling_a_type_from_value_dont_falsely_create_occurs_check_failed")
 {
@@ -792,7 +757,7 @@ TEST_CASE_FIXTURE(Fixture, "pulling_a_type_from_value_dont_falsely_create_occurs
 }
 #endif
 
-TEST_CASE_FIXTURE(Fixture, "occurs_check_on_cyclic_union_typevar")
+TEST_CASE_FIXTURE(Fixture, "occurs_check_on_cyclic_union_type")
 {
     CheckResult result = check(R"(
         type T = T | T
@@ -804,7 +769,7 @@ TEST_CASE_FIXTURE(Fixture, "occurs_check_on_cyclic_union_typevar")
     REQUIRE(ocf);
 }
 
-TEST_CASE_FIXTURE(Fixture, "occurs_check_on_cyclic_intersection_typevar")
+TEST_CASE_FIXTURE(Fixture, "occurs_check_on_cyclic_intersection_type")
 {
     CheckResult result = check(R"(
         type T = T & T

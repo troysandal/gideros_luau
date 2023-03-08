@@ -132,6 +132,11 @@
 #define LUA_MAXCAPTURES 32
 #endif
 
+// enables callbacks to redirect code execution from Luau VM to a custom implementation
+#ifndef LUA_CUSTOM_EXECUTION
+#define LUA_CUSTOM_EXECUTION 0
+#endif
+
 // }==================================================================
 
 /*
@@ -151,4 +156,4 @@
 
 #define LUA_VECTOR_SIZE 4	/* must be 3 or 4 */
 
-#define LUA_EXTRA_SIZE LUA_VECTOR_SIZE - 2
+#define LUA_EXTRA_SIZE (LUA_VECTOR_SIZE - 2)

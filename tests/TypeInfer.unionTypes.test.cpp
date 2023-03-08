@@ -1,13 +1,10 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 
 #include "Fixture.h"
 
 #include "doctest.h"
-
-LUAU_FASTFLAG(LuauLowerBoundsCalculation)
-LUAU_FASTFLAG(LuauSpecialTypesAsterisked)
 
 using namespace Luau;
 
@@ -29,7 +26,7 @@ TEST_CASE_FIXTURE(Fixture, "return_types_can_be_disjoint")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    const FunctionTypeVar* utv = get<FunctionTypeVar>(requireType("most_of_the_natural_numbers"));
+    const FunctionType* utv = get<FunctionType>(requireType("most_of_the_natural_numbers"));
     REQUIRE(utv != nullptr);
 }
 
@@ -200,10 +197,7 @@ TEST_CASE_FIXTURE(Fixture, "index_on_a_union_type_with_missing_property")
     CHECK_EQ(mup->missing[0], *bTy);
     CHECK_EQ(mup->key, "x");
 
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(requireType("r")));
-    else
-        CHECK_EQ("<error-type>", toString(requireType("r")));
+    CHECK_EQ("*error-type*", toString(requireType("r")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "index_on_a_union_type_with_one_property_of_type_any")
@@ -360,10 +354,7 @@ a.x = 2
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    if (FFlag::LuauLowerBoundsCalculation)
-        CHECK_EQ("Value of type '{| x: number, y: number |}?' could be nil", toString(result.errors[0]));
-    else
-        CHECK_EQ("Value of type '({| x: number |} & {| y: number |})?' could be nil", toString(result.errors[0]));
+    CHECK_EQ("Value of type '({| x: number |} & {| y: number |})?' could be nil", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "optional_length_error")
@@ -402,6 +393,21 @@ local e = a.z
     CHECK_EQ("Key 'y' is missing from 'C', 'D' in the type 'A | B | C | D'", toString(result.errors[2]));
 
     CHECK_EQ("Type 'A | B | C | D' does not have key 'z'", toString(result.errors[3]));
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_iteration")
+{
+    CheckResult result = check(R"(
+function foo(values: {number}?)
+    local s = 0
+    for _, value in values do
+        s += value
+    end
+end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ("Value of type '{number}?' could be nil", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "unify_unsealed_table_union_check")
@@ -532,14 +538,181 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "table_union_write_indirect")
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
     // NOTE: union normalization will improve this message
-    if (FFlag::LuauLowerBoundsCalculation)
-        CHECK_EQ(toString(result.errors[0]), "Type '(string) -> number' could not be converted into '(number) -> string'\n"
-                                             "caused by:\n"
-                                             "  Argument #1 type is not compatible. Type 'number' could not be converted into 'string'");
-    else
-        CHECK_EQ(toString(result.errors[0]),
-            R"(Type '(string) -> number' could not be converted into '((number) -> string) | ((number) -> string)'; none of the union options are compatible)");
+    CHECK_EQ(toString(result.errors[0]),
+        R"(Type '(string) -> number' could not be converted into '((number) -> string) | ((number) -> string)'; none of the union options are compatible)");
 }
 
+TEST_CASE_FIXTURE(Fixture, "union_true_and_false")
+{
+    CheckResult result = check(R"(
+        local x : boolean
+        local y1 : (true | false) = x -- OK
+        local y2 : (true | false | (string & number)) = x -- OK
+        local y3 : (true | (string & number) | false) = x -- OK
+        local y4 : (true | (boolean & true) | false) = x -- OK
+     )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions")
+{
+    CheckResult result = check(R"(
+        local x : (number) -> number?
+        local y : ((number?) -> number?) | ((number) -> number) = x -- OK
+     )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_generic_functions")
+{
+    CheckResult result = check(R"(
+        local x : <a>(a) -> a?
+        local y : (<a>(a?) -> a?) | (<b>(b) -> b) = x -- Not OK
+     )");
+
+    // TODO: should this example typecheck?
+    LUAU_REQUIRE_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_generic_typepack_functions")
+{
+    CheckResult result = check(R"(
+        local x : <a...>(number, a...) -> (number?, a...)
+        local y : (<a...>(number?, a...) -> (number?, a...)) | (<b...>(number, b...) -> (number, b...)) = x -- Not OK
+     )");
+
+    // TODO: should this example typecheck?
+    LUAU_REQUIRE_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_mentioning_generics")
+{
+    CheckResult result = check(R"(
+      function f<a,b>()
+        local x : (a) -> a?
+        local y : ((a?) -> nil) | ((a) -> a) = x -- OK
+        local z : ((b?) -> nil) | ((b) -> b) = x -- Not OK
+      end
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]),
+        "Type '(a) -> a?' could not be converted into '((b) -> b) | ((b?) -> nil)'; none of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_mentioning_generic_typepacks")
+{
+    CheckResult result = check(R"(
+      function f<a...>()
+        local x : (number, a...) -> (number?, a...)
+        local y : ((number | string, a...) -> (number, a...)) | ((number?, a...) -> (nil, a...)) = x -- OK
+        local z : ((number) -> number) | ((number?, a...) -> (number?, a...)) = x -- Not OK
+      end
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]), "Type '(number, a...) -> (number?, a...)' could not be converted into '((number) -> number) | ((number?, "
+                                         "a...) -> (number?, a...))'; none of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_with_mismatching_arg_arities")
+{
+    CheckResult result = check(R"(
+        local x : (number) -> number?
+        local y : ((number?) -> number) | ((number | string) -> nil) = x -- OK
+        local z : ((number, string?) -> number) | ((number) -> nil) = x -- Not OK
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]), "Type '(number) -> number?' could not be converted into '((number) -> nil) | ((number, string?) -> "
+                                         "number)'; none of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_with_mismatching_result_arities")
+{
+    CheckResult result = check(R"(
+        local x : () -> (number | string)
+        local y : (() -> number) | (() -> string) = x -- OK
+        local z : (() -> number) | (() -> (string, string)) = x -- Not OK
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]), "Type '() -> number | string' could not be converted into '(() -> (string, string)) | (() -> number)'; none "
+                                         "of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_with_variadics")
+{
+    CheckResult result = check(R"(
+        local x : (...nil) -> (...number?)
+        local y : ((...string?) -> (...number)) | ((...number?) -> nil) = x -- OK
+        local z : ((...string?) -> (...number)) | ((...string?) -> nil) = x -- OK
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]), "Type '(...nil) -> (...number?)' could not be converted into '((...string?) -> (...number)) | ((...string?) "
+                                         "-> nil)'; none of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_with_mismatching_arg_variadics")
+{
+    CheckResult result = check(R"(
+        local x : (number) -> ()
+        local y : ((number?) -> ()) | ((...number) -> ()) = x -- OK
+        local z : ((number?) -> ()) | ((...number?) -> ()) = x -- Not OK
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]),
+        "Type '(number) -> ()' could not be converted into '((...number?) -> ()) | ((number?) -> ())'; none of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "union_of_functions_with_mismatching_result_variadics")
+{
+    CheckResult result = check(R"(
+        local x : () -> (number?, ...number)
+        local y : (() -> (...number)) | (() -> nil) = x -- OK
+        local z : (() -> (...number)) | (() -> number) = x -- OK
+     )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ(toString(result.errors[0]), "Type '() -> (number?, ...number)' could not be converted into '(() -> (...number)) | (() -> number)'; none "
+                                         "of the union options are compatible");
+}
+
+TEST_CASE_FIXTURE(Fixture, "less_greedy_unification_with_union_types")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local function f(t): { x: number } | { x: string }
+            local x = t.x
+            return t
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ("({| x: number |} | {| x: string |}) -> {| x: number |} | {| x: string |}", toString(requireType("f")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "less_greedy_unification_with_union_types_2")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local function f(t: { x: number } | { x: string })
+            return t.x
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK_EQ("({| x: number |} | {| x: string |}) -> number | string", toString(requireType("f")));
+}
 
 TEST_SUITE_END();

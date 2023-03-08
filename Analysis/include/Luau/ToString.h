@@ -2,13 +2,12 @@
 #pragma once
 
 #include "Luau/Common.h"
-#include "Luau/TypeVar.h"
-#include "Luau/ConstraintGraphBuilder.h"
 
-#include <unordered_map>
-#include <optional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 LUAU_FASTINT(LuauTableTypeMaximumStringifierLength)
 LUAU_FASTINT(LuauTypeMaximumStringifierLength)
@@ -16,9 +15,25 @@ LUAU_FASTINT(LuauTypeMaximumStringifierLength)
 namespace Luau
 {
 
+class AstExpr;
+
+struct Scope;
+
+struct Type;
+using TypeId = const Type*;
+
+struct TypePackVar;
+using TypePackId = const TypePackVar*;
+
+struct FunctionType;
+struct Constraint;
+
+struct Position;
+struct Location;
+
 struct ToStringNameMap
 {
-    std::unordered_map<TypeId, std::string> typeVars;
+    std::unordered_map<TypeId, std::string> types;
     std::unordered_map<TypePackId, std::string> typePacks;
 };
 
@@ -30,11 +45,9 @@ struct ToStringOptions
     bool hideTableKind = false;                   // If true, all tables will be surrounded with plain '{}'
     bool hideNamedFunctionTypeParameters = false; // If true, type parameters of functions will be hidden at top-level.
     bool hideFunctionSelfArgument = false;        // If true, `self: X` will be omitted from the function signature if the function has self
-    bool indent = false;
-    size_t maxTableLength = size_t(FInt::LuauTableTypeMaximumStringifierLength); // Only applied to TableTypeVars
+    size_t maxTableLength = size_t(FInt::LuauTableTypeMaximumStringifierLength); // Only applied to TableTypes
     size_t maxTypeLength = size_t(FInt::LuauTypeMaximumStringifierLength);
     ToStringNameMap nameMap;
-    std::optional<ToStringNameMap> DEPRECATED_nameMap;
     std::shared_ptr<Scope> scope; // If present, module names will be added and types that are not available in scope will be marked as 'invalid'
     std::vector<std::string> namedFunctionOverrideArgNames; // If present, named function argument names will be overridden
 };
@@ -42,7 +55,6 @@ struct ToStringOptions
 struct ToStringResult
 {
     std::string name;
-    ToStringNameMap DEPRECATED_nameMap;
 
     bool invalid = false;
     bool error = false;
@@ -92,11 +104,10 @@ inline std::string toString(const Constraint& c)
     return toString(c, ToStringOptions{});
 }
 
-
-std::string toString(const TypeVar& tv, ToStringOptions& opts);
+std::string toString(const Type& tv, ToStringOptions& opts);
 std::string toString(const TypePackVar& tp, ToStringOptions& opts);
 
-inline std::string toString(const TypeVar& tv)
+inline std::string toString(const Type& tv)
 {
     ToStringOptions opts;
     return toString(tv, opts);
@@ -108,22 +119,29 @@ inline std::string toString(const TypePackVar& tp)
     return toString(tp, opts);
 }
 
-std::string toStringNamedFunction(const std::string& funcName, const FunctionTypeVar& ftv, ToStringOptions& opts);
+std::string toStringNamedFunction(const std::string& funcName, const FunctionType& ftv, ToStringOptions& opts);
 
-inline std::string toStringNamedFunction(const std::string& funcName, const FunctionTypeVar& ftv)
+inline std::string toStringNamedFunction(const std::string& funcName, const FunctionType& ftv)
 {
     ToStringOptions opts;
     return toStringNamedFunction(funcName, ftv, opts);
 }
 
+std::optional<std::string> getFunctionNameAsString(const AstExpr& expr);
+
 // It could be useful to see the text representation of a type during a debugging session instead of exploring the content of the class
 // These functions will dump the type to stdout and can be evaluated in Watch/Immediate windows or as gdb/lldb expression
 std::string dump(TypeId ty);
+std::string dump(const std::optional<TypeId>& ty);
 std::string dump(TypePackId ty);
+std::string dump(const std::optional<TypePackId>& ty);
 std::string dump(const Constraint& c);
 
 std::string dump(const std::shared_ptr<Scope>& scope, const char* name);
 
 std::string generateName(size_t n);
+
+std::string toString(const Position& position);
+std::string toString(const Location& location);
 
 } // namespace Luau

@@ -1,12 +1,20 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/TypePack.h"
 
+#include "Luau/Error.h"
 #include "Luau/TxnLog.h"
 
 #include <stdexcept>
 
 namespace Luau
 {
+
+BlockedTypePack::BlockedTypePack()
+    : index(++nextIndex)
+{
+}
+
+size_t BlockedTypePack::nextIndex = 0;
 
 TypePackVar::TypePackVar(const TypePackVariant& tp)
     : ty(tp)
@@ -52,8 +60,8 @@ TypePackIterator::TypePackIterator(TypePackId typePack)
 }
 
 TypePackIterator::TypePackIterator(TypePackId typePack, const TxnLog* log)
-    : currentTypePack(follow(typePack))
-    , tp(get<TypePack>(currentTypePack))
+    : currentTypePack(log->follow(typePack))
+    , tp(log->get<TypePack>(currentTypePack))
     , currentIndex(0)
     , log(log)
 {
@@ -227,7 +235,7 @@ TypePackId follow(TypePackId tp, std::function<TypePackId(TypePackId)> mapper)
                 cycleTester = nullptr;
 
             if (tp == cycleTester)
-                throw std::runtime_error("Luau::follow detected a TypeVar cycle!!");
+                throw InternalCompilerError("Luau::follow detected a Type cycle!!");
         }
     }
 }
@@ -350,10 +358,15 @@ bool isVariadic(TypePackId tp, const TxnLog& log)
     if (!tail)
         return false;
 
-    if (log.get<GenericTypePack>(*tail))
+    return isVariadicTail(*tail, log);
+}
+
+bool isVariadicTail(TypePackId tp, const TxnLog& log, bool includeHiddenVariadics)
+{
+    if (log.get<GenericTypePack>(tp))
         return true;
 
-    if (auto vtp = log.get<VariadicTypePack>(*tail); vtp && !vtp->hidden)
+    if (auto vtp = log.get<VariadicTypePack>(tp); vtp && (includeHiddenVariadics || !vtp->hidden))
         return true;
 
     return false;
@@ -366,14 +379,14 @@ bool containsNever(TypePackId tp)
 
     while (it != endIt)
     {
-        if (get<NeverTypeVar>(follow(*it)))
+        if (get<NeverType>(follow(*it)))
             return true;
         ++it;
     }
 
     if (auto tail = it.tail())
     {
-        if (auto vtp = get<VariadicTypePack>(*tail); vtp && get<NeverTypeVar>(follow(vtp->ty)))
+        if (auto vtp = get<VariadicTypePack>(*tail); vtp && get<NeverType>(follow(vtp->ty)))
             return true;
     }
 

@@ -7,9 +7,9 @@
 
 #include <algorithm>
 
-LUAU_FASTFLAG(LuauLowerBoundsCalculation)
-
 using namespace Luau;
+
+LUAU_FASTFLAG(LuauTypeMismatchInvarianceInError)
 
 TEST_SUITE_BEGIN("ProvisionalTests");
 
@@ -62,7 +62,15 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "xpcall_returns_what_f_returns")
         local a:boolean,b:number,c:string=xpcall(function(): (number,string)return 1,'foo'end,function(): (string,number)return'foo',1 end)
     )";
 
-    CHECK_EQ(expected, decorateWithTypes(code));
+    CheckResult result = check(code);
+
+    CHECK("boolean" == toString(requireType("a")));
+    CHECK("number" == toString(requireType("b")));
+    CHECK("string" == toString(requireType("c")));
+
+    CHECK(expected == decorateWithTypes(code));
+
+    LUAU_REQUIRE_NO_ERRORS(result);
 }
 
 // We had a bug where if you have two type packs that looks like:
@@ -164,24 +172,12 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "error_on_eq_metamethod_returning_a_type_othe
     CHECK_EQ("Metamethod '__eq' must return type 'boolean'", ge->message);
 }
 
-// Requires success typing to confidently determine that this expression has no overlap.
-TEST_CASE_FIXTURE(Fixture, "operator_eq_completely_incompatible")
-{
-    CheckResult result = check(R"(
-        local a: string | number = "hi"
-        local b: {x: string}? = {x = "bye"}
-
-        local r1 = a == b
-        local r2 = b == a
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-}
-
 // Belongs in TypeInfer.refinements.test.cpp.
-// We'll need to not only report an error on `a == b`, but also to refine both operands as `never` in the `==` branch.
+// We need refine both operands as `never` in the `==` branch.
 TEST_CASE_FIXTURE(Fixture, "lvalue_equals_another_lvalue_with_no_overlap")
 {
+    ScopedFastFlag sff{"LuauIntersectionTestForEquality", true};
+
     CheckResult result = check(R"(
         local function f(a: string, b: boolean?)
             if a == b then
@@ -192,7 +188,7 @@ TEST_CASE_FIXTURE(Fixture, "lvalue_equals_another_lvalue_with_no_overlap")
         end
     )");
 
-    LUAU_REQUIRE_NO_ERRORS(result);
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
 
     CHECK_EQ(toString(requireTypeAtPosition({3, 33})), "string");   // a == b
     CHECK_EQ(toString(requireTypeAtPosition({3, 36})), "boolean?"); // a == b
@@ -263,30 +259,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "bail_early_if_unification_is_too_complicated
     }
 }
 
-// Should be in TypeInfer.tables.test.cpp
-// It's unsound to instantiate tables containing generic methods,
-// since mutating properties means table properties should be invariant.
-// We currently allow this but we shouldn't!
-TEST_CASE_FIXTURE(Fixture, "invariant_table_properties_means_instantiating_tables_in_call_is_unsound")
-{
-    CheckResult result = check(R"(
-        --!strict
-        local t = {}
-        function t.m(x) return x end
-        local a : string = t.m("hi")
-        local b : number = t.m(5)
-        function f(x : { m : (number)->number })
-            x.m = function(x) return 1+x end
-        end
-        f(t) -- This shouldn't typecheck
-        local c : string = t.m("hi")
-    )");
-
-    // TODO: this should error!
-    // This should be fixed by replacing generic tables by generics with type bounds.
-    LUAU_REQUIRE_NO_ERRORS(result);
-}
-
 // FIXME: Move this test to another source file when removing FFlag::LuauLowerBoundsCalculation
 TEST_CASE_FIXTURE(Fixture, "do_not_ice_when_trying_to_pick_first_of_generic_type_pack")
 {
@@ -317,19 +289,10 @@ TEST_CASE_FIXTURE(Fixture, "do_not_ice_when_trying_to_pick_first_of_generic_type
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    if (FFlag::LuauLowerBoundsCalculation)
-    {
-        CHECK_EQ("() -> ()", toString(requireType("f")));
-        CHECK_EQ("() -> ()", toString(requireType("g")));
-        CHECK_EQ("nil", toString(requireType("x")));
-    }
-    else
-    {
-        // f and g should have the type () -> ()
-        CHECK_EQ("() -> (a...)", toString(requireType("f")));
-        CHECK_EQ("<a...>() -> (a...)", toString(requireType("g")));
-        CHECK_EQ("any", toString(requireType("x"))); // any is returned instead of ICE for now
-    }
+    // f and g should have the type () -> ()
+    CHECK_EQ("() -> (a...)", toString(requireType("f")));
+    CHECK_EQ("<a...>() -> (a...)", toString(requireType("g")));
+    CHECK_EQ("any", toString(requireType("x"))); // any is returned instead of ICE for now
 }
 
 TEST_CASE_FIXTURE(Fixture, "specialization_binds_with_prototypes_too_early")
@@ -346,7 +309,9 @@ TEST_CASE_FIXTURE(Fixture, "specialization_binds_with_prototypes_too_early")
 TEST_CASE_FIXTURE(Fixture, "weird_fail_to_unify_type_pack")
 {
     ScopedFastFlag sff[] = {
-        {"LuauLowerBoundsCalculation", false},
+        // I'm not sure why this is broken without DCR, but it seems to be fixed
+        // when DCR is enabled.
+        {"DebugLuauDeferredConstraintResolution", false},
     };
 
     CheckResult result = check(R"(
@@ -360,7 +325,9 @@ TEST_CASE_FIXTURE(Fixture, "weird_fail_to_unify_type_pack")
 TEST_CASE_FIXTURE(Fixture, "weird_fail_to_unify_variadic_pack")
 {
     ScopedFastFlag sff[] = {
-        {"LuauLowerBoundsCalculation", false},
+        // I'm not sure why this is broken without DCR, but it seems to be fixed
+        // when DCR is enabled.
+        {"DebugLuauDeferredConstraintResolution", false},
     };
 
     CheckResult result = check(R"(
@@ -372,56 +339,6 @@ TEST_CASE_FIXTURE(Fixture, "weird_fail_to_unify_variadic_pack")
     LUAU_REQUIRE_ERRORS(result); // Should not have any errors.
 }
 
-TEST_CASE_FIXTURE(Fixture, "lower_bounds_calculation_is_too_permissive_with_overloaded_higher_order_functions")
-{
-    ScopedFastFlag sff[] = {
-        {"LuauLowerBoundsCalculation", true},
-    };
-
-    CheckResult result = check(R"(
-        function foo(f)
-            f(5, 'a')
-            f('b', 6)
-        end
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-
-    // We incorrectly infer that the argument to foo could be called with (number, number) or (string, string)
-    // even though that is strictly more permissive than the actual source text shows.
-    CHECK("<a...>((number | string, number | string) -> (a...)) -> ()" == toString(requireType("foo")));
-}
-
-// Once fixed, move this to Normalize.test.cpp
-TEST_CASE_FIXTURE(Fixture, "normalization_fails_on_certain_kinds_of_cyclic_tables")
-{
-#if defined(_DEBUG) || defined(_NOOPT)
-    ScopedFastInt sfi("LuauNormalizeIterationLimit", 500);
-#endif
-
-    ScopedFastFlag flags[] = {
-        {"LuauLowerBoundsCalculation", true},
-    };
-
-    // We use a function and inferred parameter types to prevent intermediate normalizations from being performed.
-    // This exposes a bug where the type of y is mutated.
-    CheckResult result = check(R"(
-        function strange(x, y)
-            x.x = y
-            y.x = x
-
-            type R = {x: typeof(x)} & {x: typeof(y)}
-            local r: R
-
-            return r
-        end
-    )");
-
-    LUAU_REQUIRE_ERROR_COUNT(1, result);
-
-    CHECK(nullptr != get<NormalizationTooComplex>(result.errors[0]));
-}
-
 // Belongs in TypeInfer.builtins.test.cpp.
 TEST_CASE_FIXTURE(BuiltinsFixture, "pcall_returns_at_least_two_value_but_function_returns_nothing")
 {
@@ -431,7 +348,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "pcall_returns_at_least_two_value_but_functio
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ("Function only returns 1 value. 2 are required here", toString(result.errors[0]));
+    CHECK_EQ("Function only returns 1 value, but 2 are required here", toString(result.errors[0]));
     // LUAU_REQUIRE_NO_ERRORS(result);
     // CHECK_EQ("boolean", toString(requireType("ok")));
     // CHECK_EQ("any", toString(requireType("res")));
@@ -481,36 +398,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "function_returns_many_things_but_first_of_it
     CHECK_EQ("boolean", toString(requireType("b")));
 }
 
-TEST_CASE_FIXTURE(Fixture, "constrained_is_level_dependent")
-{
-    ScopedFastFlag sff[]{
-        {"LuauLowerBoundsCalculation", true},
-    };
-
-    CheckResult result = check(R"(
-        local function f(o)
-            local t = {}
-            t[o] = true
-
-            local function foo(o)
-                o:m1()
-                t[o] = nil
-            end
-
-            local function bar(o)
-                o:m2()
-                t[o] = true
-            end
-
-            return t
-        end
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-    // TODO: We're missing generics b...
-    CHECK_EQ("<a...>(t1) -> {| [t1]: boolean |} where t1 = t2 ; t2 = {+ m1: (t1) -> (a...), m2: (t2) -> (b...) +}", toString(requireType("f")));
-}
-
 TEST_CASE_FIXTURE(Fixture, "free_is_not_bound_to_any")
 {
     CheckResult result = check(R"(
@@ -544,11 +431,10 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "greedy_inference_with_shared_self_triggers_f
     CHECK_EQ("Not all codepaths in this function return 'self, a...'.", toString(result.errors[0]));
 }
 
-TEST_CASE_FIXTURE(Fixture, "dcr_cant_partially_dispatch_a_constraint")
+TEST_CASE_FIXTURE(Fixture, "dcr_can_partially_dispatch_a_constraint")
 {
     ScopedFastFlag sff[] = {
         {"DebugLuauDeferredConstraintResolution", true},
-        {"LuauSpecialTypesAsterisked", true},
     };
 
     CheckResult result = check(R"(
@@ -563,38 +449,42 @@ TEST_CASE_FIXTURE(Fixture, "dcr_cant_partially_dispatch_a_constraint")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    // We should be able to resolve this to number, but we're not there yet.
-    // Solving this requires recognizing that we can partially solve the
-    // following constraint:
+    // Solving this requires recognizing that we can't dispatch a constraint
+    // like this without doing further work:
     //
     //     (*blocked*) -> () <: (number) -> (b...)
     //
-    // The correct thing for us to do is to consider the constraint dispatched,
-    // but we need to also record a new constraint number <: *blocked* to finish
-    // the job later.
-    CHECK("<a>(a, *error-type*) -> ()" == toString(requireType("prime_iter")));
+    // We solve this by searching both types for BlockedTypes and block the
+    // constraint on any we find.  It also gets the job done, but I'm worried
+    // about the efficiency of doing so many deep type traversals and it may
+    // make us more prone to getting stuck on constraint cycles.
+    //
+    // If this doesn't pan out, a possible solution is to go further down the
+    // path of supporting partial constraint dispatch.  The way it would work is
+    // that we'd dispatch the above constraint by binding b... to (), but we
+    // would append a new constraint number <: *blocked* to the constraint set
+    // to be solved later.  This should be faster and theoretically less prone
+    // to cyclic constraint dependencies.
+    CHECK("<a>(a, number) -> ()" == toString(requireType("prime_iter")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "free_options_cannot_be_unified_together")
 {
-    ScopedFastFlag sff[] = {
-        {"LuauFixNameMaps", true},
-    };
-
     TypeArena arena;
-    TypeId nilType = getSingletonTypes().nilType;
+    TypeId nilType = builtinTypes->nilType;
 
-    std::unique_ptr scope = std::make_unique<Scope>(getSingletonTypes().anyTypePack);
+    std::unique_ptr scope = std::make_unique<Scope>(builtinTypes->anyTypePack);
 
     TypeId free1 = arena.addType(FreeTypePack{scope.get()});
-    TypeId option1 = arena.addType(UnionTypeVar{{nilType, free1}});
+    TypeId option1 = arena.addType(UnionType{{nilType, free1}});
 
     TypeId free2 = arena.addType(FreeTypePack{scope.get()});
-    TypeId option2 = arena.addType(UnionTypeVar{{nilType, free2}});
+    TypeId option2 = arena.addType(UnionType{{nilType, free2}});
 
     InternalErrorReporter iceHandler;
     UnifierSharedState sharedState{&iceHandler};
-    Unifier u{&arena, Mode::Strict, NotNull{scope.get()}, Location{}, Variance::Covariant, sharedState};
+    Normalizer normalizer{&arena, builtinTypes, NotNull{&sharedState}};
+    Unifier u{NotNull{&normalizer}, Mode::Strict, NotNull{scope.get()}, Location{}, Variance::Covariant};
 
     u.tryUnify(option1, option2);
 
@@ -607,6 +497,321 @@ TEST_CASE_FIXTURE(Fixture, "free_options_cannot_be_unified_together")
 
     // CHECK("a?" == toString(option2, opts)); // This should hold, but does not.
     CHECK("b?" == toString(option2, opts)); // This should not hold.
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_loop_with_zero_iterators")
+{
+    ScopedFastFlag sff{"DebugLuauDeferredConstraintResolution", false};
+
+    CheckResult result = check(R"(
+        function no_iter() end
+        for key in no_iter() do end -- This should not be ok
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+// Ideally, we would not try to export a function type with generic types from incorrect scope
+TEST_CASE_FIXTURE(BuiltinsFixture, "generic_type_leak_to_module_interface")
+{
+    fileResolver.source["game/A"] = R"(
+local wrapStrictTable
+
+local metatable = {
+    __index = function(self, key)
+        local value = self.__tbl[key]
+        if type(value) == "table" then
+            -- unification of the free 'wrapStrictTable' with this function type causes generics of this function to leak out of scope
+            return wrapStrictTable(value, self.__name .. "." .. key)
+        end
+        return value
+    end,
+}
+
+return wrapStrictTable
+    )";
+
+    frontend.check("game/A");
+
+    fileResolver.source["game/B"] = R"(
+local wrapStrictTable = require(game.A)
+
+local Constants = {}
+
+return wrapStrictTable(Constants, "Constants")
+    )";
+
+    frontend.check("game/B");
+
+    ModulePtr m = frontend.moduleResolver.modules["game/B"];
+    REQUIRE(m);
+
+    std::optional<TypeId> result = first(m->returnType);
+    REQUIRE(result);
+    CHECK(get<AnyType>(*result));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "generic_type_leak_to_module_interface_variadic")
+{
+    fileResolver.source["game/A"] = R"(
+local wrapStrictTable
+
+local metatable = {
+    __index = function<T>(self, key, ...: T)
+        local value = self.__tbl[key]
+        if type(value) == "table" then
+            -- unification of the free 'wrapStrictTable' with this function type causes generics of this function to leak out of scope
+            return wrapStrictTable(value, self.__name .. "." .. key)
+        end
+        return ...
+    end,
+}
+
+return wrapStrictTable
+    )";
+
+    frontend.check("game/A");
+
+    fileResolver.source["game/B"] = R"(
+local wrapStrictTable = require(game.A)
+
+local Constants = {}
+
+return wrapStrictTable(Constants, "Constants")
+    )";
+
+    frontend.check("game/B");
+
+    ModulePtr m = frontend.moduleResolver.modules["game/B"];
+    REQUIRE(m);
+
+    std::optional<TypeId> result = first(m->returnType);
+    REQUIRE(result);
+    CHECK(get<AnyType>(*result));
+}
+
+namespace
+{
+struct IsSubtypeFixture : Fixture
+{
+    bool isSubtype(TypeId a, TypeId b)
+    {
+        ModulePtr module = getMainModule();
+        REQUIRE(module);
+
+        if (!module->hasModuleScope())
+            FAIL("isSubtype: module scope data is not available");
+
+        return ::Luau::isSubtype(a, b, NotNull{module->getModuleScope().get()}, builtinTypes, ice);
+    }
+};
+} // namespace
+
+TEST_CASE_FIXTURE(IsSubtypeFixture, "intersection_of_functions_of_different_arities")
+{
+    check(R"(
+        type A = (any) -> ()
+        type B = (any, any) -> ()
+        type T = A & B
+
+        local a: A
+        local b: B
+        local t: T
+    )");
+
+    [[maybe_unused]] TypeId a = requireType("a");
+    [[maybe_unused]] TypeId b = requireType("b");
+
+    // CHECK(!isSubtype(a, b)); // !!
+    // CHECK(!isSubtype(b, a));
+
+    CHECK("((any) -> ()) & ((any, any) -> ())" == toString(requireType("t")));
+}
+
+TEST_CASE_FIXTURE(IsSubtypeFixture, "functions_with_mismatching_arity")
+{
+    check(R"(
+        local a: (number) -> ()
+        local b: () -> ()
+
+        local c: () -> number
+    )");
+
+    TypeId a = requireType("a");
+    TypeId b = requireType("b");
+    TypeId c = requireType("c");
+
+    // CHECK(!isSubtype(b, a));
+    // CHECK(!isSubtype(c, a));
+
+    CHECK(!isSubtype(a, b));
+    // CHECK(!isSubtype(c, b));
+
+    CHECK(!isSubtype(a, c));
+    CHECK(!isSubtype(b, c));
+}
+
+TEST_CASE_FIXTURE(IsSubtypeFixture, "functions_with_mismatching_arity_but_optional_parameters")
+{
+    /*
+     * (T0..TN) <: (T0..TN, A?)
+     * (T0..TN) <: (T0..TN, any)
+     * (T0..TN, A?) </: (T0..TN)            We don't technically need to spell this out, but it's quite important.
+     * T <: T
+     * if A <: B and B <: C then A <: C
+     * T -> R <: U -> S if U <: T and R <: S
+     * A | B <: T if A <: T and B <: T
+     * T <: A | B if T <: A or T <: B
+     */
+    check(R"(
+        local a: (number?) -> ()
+        local b: (number) -> ()
+        local c: (number, number?) -> ()
+    )");
+
+    TypeId a = requireType("a");
+    TypeId b = requireType("b");
+    TypeId c = requireType("c");
+
+    /*
+     * (number) -> () </: (number?) -> ()
+     *      because number? </: number (because number <: number, but nil </: number)
+     */
+    CHECK(!isSubtype(b, a));
+
+    /*
+     * (number, number?) </: (number?) -> ()
+     *      because number? </: number (as above)
+     */
+    CHECK(!isSubtype(c, a));
+
+    /*
+     * (number?) -> () <: (number) -> ()
+     *      because number <: number? (because number <: number)
+     */
+    CHECK(isSubtype(a, b));
+
+    /*
+     * (number, number?) -> () <: (number) -> (number)
+     *      The packs have inequal lengths, but (number) <: (number, number?)
+     *      and number <: number
+     */
+    // CHECK(!isSubtype(c, b));
+
+    /*
+     * (number?) -> () </: (number, number?) -> ()
+     *      because (number, number?) </: (number)
+     */
+    // CHECK(!isSubtype(a, c));
+
+    /*
+     * (number) -> () </: (number, number?) -> ()
+     *      because (number, number?) </: (number)
+     */
+    // CHECK(!isSubtype(b, c));
+}
+
+TEST_CASE_FIXTURE(IsSubtypeFixture, "functions_with_mismatching_arity_but_any_is_an_optional_param")
+{
+    check(R"(
+        local a: (number?) -> ()
+        local b: (number) -> ()
+        local c: (number, any) -> ()
+    )");
+
+    TypeId a = requireType("a");
+    TypeId b = requireType("b");
+    TypeId c = requireType("c");
+
+    /*
+     * (number) -> () </: (number?) -> ()
+     *      because number? </: number (because number <: number, but nil </: number)
+     */
+    CHECK(!isSubtype(b, a));
+
+    /*
+     * (number, any) </: (number?) -> ()
+     *      because number? </: number (as above)
+     */
+    CHECK(!isSubtype(c, a));
+
+    /*
+     * (number?) -> () <: (number) -> ()
+     *      because number <: number? (because number <: number)
+     */
+    CHECK(isSubtype(a, b));
+
+    /*
+     * (number, any) -> () </: (number) -> (number)
+     *      The packs have inequal lengths
+     */
+    // CHECK(!isSubtype(c, b));
+
+    /*
+     * (number?) -> () </: (number, any) -> ()
+     *      The packs have inequal lengths
+     */
+    // CHECK(!isSubtype(a, c));
+
+    /*
+     * (number) -> () </: (number, any) -> ()
+     *      The packs have inequal lengths
+     */
+    // CHECK(!isSubtype(b, c));
+}
+
+TEST_CASE_FIXTURE(Fixture, "assign_table_with_refined_property_with_a_similar_type_is_illegal")
+{
+    CheckResult result = check(R"(
+        local t: {x: number?} = {x = nil}
+
+        if t.x then
+            local u: {x: number} = t
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    if (FFlag::LuauTypeMismatchInvarianceInError)
+    {
+        CHECK_EQ(R"(Type '{| x: number? |}' could not be converted into '{| x: number |}'
+caused by:
+  Property 'x' is not compatible. Type 'number?' could not be converted into 'number' in an invariant context)",
+            toString(result.errors[0]));
+    }
+    else
+    {
+        CHECK_EQ(R"(Type '{| x: number? |}' could not be converted into '{| x: number |}'
+caused by:
+  Property 'x' is not compatible. Type 'number?' could not be converted into 'number')",
+            toString(result.errors[0]));
+    }
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_with_a_singleton_argument")
+{
+    CheckResult result = check(R"(
+        local function foo(t, x)
+            if x == "hi" or x == "bye" then
+                table.insert(t, x)
+            end
+
+            return t
+        end
+
+        local t = foo({}, "hi")
+        table.insert(t, "totally_unrelated_type" :: "totally_unrelated_type")
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        CHECK_EQ("{string}", toString(requireType("t")));
+    else
+    {
+        // We'd really like for this to be {string}
+        CHECK_EQ("{string | string}", toString(requireType("t")));
+    }
 }
 
 TEST_SUITE_END();

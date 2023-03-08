@@ -1,7 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 #include "Luau/Unifiable.h"
 #include "Luau/Variant.h"
 
@@ -15,6 +15,7 @@ struct TypeArena;
 
 struct TypePack;
 struct VariadicTypePack;
+struct BlockedTypePack;
 
 struct TypePackVar;
 
@@ -24,7 +25,7 @@ using TypePackId = const TypePackVar*;
 using FreeTypePack = Unifiable::Free;
 using BoundTypePack = Unifiable::Bound<TypePackId>;
 using GenericTypePack = Unifiable::Generic;
-using TypePackVariant = Unifiable::Variant<TypePackId, TypePack, VariadicTypePack>;
+using TypePackVariant = Unifiable::Variant<TypePackId, TypePack, VariadicTypePack, BlockedTypePack>;
 
 /* A TypePack is a rope-like string of TypeIds.  We use this structure to encode
  * notions like packs of unknown length and packs of any length, as well as more
@@ -41,6 +42,17 @@ struct VariadicTypePack
 {
     TypeId ty;
     bool hidden = false; // if true, we don't display this when toString()ing a pack with this variadic as its tail.
+};
+
+/**
+ * Analogous to a BlockedType.
+ */
+struct BlockedTypePack
+{
+    BlockedTypePack();
+    size_t index;
+
+    static size_t nextIndex;
 };
 
 struct TypePackVar
@@ -71,7 +83,7 @@ struct TypePackVar
 
 /* Walk the set of TypeIds in a TypePack.
  *
- * Like TypeVars, individual TypePacks can be free, generic, or any.
+ * Like Types, individual TypePacks can be free, generic, or any.
  *
  * We afford the ability to work with these kinds of packs by giving the
  * iterator a .tail() property that yields the tail-most TypePack in the
@@ -172,6 +184,9 @@ std::pair<std::vector<TypeId>, std::optional<TypePackId>> flatten(TypePackId tp,
 /// Returns *false* for function argument packs that are inferred to be safe to oversaturate!
 bool isVariadic(TypePackId tp);
 bool isVariadic(TypePackId tp, const TxnLog& log);
+
+// Returns true if the TypePack is Generic or Variadic.  Does not walk TypePacks!!
+bool isVariadicTail(TypePackId tp, const TxnLog& log, bool includeHiddenVariadics = false);
 
 bool containsNever(TypePackId tp);
 

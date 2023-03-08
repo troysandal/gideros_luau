@@ -4,15 +4,12 @@
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
-#include "Luau/VisitTypeVar.h"
+#include "Luau/Type.h"
+#include "Luau/VisitType.h"
 
 #include "Fixture.h"
 
 #include "doctest.h"
-
-LUAU_FASTFLAG(LuauDeduceFindMatchReturnTypes)
-LUAU_FASTFLAG(LuauSpecialTypesAsterisked)
 
 using namespace Luau;
 
@@ -50,10 +47,7 @@ TEST_CASE_FIXTURE(Fixture, "string_index")
     REQUIRE(nat);
     CHECK_EQ("string", toString(nat->ty));
 
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(requireType("t")));
-    else
-        CHECK_EQ("<error-type>", toString(requireType("t")));
+    CHECK_EQ("*error-type*", toString(requireType("t")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "string_method")
@@ -61,8 +55,8 @@ TEST_CASE_FIXTURE(Fixture, "string_method")
     CheckResult result = check(R"(
         local p = ("tacos"):len()
     )");
-    CHECK_EQ(0, result.errors.size());
 
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(*requireType("p"), *typeChecker.numberType);
 }
 
@@ -73,23 +67,9 @@ TEST_CASE_FIXTURE(Fixture, "string_function_indirect")
         local l = s.lower
         local p = l(s)
     )");
-    CHECK_EQ(0, result.errors.size());
 
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(*requireType("p"), *typeChecker.stringType);
-}
-
-TEST_CASE_FIXTURE(Fixture, "string_function_other")
-{
-    CheckResult result = check(R"(
-        local s:string
-        local p = s:match("foo")
-    )");
-    CHECK_EQ(0, result.errors.size());
-
-    if (FFlag::LuauDeduceFindMatchReturnTypes)
-        CHECK_EQ(toString(requireType("p")), "string");
-    else
-        CHECK_EQ(toString(requireType("p")), "string?");
 }
 
 TEST_CASE_FIXTURE(Fixture, "CheckMethodsOfNumber")
@@ -104,6 +84,20 @@ end
     LUAU_REQUIRE_ERROR_COUNT(2, result);
     CHECK_EQ(toString(result.errors[0]), "Cannot add method to non-table type 'number'");
     CHECK_EQ(toString(result.errors[1]), "Type 'number' could not be converted into 'string'");
+}
+
+TEST_CASE("singleton_types")
+{
+    BuiltinsFixture a;
+
+    {
+        BuiltinsFixture b;
+    }
+
+    // Check that Frontend 'a' environment wasn't modified by 'b'
+    CheckResult result = a.check("local s: string = 'hello' local t = s:lower()");
+
+    CHECK(result.errors.empty());
 }
 
 TEST_SUITE_END();

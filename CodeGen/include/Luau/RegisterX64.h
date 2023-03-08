@@ -1,3 +1,4 @@
+// This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
 #include "Luau/Common.h"
@@ -7,6 +8,8 @@
 namespace Luau
 {
 namespace CodeGen
+{
+namespace X64
 {
 
 enum class SizeX64 : uint8_t
@@ -112,5 +115,26 @@ constexpr RegisterX64 ymm13{SizeX64::ymmword, 13};
 constexpr RegisterX64 ymm14{SizeX64::ymmword, 14};
 constexpr RegisterX64 ymm15{SizeX64::ymmword, 15};
 
+constexpr RegisterX64 byteReg(RegisterX64 reg)
+{
+    return RegisterX64{SizeX64::byte, reg.index};
+}
+
+constexpr RegisterX64 wordReg(RegisterX64 reg)
+{
+    return RegisterX64{SizeX64::word, reg.index};
+}
+
+constexpr RegisterX64 dwordReg(RegisterX64 reg)
+{
+    return RegisterX64{SizeX64::dword, reg.index};
+}
+
+constexpr RegisterX64 qwordReg(RegisterX64 reg)
+{
+    return RegisterX64{SizeX64::qword, reg.index};
+}
+
+} // namespace X64
 } // namespace CodeGen
 } // namespace Luau

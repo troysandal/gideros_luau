@@ -1,6 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/Parser.h"
 
+#include "AstQueryDsl.h"
 #include "Fixture.h"
 #include "ScopedFlags.h"
 
@@ -457,6 +458,24 @@ TEST_CASE_FIXTURE(Fixture, "type_alias_should_work_when_name_is_also_local")
     REQUIRE(block->body.data[1]->is<AstStatTypeAlias>());
 }
 
+TEST_CASE_FIXTURE(Fixture, "type_alias_span_is_correct")
+{
+    AstStatBlock* block = parse(R"(
+        type Packed1<T...> = (T...) -> (T...)
+        type Packed2<T...> = (Packed1<T...>, T...) -> (Packed1<T...>, T...)
+    )");
+
+    REQUIRE(block != nullptr);
+    REQUIRE(2 == block->body.size);
+    AstStatTypeAlias* t1 = block->body.data[0]->as<AstStatTypeAlias>();
+    REQUIRE(t1);
+    REQUIRE(Location{Position{1, 8}, Position{1, 45}} == t1->location);
+
+    AstStatTypeAlias* t2 = block->body.data[1]->as<AstStatTypeAlias>();
+    REQUIRE(t2);
+    REQUIRE(Location{Position{2, 8}, Position{2, 75}} == t2->location);
+}
+
 TEST_CASE_FIXTURE(Fixture, "parse_error_messages")
 {
     CHECK_EQ(getParseError(R"(
@@ -682,23 +701,12 @@ TEST_CASE_FIXTURE(Fixture, "parse_numbers_binary")
 
 TEST_CASE_FIXTURE(Fixture, "parse_numbers_error")
 {
-    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
-    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", true};
-
     CHECK_EQ(getParseError("return 0b123"), "Malformed number");
     CHECK_EQ(getParseError("return 123x"), "Malformed number");
     CHECK_EQ(getParseError("return 0xg"), "Malformed number");
     CHECK_EQ(getParseError("return 0x0x123"), "Malformed number");
     CHECK_EQ(getParseError("return 0xffffffffffffffffffffllllllg"), "Malformed number");
     CHECK_EQ(getParseError("return 0x0xffffffffffffffffffffffffffff"), "Malformed number");
-}
-
-TEST_CASE_FIXTURE(Fixture, "parse_numbers_error_soft")
-{
-    ScopedFastFlag luauLintParseIntegerIssues{"LuauLintParseIntegerIssues", true};
-    ScopedFastFlag luauErrorDoubleHexPrefix{"LuauErrorDoubleHexPrefix", false};
-
-    CHECK_EQ(getParseError("return 0x0x0x0x0x0x0x0"), "Malformed number");
 }
 
 TEST_CASE_FIXTURE(Fixture, "break_return_not_last_error")
@@ -907,8 +915,6 @@ TEST_CASE_FIXTURE(Fixture, "parse_compound_assignment_error_multiple")
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_begin")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     try
     {
         parse(R"(
@@ -924,8 +930,6 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_begin")
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_mid")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     try
     {
         parse(R"(
@@ -941,10 +945,7 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_double_brace_mid")
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
-    auto columnOfEndBraceError = [this](const char* code)
-    {
+    auto columnOfEndBraceError = [this](const char* code) {
         try
         {
             parse(code);
@@ -968,8 +969,6 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace")
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace_in_table")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     try
     {
         parse(R"(
@@ -988,8 +987,6 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_end_brace_in_table
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_mid_without_end_brace_in_table")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     try
     {
         parse(R"(
@@ -1008,8 +1005,6 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_mid_without_end_brace_in_t
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_as_type_fail")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     try
     {
         parse(R"(
@@ -1030,8 +1025,6 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_as_type_fail")
 
 TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_call_without_parens")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     try
     {
         parse(R"(
@@ -1042,6 +1035,35 @@ TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_call_without_parens")
     catch (const ParseErrors& e)
     {
         CHECK_EQ("Expected identifier when parsing expression, got `{", e.getErrors().front().getMessage());
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "parse_interpolated_string_without_expression")
+{
+    ScopedFastFlag sff("LuauFixInterpStringMid", true);
+
+    try
+    {
+        parse(R"(
+            print(`{}`)
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Malformed interpolated string, expected expression inside '{}'", e.getErrors().front().getMessage());
+    }
+
+    try
+    {
+        parse(R"(
+            print(`{}{1}`)
+        )");
+        FAIL("Expected ParseErrors to be thrown");
+    }
+    catch (const ParseErrors& e)
+    {
+        CHECK_EQ("Malformed interpolated string, expected expression inside '{}'", e.getErrors().front().getMessage());
     }
 }
 
@@ -1737,6 +1759,46 @@ TEST_CASE_FIXTURE(Fixture, "parse_error_type_annotation")
     matchParseError("local a : 2 = 2", "Expected type, got '2'");
 }
 
+TEST_CASE_FIXTURE(Fixture, "parse_error_missing_type_annotation")
+{
+    {
+        ParseResult result = tryParse("local x:");
+        CHECK(result.errors.size() == 1);
+        Position begin = result.errors[0].getLocation().begin;
+        Position end = result.errors[0].getLocation().end;
+        CHECK(begin.line == end.line);
+        int width = end.column - begin.column;
+        CHECK(width == 0);
+        CHECK(result.errors[0].getMessage() == "Expected type, got <eof>");
+    }
+
+    {
+        ParseResult result = tryParse(R"(
+local x:=42
+    )");
+        CHECK(result.errors.size() == 1);
+        Position begin = result.errors[0].getLocation().begin;
+        Position end = result.errors[0].getLocation().end;
+        CHECK(begin.line == end.line);
+        int width = end.column - begin.column;
+        CHECK(width == 1); // Length of `=`
+        CHECK(result.errors[0].getMessage() == "Expected type, got '='");
+    }
+
+    {
+        ParseResult result = tryParse(R"(
+function func():end
+    )");
+        CHECK(result.errors.size() == 1);
+        Position begin = result.errors[0].getLocation().begin;
+        Position end = result.errors[0].getLocation().end;
+        CHECK(begin.line == end.line);
+        int width = end.column - begin.column;
+        CHECK(width == 3); // Length of `end`
+        CHECK(result.errors[0].getMessage() == "Expected type, got 'end'");
+    }
+}
+
 TEST_CASE_FIXTURE(Fixture, "parse_declarations")
 {
     AstStatBlock* stat = parseEx(R"(
@@ -2139,8 +2201,6 @@ type C<X...> = Packed<(number, X...)>
 
 TEST_CASE_FIXTURE(Fixture, "invalid_type_forms")
 {
-    ScopedFastFlag luauFixNamedFunctionParse{"LuauFixNamedFunctionParse", true};
-
     matchParseError("type A = (b: number)", "Expected '->' when parsing function type, got <eof>");
     matchParseError("type P<T...> = () -> T... type B = P<(x: number, y: string)>", "Expected '->' when parsing function type, got '>'");
     matchParseError("type F<T... = (a: string)> = (T...) -> ()", "Expected '->' when parsing function type, got '>'");
@@ -2681,6 +2741,117 @@ TEST_CASE_FIXTURE(Fixture, "error_message_for_using_function_as_type_annotation"
     REQUIRE_EQ(1, result.errors.size());
     CHECK_EQ("Using 'function' as a type annotation is not supported, consider replacing with a function type annotation e.g. '(...any) -> ...any'",
         result.errors[0].getMessage());
+}
+
+TEST_CASE_FIXTURE(Fixture, "get_a_nice_error_when_there_is_an_extra_comma_at_the_end_of_a_function_argument_list")
+{
+    ParseResult result = tryParse(R"(
+        foo(a, b, c,)
+    )");
+
+    REQUIRE(1 == result.errors.size());
+
+    CHECK(Location({1, 20}, {1, 21}) == result.errors[0].getLocation());
+    CHECK("Expected expression after ',' but got ')' instead" == result.errors[0].getMessage());
+}
+
+TEST_CASE_FIXTURE(Fixture, "get_a_nice_error_when_there_is_an_extra_comma_at_the_end_of_a_function_parameter_list")
+{
+    ParseResult result = tryParse(R"(
+        export type VisitFn = (
+            any,
+            Array<TAnyNode | Array<TAnyNode>>, -- extra comma here
+        ) -> any
+    )");
+
+    REQUIRE(1 == result.errors.size());
+
+    CHECK(Location({4, 8}, {4, 9}) == result.errors[0].getLocation());
+    CHECK("Expected type after ',' but got ')' instead" == result.errors[0].getMessage());
+}
+
+TEST_CASE_FIXTURE(Fixture, "get_a_nice_error_when_there_is_an_extra_comma_at_the_end_of_a_generic_parameter_list")
+{
+    ParseResult result = tryParse(R"(
+        export type VisitFn = <A, B,>(a: A, b: B) -> ()
+    )");
+
+    REQUIRE(1 == result.errors.size());
+
+    CHECK(Location({1, 36}, {1, 37}) == result.errors[0].getLocation());
+    CHECK("Expected type after ',' but got '>' instead" == result.errors[0].getMessage());
+
+    REQUIRE(1 == result.root->body.size);
+
+    AstStatTypeAlias* t = result.root->body.data[0]->as<AstStatTypeAlias>();
+    REQUIRE(t != nullptr);
+
+    AstTypeFunction* f = t->type->as<AstTypeFunction>();
+    REQUIRE(f != nullptr);
+
+    CHECK(2 == f->generics.size);
+}
+
+TEST_CASE_FIXTURE(Fixture, "get_a_nice_error_when_there_is_no_comma_between_table_members")
+{
+    ParseResult result = tryParse(R"(
+        local t = {
+            first = 1
+            second = 2,
+            third = 3,
+            fouth = 4,
+        }
+    )");
+
+    REQUIRE(1 == result.errors.size());
+
+    CHECK(Location({3, 12}, {3, 18}) == result.errors[0].getLocation());
+    CHECK("Expected ',' after table constructor element" == result.errors[0].getMessage());
+
+    REQUIRE(1 == result.root->body.size);
+
+    AstExprTable* table = Luau::query<AstExprTable>(result.root);
+    REQUIRE(table);
+    CHECK(table->items.size == 4);
+}
+
+TEST_CASE_FIXTURE(Fixture, "get_a_nice_error_when_there_is_no_comma_after_last_table_member")
+{
+    ParseResult result = tryParse(R"(
+        local t = {
+            first = 1
+
+        local ok = true
+        local good = ok == true
+    )");
+
+    REQUIRE(1 == result.errors.size());
+
+    CHECK(Location({4, 8}, {4, 13}) == result.errors[0].getLocation());
+    CHECK("Expected '}' (to close '{' at line 2), got 'local'" == result.errors[0].getMessage());
+
+    REQUIRE(3 == result.root->body.size);
+
+    AstExprTable* table = Luau::query<AstExprTable>(result.root);
+    REQUIRE(table);
+    CHECK(table->items.size == 1);
+}
+
+TEST_CASE_FIXTURE(Fixture, "missing_default_type_pack_argument_after_variadic_type_parameter")
+{
+    ScopedFastFlag sff{"LuauParserErrorsOnMissingDefaultTypePackArgument", true};
+
+    ParseResult result = tryParse(R"(
+        type Foo<T... = > = nil
+    )");
+
+    REQUIRE_EQ(2, result.errors.size());
+
+    CHECK_EQ(Location{{1, 23}, {1, 25}}, result.errors[0].getLocation());
+    CHECK_EQ("Expected type, got '>'", result.errors[0].getMessage());
+
+    CHECK_EQ(Location{{1, 23}, {1, 24}}, result.errors[1].getLocation());
+    CHECK_EQ("Expected type pack after '=', got type", result.errors[1].getMessage());
 }
 
 TEST_SUITE_END();

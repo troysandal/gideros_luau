@@ -4,17 +4,47 @@
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 
 #include "Fixture.h"
 
 #include "doctest.h"
 
+LUAU_FASTFLAG(LuauInstantiateInSubtyping)
+LUAU_FASTFLAG(LuauTypeMismatchInvarianceInError)
+
 using namespace Luau;
 
-LUAU_FASTFLAG(LuauSpecialTypesAsterisked)
-
 TEST_SUITE_BEGIN("TypeInferModules");
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "dcr_require_basic")
+{
+    fileResolver.source["game/A"] = R"(
+        --!strict
+        return {
+            a = 1,
+        }
+    )";
+
+    fileResolver.source["game/B"] = R"(
+        --!strict
+        local A = require(game.A)
+
+        local b = A.a
+    )";
+
+    CheckResult aResult = frontend.check("game/A");
+    LUAU_REQUIRE_NO_ERRORS(aResult);
+
+    CheckResult bResult = frontend.check("game/B");
+    LUAU_REQUIRE_NO_ERRORS(bResult);
+
+    ModulePtr b = frontend.moduleResolver.modules["game/B"];
+    REQUIRE(b != nullptr);
+    std::optional<TypeId> bType = requireType(b, "b");
+    REQUIRE(bType);
+    CHECK(toString(*bType) == "number");
+}
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "require")
 {
@@ -75,7 +105,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "require_types")
     REQUIRE(b != nullptr);
 
     TypeId hType = requireType(b, "h");
-    REQUIRE_MESSAGE(bool(get<TableTypeVar>(hType)), "Expected table but got " << toString(hType));
+    REQUIRE_MESSAGE(bool(get<TableType>(hType)), "Expected table but got " << toString(hType));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "require_a_variadic_function")
@@ -98,7 +128,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "require_a_variadic_function")
 
     TypeId f = follow(requireType(bModule, "f"));
 
-    const FunctionTypeVar* ftv = get<FunctionTypeVar>(f);
+    const FunctionType* ftv = get<FunctionType>(f);
     REQUIRE(ftv);
 
     auto iter = begin(ftv->argTypes);
@@ -145,10 +175,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "require_module_that_does_not_export")
 
     auto hootyType = requireType(bModule, "Hooty");
 
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(hootyType));
-    else
-        CHECK_EQ("<error-type>", toString(hootyType));
+    CHECK_EQ("*error-type*", toString(hootyType));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "warn_if_you_try_to_require_a_non_modulescript")
@@ -219,6 +246,7 @@ end
 
 return m
 )");
+
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
@@ -250,10 +278,7 @@ local ModuleA = require(game.A)
 
     std::optional<TypeId> oty = requireType("ModuleA");
 
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(*oty));
-    else
-        CHECK_EQ("<error-type>", toString(*oty));
+    CHECK_EQ("*error-type*", toString(*oty));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "do_not_modify_imported_types")
@@ -326,7 +351,7 @@ local arrayops = require(game.A)
 local tbl = {}
 tbl.a = 2
 function tbl:foo(b: number, c: number)
-    -- introduce BoundTypeVar to imported type
+    -- introduce BoundType to imported type
     arrayops.foo(self._regions)
 end
 -- this alias decreases function type level and causes a demotion of its type
@@ -338,8 +363,6 @@ type Table = typeof(tbl)
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "do_not_modify_imported_types_5")
 {
-    ScopedFastFlag luauInplaceDemoteSkipAllBound{"LuauInplaceDemoteSkipAllBound", true};
-
     fileResolver.source["game/A"] = R"(
 export type Type = {x: number, y: number}
 local arrayops = {}
@@ -353,7 +376,7 @@ local arrayops = require(game.A)
 local tbl = {}
 tbl.a = 2
 function tbl:foo(b: number, c: number)
-    -- introduce boundTo TableTypeVar to imported type
+    -- introduce boundTo TableType to imported type
     self.x.a = 2
     arrayops.foo(self.x)
 end
@@ -386,7 +409,12 @@ local b: B.T = a
     CheckResult result = frontend.check("game/C");
     LUAU_REQUIRE_ERROR_COUNT(1, result);
 
-    CHECK_EQ(toString(result.errors[0]), R"(Type 'T' from 'game/A' could not be converted into 'T' from 'game/B'
+    if (FFlag::LuauTypeMismatchInvarianceInError)
+        CHECK_EQ(toString(result.errors[0]), R"(Type 'T' from 'game/A' could not be converted into 'T' from 'game/B'
+caused by:
+  Property 'x' is not compatible. Type 'number' could not be converted into 'string' in an invariant context)");
+    else
+        CHECK_EQ(toString(result.errors[0]), R"(Type 'T' from 'game/A' could not be converted into 'T' from 'game/B'
 caused by:
   Property 'x' is not compatible. Type 'number' could not be converted into 'string')");
 }
@@ -420,7 +448,12 @@ local b: B.T = a
     CheckResult result = frontend.check("game/D");
     LUAU_REQUIRE_ERROR_COUNT(1, result);
 
-    CHECK_EQ(toString(result.errors[0]), R"(Type 'T' from 'game/B' could not be converted into 'T' from 'game/C'
+    if (FFlag::LuauTypeMismatchInvarianceInError)
+        CHECK_EQ(toString(result.errors[0]), R"(Type 'T' from 'game/B' could not be converted into 'T' from 'game/C'
+caused by:
+  Property 'x' is not compatible. Type 'number' could not be converted into 'string' in an invariant context)");
+    else
+        CHECK_EQ(toString(result.errors[0]), R"(Type 'T' from 'game/B' could not be converted into 'T' from 'game/C'
 caused by:
   Property 'x' is not compatible. Type 'number' could not be converted into 'string')");
 }
@@ -438,6 +471,15 @@ return l0
 
     CheckResult result = frontend.check("game/B");
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "fuzz_anyify_variadic_return_must_follow")
+{
+    CheckResult result = check(R"(
+return unpack(l0[_])
+    )");
+
+    LUAU_REQUIRE_ERRORS(result);
 }
 
 TEST_SUITE_END();

@@ -7,8 +7,6 @@
 
 #include <string.h>
 
-LUAU_FASTFLAGVARIABLE(LuauNoStrbufLink, false)
-
 unsigned int luaS_hash(const char* str, size_t len)
 {
     // Note that this hashing algorithm is replicated in BytecodeBuilder.cpp, BytecodeBuilder::getStringHash
@@ -98,29 +96,6 @@ static TString* newlstr(lua_State* L, const char* str, size_t l, unsigned int h)
     return ts;
 }
 
-static void unlinkstrbuf(lua_State* L, TString* ts)
-{
-    LUAU_ASSERT(!FFlag::LuauNoStrbufLink);
-    global_State* g = L->global;
-
-    TString** p = &g->strbufgc;
-
-    while (TString* curr = *p)
-    {
-        if (curr == ts)
-        {
-            *p = curr->next;
-            return;
-        }
-        else
-        {
-            p = &curr->next;
-        }
-    }
-
-    LUAU_ASSERT(!"failed to find string buffer");
-}
-
 TString* luaS_bufstart(lua_State* L, size_t size)
 {
     if (size > MAXSSIZE)
@@ -134,16 +109,7 @@ TString* luaS_bufstart(lua_State* L, size_t size)
     ts->atom = ATOM_UNDEF;
     ts->hash = 0; // computed in luaS_buffinish
     ts->len = unsigned(size);
-
-    if (FFlag::LuauNoStrbufLink)
-    {
-        ts->next = NULL;
-    }
-    else
-    {
-        ts->next = g->strbufgc;
-        g->strbufgc = ts;
-    }
+	ts->next = NULL;
     luaunlock_global();
 
     return ts;
@@ -170,10 +136,7 @@ TString* luaS_buffinish(lua_State* L, TString* ts)
         }
     }
 
-    if (FFlag::LuauNoStrbufLink)
-        LUAU_ASSERT(ts->next == NULL);
-    else
-        unlinkstrbuf(L, ts);
+    LUAU_ASSERT(ts->next == NULL);
 
     ts->hash = h;
     ts->data[ts->len] = '\0'; // ending 0
@@ -234,21 +197,10 @@ static bool unlinkstr(lua_State* L, TString* ts)
 void luaS_free(lua_State* L, TString* ts, lua_Page* page)
 {
     lualock_global();
-    if (FFlag::LuauNoStrbufLink)
-    {
-        if (unlinkstr(L, ts))
-            L->global->strt.nuse--;
-        else
-            LUAU_ASSERT(ts->next == NULL); // orphaned string buffer
-    }
+    if (unlinkstr(L, ts))
+        L->global->strt.nuse--;
     else
-    {
-        // Unchain from the string table
-        if (!unlinkstr(L, ts))
-            unlinkstrbuf(L, ts); // An unlikely scenario when we have a string buffer on our hands
-        else
-            L->global->strt.nuse--;
-    }
+        LUAU_ASSERT(ts->next == NULL); // orphaned string buffer
 
     luaM_freegco(L, ts, sizestring(ts->len), ts->memcat, page);
     luaunlock_global();

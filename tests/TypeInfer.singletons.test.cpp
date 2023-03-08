@@ -79,6 +79,16 @@ TEST_CASE_FIXTURE(Fixture, "string_singleton_subtype")
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
+TEST_CASE_FIXTURE(Fixture, "string_singleton_subtype_multi_assignment")
+{
+    CheckResult result = check(R"(
+        local a: "foo" = "foo"
+        local b: string, c: number = a, 10
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
 TEST_CASE_FIXTURE(Fixture, "function_call_with_singletons")
 {
     CheckResult result = check(R"(
@@ -202,6 +212,15 @@ TEST_CASE_FIXTURE(Fixture, "tagged_unions_immutable_tag")
     LUAU_REQUIRE_ERRORS(result);
 }
 
+TEST_CASE_FIXTURE(Fixture, "table_has_a_boolean")
+{
+    CheckResult result = check(R"(
+        local t={a=1,b=false}
+    )");
+
+    CHECK("{ a: number, b: boolean }" == toString(requireType("t"), {true}));
+}
+
 TEST_CASE_FIXTURE(Fixture, "table_properties_singleton_strings")
 {
     CheckResult result = check(R"(
@@ -305,6 +324,31 @@ caused by:
         toString(result.errors[0]));
 }
 
+TEST_CASE_FIXTURE(Fixture, "parametric_tagged_union_alias")
+{
+    ScopedFastFlag sff[] = {
+        {"DebugLuauDeferredConstraintResolution", true},
+    };
+
+    CheckResult result = check(R"(
+        type Ok<T> = {success: true, result: T}
+        type Err<T> = {success: false, error: T}
+        type Result<O, E> = Ok<O> | Err<E>
+
+        local a : Result<string, number> = {success = false, result = "hotdogs"}
+        local b : Result<string, number> = {success = true, result = "hotdogs"}
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    const std::string expectedError = "Type 'a' could not be converted into 'Err<number> | Ok<string>'\n"
+                                      "caused by:\n"
+                                      "  None of the union options are compatible. For example: Table type 'a'"
+                                      " not compatible with type 'Err<number>' because the former is missing field 'error'";
+
+    CHECK(toString(result.errors[0]) == expectedError);
+}
+
 TEST_CASE_FIXTURE(Fixture, "if_then_else_expression_singleton_options")
 {
     CheckResult result = check(R"(
@@ -387,28 +431,6 @@ TEST_CASE_FIXTURE(Fixture, "widening_happens_almost_everywhere_except_for_tables
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
-TEST_CASE_FIXTURE(BuiltinsFixture, "table_insert_with_a_singleton_argument")
-{
-    ScopedFastFlag sff{"LuauLowerBoundsCalculation", true};
-
-    CheckResult result = check(R"(
-        local function foo(t, x)
-            if x == "hi" or x == "bye" then
-                table.insert(t, x)
-            end
-
-            return t
-        end
-
-        local t = foo({}, "hi")
-        table.insert(t, "totally_unrelated_type" :: "totally_unrelated_type")
-    )");
-
-    LUAU_REQUIRE_NO_ERRORS(result);
-
-    CHECK_EQ("{string}", toString(requireType("t")));
-}
-
 TEST_CASE_FIXTURE(Fixture, "functions_are_not_to_be_widened")
 {
     CheckResult result = check(R"(
@@ -478,8 +500,6 @@ TEST_CASE_FIXTURE(Fixture, "taking_the_length_of_union_of_string_singleton")
 
 TEST_CASE_FIXTURE(Fixture, "no_widening_from_callsites")
 {
-    ScopedFastFlag sff{"LuauReturnsFromCallsitesAreNotWidened", true};
-
     CheckResult result = check(R"(
         type Direction = "North" | "East" | "West" | "South"
 

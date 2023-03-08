@@ -188,6 +188,10 @@ static void errorToString(std::ostream& stream, const T& err)
         stream << "TypesAreUnrelated { left = '" + toString(err.left) + "', right = '" + toString(err.right) + "' }";
     else if constexpr (std::is_same_v<T, NormalizationTooComplex>)
         stream << "NormalizationTooComplex { }";
+    else if constexpr (std::is_same_v<T, TypePackMismatch>)
+        stream << "TypePackMismatch { wanted = '" + toString(err.wantedTp) + "', given = '" + toString(err.givenTp) + "' }";
+    else if constexpr (std::is_same_v<T, DynamicPropertyLookupOnClassesUnsafe>)
+        stream << "DynamicPropertyLookupOnClassesUnsafe { " << toString(err.ty) << " }";
     else
         static_assert(always_false_v<T>, "Non-exhaustive type switch");
 }
@@ -211,7 +215,7 @@ std::ostream& operator<<(std::ostream& stream, const TableState& tv)
     return stream << static_cast<std::underlying_type<TableState>::type>(tv);
 }
 
-std::ostream& operator<<(std::ostream& stream, const TypeVar& tv)
+std::ostream& operator<<(std::ostream& stream, const Type& tv)
 {
     return stream << toString(tv);
 }

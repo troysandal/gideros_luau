@@ -6,7 +6,7 @@
 
 #include <limits.h>
 
-LUAU_FASTFLAG(LuauInterpolatedStringBaseSupport)
+LUAU_FASTFLAGVARIABLE(LuauFixInterpStringMid, false)
 
 namespace Luau
 {
@@ -91,18 +91,8 @@ Lexeme::Lexeme(const Location& location, Type type, const char* data, size_t siz
     , length(unsigned(size))
     , data(data)
 {
-    LUAU_ASSERT(
-        type == RawString
-        || type == QuotedString
-        || type == InterpStringBegin
-        || type == InterpStringMid
-        || type == InterpStringEnd
-        || type == InterpStringSimple
-        || type == BrokenInterpDoubleBrace
-        || type == Number
-        || type == Comment
-        || type == BlockComment
-    );
+    LUAU_ASSERT(type == RawString || type == QuotedString || type == InterpStringBegin || type == InterpStringMid || type == InterpStringEnd ||
+                type == InterpStringSimple || type == BrokenInterpDoubleBrace || type == Number || type == Comment || type == BlockComment);
 }
 
 Lexeme::Lexeme(const Location& location, Type type, const char* name)
@@ -667,14 +657,16 @@ Lexeme Lexer::readInterpolatedStringSection(Position start, Lexeme::Type formatT
 
             if (peekch(1) == '{')
             {
-                Lexeme brokenDoubleBrace = Lexeme(Location(start, position()), Lexeme::BrokenInterpDoubleBrace, &buffer[startOffset], offset - startOffset);
+                Lexeme brokenDoubleBrace =
+                    Lexeme(Location(start, position()), Lexeme::BrokenInterpDoubleBrace, &buffer[startOffset], offset - startOffset);
                 consume();
                 consume();
                 return brokenDoubleBrace;
             }
 
-            Lexeme lexemeOutput(Location(start, position()), Lexeme::InterpStringBegin, &buffer[startOffset], offset - startOffset);
             consume();
+            Lexeme lexemeOutput(Location(start, position()), FFlag::LuauFixInterpStringMid ? formatType : Lexeme::InterpStringBegin,
+                &buffer[startOffset], offset - startOffset - 1);
             return lexemeOutput;
         }
 
@@ -887,13 +879,7 @@ Lexeme Lexer::readNext()
         return readQuotedString();
 
     case '`':
-        if (FFlag::LuauInterpolatedStringBaseSupport)
-            return readInterpolatedStringBegin();
-        else
-        {
-            consume();
-            return Lexeme(Location(start, 1), '`');
-        }
+        return readInterpolatedStringBegin();
 
     case '.':
         consume();

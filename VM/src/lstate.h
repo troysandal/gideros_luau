@@ -147,6 +147,16 @@ struct GCMetrics
 };
 #endif
 
+// Callbacks that can be used to to redirect code execution from Luau bytecode VM to a custom implementation (AoT/JiT/sandboxing/...)
+struct lua_ExecutionCallbacks
+{
+    void* context;
+    void (*close)(lua_State* L);                 // called when global VM state is closed
+    void (*destroy)(lua_State* L, Proto* proto); // called when function is destroyed
+    int (*enter)(lua_State* L, Proto* proto);    // called when function is about to start/resume (when execdata is present), return 0 to exit VM
+    void (*setbreakpoint)(lua_State* L, Proto* proto, int line); // called when a breakpoint is set in a function
+};
+
 /*
 ** `global state', shared by all threads of this state
 */
@@ -167,8 +177,6 @@ typedef struct global_State
     GCObject* gray;      // list of gray objects
     GCObject* grayagain; // list of objects to be traversed atomically
     GCObject* weak;     // list of weak tables (to be cleared)
-
-    TString* strbufgc; // list of all string buffer objects; TODO: remove with LuauNoStrbufLink
 
 
     size_t GCthreshold;                       // when totalbytes > GCthreshold, run GC step
@@ -204,6 +212,10 @@ typedef struct global_State
     void (*udatagc[LUA_UTAG_LIMIT])(lua_State*, void*); // for each userdata tag, a gc callback to be called immediately before freeing memory
 
     lua_Callbacks cb;
+
+#if LUA_CUSTOM_EXECUTION
+    lua_ExecutionCallbacks ecb;
+#endif
 
     GCStats gcstats;
 
@@ -257,8 +269,8 @@ struct lua_State
     uint8_t status;
 
     uint8_t activememcat; // memory category that is used for new GC object allocations
-    uint8_t stackstate;
 
+    bool isactive;   // thread is currently executing, stack may be mutated without barriers
     bool singlestep; // call debugstep hook after each instruction
 
 

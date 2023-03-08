@@ -3,6 +3,7 @@
 
 #include "BuiltinFolding.h"
 
+#include <vector>
 #include <math.h>
 #define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
 

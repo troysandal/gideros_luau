@@ -108,21 +108,13 @@
  * API calls that can write to thread stacks outside of execution (which implies active) uses a thread barrier that checks if the thread is
  * black, and if it is it marks it as gray and puts it on a gray list to be rescanned during atomic phase.
  *
- * NOTE: The above is only true when LuauNoSleepBit is enabled.
- *
  * Upvalues are special objects that can be closed, in which case they contain the value (acting as a reference cell) and can be dealt
  * with using the regular algorithm, or open, in which case they refer to a stack slot in some other thread. These are difficult to deal
  * with because the stack writes are not monitored. Because of this open upvalues are treated in a somewhat special way: they are never marked
  * as black (doing so would violate the GC invariant), and they are kept in a special global list (global_State::uvhead) which is traversed
  * during atomic phase. This is needed because an open upvalue might point to a stack location in a dead thread that never marked the stack
  * slot - upvalues like this are identified since they don't have `markedopen` bit set during thread traversal and closed in `clearupvals`.
- *
- * NOTE: The above is only true when LuauSimplerUpval is enabled.
  */
-
-LUAU_FASTFLAGVARIABLE(LuauSimplerUpval, false)
-LUAU_FASTFLAGVARIABLE(LuauNoSleepBit, false)
-LUAU_FASTFLAGVARIABLE(LuauEagerShrink, false)
 
 #define GC_SWEEPPAGESTEPCOST 16
 
@@ -409,14 +401,11 @@ static void traversestack(global_State* g, lua_State* l)
         stringmark(l->namecall);
     for (StkId o = l->stack; o < l->top; o++)
         markvalue(g, o);
-    if (FFlag::LuauSimplerUpval)
+    for (UpVal* uv = l->openupval; uv; uv = uv->u.open.threadnext)
     {
-        for (UpVal* uv = l->openupval; uv; uv = uv->u.open.threadnext)
-        {
-            LUAU_ASSERT(upisopen(uv));
-            uv->markedopen = 1;
-            markobject(g, uv);
-        }
+        LUAU_ASSERT(upisopen(uv));
+        uv->markedopen = 1;
+        markobject(g, uv);
     }
 }
 
@@ -427,8 +416,29 @@ static void clearstack(lua_State* l)
         setnilvalue(o);
 }
 
-// TODO: pull function definition here when FFlag::LuauEagerShrink is removed
-static void shrinkstack(lua_State* L);
+static void shrinkstack(lua_State* L)
+{
+    // compute used stack - note that we can't use th->top if we're in the middle of vararg call
+    StkId lim = L->top;
+    for (CallInfo* ci = L->base_ci; ci <= L->ci; ci++)
+    {
+        LUAU_ASSERT(ci->top <= L->stack_last);
+        if (lim < ci->top)
+            lim = ci->top;
+    }
+
+    // shrink stack and callinfo arrays if we aren't using most of the space
+    int ci_used = cast_int(L->ci - L->base_ci); // number of `ci' in use
+    int s_used = cast_int(lim - L->stack);      // part of stack in use
+    if (L->size_ci > LUAI_MAXCALLS)             // handling overflow?
+        return;                                 // do not touch the stacks
+    if (3 * ci_used < L->size_ci && 2 * BASIC_CI_SIZE < L->size_ci)
+        luaD_reallocCI(L, L->size_ci / 2); // still big enough...
+    condhardstacktests(luaD_reallocCI(L, ci_used + 1));
+    if (3 * s_used < L->stacksize && 2 * (BASIC_STACK_SIZE + EXTRA_STACK) < L->stacksize)
+        luaD_reallocstack(L, L->stacksize / 2); // still big enough...
+    condhardstacktests(luaD_reallocstack(L, s_used));
+}
 
 /*
 ** traverse one gray object, turning it to black.
@@ -461,36 +471,26 @@ static size_t propagatemark(global_State* g)
         lua_State* th = gco2th(o);
         g->gray = th->gclist;
 
-        LUAU_ASSERT(!luaC_threadsleeping(th));
+        bool active = th->isactive || th == th->global->mainthread;
 
-        // threads that are executing and the main thread remain gray
-        bool active = luaC_threadactive(th) || th == th->global->mainthread;
+        traversestack(g, th);
 
-        // TODO: Refactor this logic after LuauNoSleepBit is removed
-        if (!active && g->gcstate == GCSpropagate)
-        {
-            traversestack(g, th);
-            clearstack(th);
-
-            if (!FFlag::LuauNoSleepBit)
-                l_setbit(th->stackstate, THREAD_SLEEPINGBIT);
-        }
-        else
+        // active threads will need to be rescanned later to mark new stack writes so we mark them gray again
+        if (active)
         {
             th->gclist = g->grayagain;
             g->grayagain = o;
 
             black2gray(o);
-
-            traversestack(g, th);
-
-            // final traversal?
-            if (g->gcstate == GCSatomic)
-                clearstack(th);
         }
 
-        // we could shrink stack at any time but we opt to skip it during atomic since it's redundant to do that more than once per cycle
-        if (FFlag::LuauEagerShrink && g->gcstate != GCSatomic)
+        // the stack needs to be cleared after the last modification of the thread state before sweep begins
+        // if the thread is inactive, we might not see the thread in this cycle so we must clear it now
+        if (!active || g->gcstate == GCSatomic)
+            clearstack(th);
+
+        // we could shrink stack at any time but we opt to do it during initial mark to do that just once per cycle
+        if (g->gcstate == GCSpropagate)
             shrinkstack(th);
 
         return sizeof(lua_State) + sizeof(TValue) * th->stacksize + sizeof(CallInfo) * th->size_ci;
@@ -594,30 +594,6 @@ static size_t cleartable(lua_State* L, GCObject* l)
     return work;
 }
 
-static void shrinkstack(lua_State* L)
-{
-    // compute used stack - note that we can't use th->top if we're in the middle of vararg call
-    StkId lim = L->top;
-    for (CallInfo* ci = L->base_ci; ci <= L->ci; ci++)
-    {
-        LUAU_ASSERT(ci->top <= L->stack_last);
-        if (lim < ci->top)
-            lim = ci->top;
-    }
-
-    // shrink stack and callinfo arrays if we aren't using most of the space
-    int ci_used = cast_int(L->ci - L->base_ci); // number of `ci' in use
-    int s_used = cast_int(lim - L->stack);      // part of stack in use
-    if (L->size_ci > LUAI_MAXCALLS)             // handling overflow?
-        return;                                 // do not touch the stacks
-    if (3 * ci_used < L->size_ci && 2 * BASIC_CI_SIZE < L->size_ci)
-        luaD_reallocCI(L, L->size_ci / 2); // still big enough...
-    condhardstacktests(luaD_reallocCI(L, ci_used + 1));
-    if (3 * s_used < L->stacksize && 2 * (BASIC_STACK_SIZE + EXTRA_STACK) < L->stacksize)
-        luaD_reallocstack(L, L->stacksize / 2); // still big enough...
-    condhardstacktests(luaD_reallocstack(L, s_used));
-}
-
 static void freeobj(lua_State* L, GCObject* o, lua_Page* page)
 {
     switch (o->gch.tt)
@@ -670,21 +646,6 @@ static void shrinkbuffersfull(lua_State* L)
 
 static bool deletegco(void* context, lua_Page* page, GCObject* gco)
 {
-    // we are in the process of deleting everything
-    // threads with open upvalues will attempt to close them all on removal
-    // but those upvalues might point to stack values that were already deleted
-    if (!FFlag::LuauSimplerUpval && gco->gch.tt == LUA_TTHREAD)
-    {
-        lua_State* th = gco2th(gco);
-
-        while (UpVal* uv = th->openupval)
-        {
-            luaF_unlinkupval(uv);
-            // close the upvalue without copying the dead data so that luaF_freeupval will not unlink again
-            uv->v = &uv->u.value;
-        }
-    }
-
     lua_State* L = (lua_State*)context;
     freeobj(L, gco, page);
     return true;
@@ -704,7 +665,6 @@ void luaC_freeall(lua_State* L)
         LUAU_ASSERT(g->strt.hash[i] == NULL);
 
     LUAU_ASSERT(L->global->strt.nuse == 0);
-    LUAU_ASSERT(g->strbufgc == NULL);
 }
 
 static void markmt(global_State* g)
@@ -832,15 +792,12 @@ static size_t atomic(lua_State* L)
     g->gcmetrics.currcycle.atomictimeclear += recordGcDeltaTime(currts);
 #endif
 
-    if (FFlag::LuauSimplerUpval)
-    {
-        // close orphaned live upvalues of dead threads and clear dead upvalues
-        work += clearupvals(L);
+    // close orphaned live upvalues of dead threads and clear dead upvalues
+    work += clearupvals(L);
 
 #ifdef LUAI_GCMETRICS
-        g->gcmetrics.currcycle.atomictimeupval += recordGcDeltaTime(currts);
+    g->gcmetrics.currcycle.atomictimeupval += recordGcDeltaTime(currts);
 #endif
-    }
 
     // flip current white
     g->currentwhite = cast_byte(otherwhite(g));
@@ -848,41 +805,6 @@ static size_t atomic(lua_State* L)
     g->gcstate = GCSsweep;
 
     return work;
-}
-
-static bool sweepgco(lua_State* L, lua_Page* page, GCObject* gco)
-{
-    global_State* g = L->global;
-
-    int deadmask = otherwhite(g);
-    LUAU_ASSERT(testbit(deadmask, FIXEDBIT)); // make sure we never sweep fixed objects
-
-    int alive = (gco->gch.marked ^ WHITEBITS) & deadmask;
-
-    if (gco->gch.tt == LUA_TTHREAD)
-    {
-        lua_State* th = gco2th(gco);
-
-        if (alive)
-        {
-            if (!FFlag::LuauNoSleepBit)
-                resetbit(th->stackstate, THREAD_SLEEPINGBIT);
-
-            if (!FFlag::LuauEagerShrink)
-                shrinkstack(th);
-        }
-    }
-
-    if (alive)
-    {
-        LUAU_ASSERT(!isdead(g, gco));
-        makewhite(g, gco); // make it white (for next cycle)
-        return false;
-    }
-
-    LUAU_ASSERT(isdead(g, gco));
-    freeobj(L, gco, page);
-    return true;
 }
 
 // a version of generic luaM_visitpage specialized for the main sweep stage
@@ -894,6 +816,15 @@ static int sweepgcopage(lua_State* L, lua_Page* page)
     int blockSize;
     luaM_getpagewalkinfo(page, &start, &end, &busyBlocks, &blockSize);
 
+    LUAU_ASSERT(busyBlocks > 0);
+
+    global_State* g = L->global;
+
+    int deadmask = otherwhite(g);
+    LUAU_ASSERT(testbit(deadmask, FIXEDBIT)); // make sure we never sweep fixed objects
+
+    int newwhite = luaC_white(g);
+
     for (char* pos = start; pos != end; pos += blockSize)
     {
         GCObject* gco = (GCObject*)pos;
@@ -902,10 +833,17 @@ static int sweepgcopage(lua_State* L, lua_Page* page)
         if (gco->gch.tt == LUA_TNIL)
             continue;
 
-        // when true is returned it means that the element was deleted
-        if (sweepgco(L, page, gco))
+        // is the object alive?
+        if ((gco->gch.marked ^ WHITEBITS) & deadmask)
         {
-            LUAU_ASSERT(busyBlocks > 0);
+            LUAU_ASSERT(!isdead(g, gco));
+            // make it white (for next cycle)
+            gco->gch.marked = cast_byte((gco->gch.marked & maskmarks) | newwhite);
+        }
+        else
+        {
+            LUAU_ASSERT(isdead(g, gco));
+            freeobj(L, gco, page);
 
             // if the last block was removed, page would be removed as well
             if (--busyBlocks == 0)
@@ -997,10 +935,12 @@ static size_t gcstep(lua_State* L, size_t limit)
         // nothing more to sweep?
         if (g->sweepgcopage == NULL)
         {
-            // don't forget to visit main thread
-            sweepgco(L, NULL, obj2gco(g->mainthread));
+            // don't forget to visit main thread, it's the only object not allocated in GCO pages
+            LUAU_ASSERT(!isdead(g, obj2gco(g->mainthread)));
+            makewhite(g, obj2gco(g->mainthread)); // make it white (for next cycle)
 
             shrinkbuffers(L);
+
             g->gcstate = GCSpause; // end collection
         }
         break;
@@ -1142,7 +1082,7 @@ void luaC_fullgc(lua_State* L)
         startGcCycleMetrics(g);
 #endif
 
-    if (FFlag::LuauSimplerUpval ? keepinvariant(g) : g->gcstate <= GCSatomic)
+    if (keepinvariant(g))
     {
         // reset sweep marks to sweep all elements (returning them to white)
         g->sweepgcopage = g->allgcopages;
@@ -1160,14 +1100,11 @@ void luaC_fullgc(lua_State* L)
         gcstep(L, SIZE_MAX);
     }
 
-    if (FFlag::LuauSimplerUpval)
+    // clear markedopen bits for all open upvalues; these might be stuck from half-finished mark prior to full gc
+    for (UpVal* uv = g->uvhead.u.open.next; uv != &g->uvhead; uv = uv->u.open.next)
     {
-        // clear markedopen bits for all open upvalues; these might be stuck from half-finished mark prior to full gc
-        for (UpVal* uv = g->uvhead.u.open.next; uv != &g->uvhead; uv = uv->u.open.next)
-        {
-            LUAU_ASSERT(upisopen(uv));
-            uv->markedopen = 0;
-        }
+        LUAU_ASSERT(upisopen(uv));
+        uv->markedopen = 0;
     }
 
 #ifdef LUAI_GCMETRICS
@@ -1229,18 +1166,6 @@ void luaC_addpostgc(lua_State *L,int (*dtor)(lua_State *L,void*),void *data)
     lualock_global();
     g->destructors.push_back(d);
     luaunlock_global();
-}
-
-void luaC_barrierupval(lua_State* L, GCObject* v)
-{
-    LUAU_ASSERT(!FFlag::LuauSimplerUpval);
-    global_State* g = L->global;
-    lualock_gc();
-    LUAU_ASSERT(iswhite(v) && !isdead(g, v));
-
-    if (keepinvariant(g))
-        reallymarkobject(g, v);
-    luaunlock_gc();
 }
 
 void luaC_barrierf(lua_State* L, GCObject* o, GCObject* v)
@@ -1340,31 +1265,6 @@ int64_t luaC_allocationrate(lua_State* L)
         return -1;
 
     return int64_t((g->gcstats.atomicstarttotalsizebytes - g->gcstats.endtotalsizebytes) / duration);
-}
-
-void luaC_wakethread(lua_State* L)
-{
-    LUAU_ASSERT(!FFlag::LuauNoSleepBit);
-    if (!luaC_threadsleeping(L))
-        return;
-
-    global_State* g = L->global;
-
-    lualock_gc();
-    resetbit(L->stackstate, THREAD_SLEEPINGBIT);
-
-    if (keepinvariant(g))
-    {
-        GCObject* o = obj2gco(L);
-
-        LUAU_ASSERT(isblack(o));
-
-        L->gclist = g->grayagain;
-        g->grayagain = o;
-
-        black2gray(o);
-    }
-    luaunlock_gc();
 }
 
 const char* luaC_statename(int state)

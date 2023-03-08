@@ -28,7 +28,7 @@
 // Upvalues: 0-254. Upvalues refer to the values stored in the closure object.
 // Constants: 0-2^23-1. Constants are stored in a table allocated with each proto; to allow for future bytecode tweaks the encodable value is limited to 23 bits.
 // Closures: 0-2^15-1. Closures are created from child protos via a child index; the limit is for the number of closures immediately referenced in each function.
-// Jumps: -2^23..2^23. Jump offsets are specified in word increments, so jumping over an instruction may sometimes require an offset of 2 or more.
+// Jumps: -2^23..2^23. Jump offsets are specified in word increments, so jumping over an instruction may sometimes require an offset of 2 or more. Note that for jump instructions with AUX, the AUX word is included as part of the jump offset.
 
 // # Bytecode versions
 // Bytecode serialized format embeds a version number, that dictates both the serialized form as well as the allowed instructions. As long as the bytecode version falls into supported
@@ -42,7 +42,7 @@
 // Note: due to limitations of the versioning scheme, some bytecode blobs that carry version 2 are using features from version 3. Starting from version 3, version should be sufficient to indicate bytecode compatibility.
 //
 // Version 1: Baseline version for the open-source release. Supported until 0.521.
-// Version 2: Adds Proto::linedefined. Currently supported.
+// Version 2: Adds Proto::linedefined. Supported until 0.544.
 // Version 3: Adds FORGPREP/JUMPXEQK* and enhances AUX encoding for FORGLOOP. Removes FORGLOOP_NEXT/INEXT and JUMPIFEQK/JUMPIFNOTEQK. Currently supported.
 
 // Bytecode opcode, part of the instruction header
@@ -194,7 +194,7 @@ enum LuauOpcode
 
     // JUMPIFEQ, JUMPIFLE, JUMPIFLT, JUMPIFNOTEQ, JUMPIFNOTLE, JUMPIFNOTLT: jumps to target offset if the comparison is true (or false, for NOT variants)
     // A: source register 1
-    // D: jump offset (-32768..32767; 0 means "next instruction" aka "don't jump")
+    // D: jump offset (-32768..32767; 1 means "next instruction" aka "don't jump")
     // AUX: source register 2
     LOP_JUMPIFEQ,
     LOP_JUMPIFLE,
@@ -289,17 +289,19 @@ enum LuauOpcode
     // the first variable is then copied into index; generator/state are immutable, index isn't visible to user code
     LOP_FORGLOOP,
 
-    // FORGPREP_INEXT/FORGLOOP_INEXT: FORGLOOP with 2 output variables (no AUX encoding), assuming generator is luaB_inext
-    // FORGPREP_INEXT prepares the index variable and jumps to FORGLOOP_INEXT
-    // FORGLOOP_INEXT has identical encoding and semantics to FORGLOOP (except for AUX encoding)
+    // FORGPREP_INEXT: prepare FORGLOOP with 2 output variables (no AUX encoding), assuming generator is luaB_inext, and jump to FORGLOOP
+    // A: target register (see FORGLOOP for register layout)
     LOP_FORGPREP_INEXT,
-    LOP_FORGLOOP_INEXT,
 
-    // FORGPREP_NEXT/FORGLOOP_NEXT: FORGLOOP with 2 output variables (no AUX encoding), assuming generator is luaB_next
-    // FORGPREP_NEXT prepares the index variable and jumps to FORGLOOP_NEXT
-    // FORGLOOP_NEXT has identical encoding and semantics to FORGLOOP (except for AUX encoding)
+    // removed in v3
+    LOP_DEP_FORGLOOP_INEXT,
+
+    // FORGPREP_NEXT: prepare FORGLOOP with 2 output variables (no AUX encoding), assuming generator is luaB_next, and jump to FORGLOOP
+    // A: target register (see FORGLOOP for register layout)
     LOP_FORGPREP_NEXT,
-    LOP_FORGLOOP_NEXT,
+
+    // removed in v3
+    LOP_DEP_FORGLOOP_NEXT,
 
     // GETVARARGS: copy variables into the target register from vararg storage for current function
     // A: target register
@@ -343,12 +345,9 @@ enum LuauOpcode
     // B: source register (for VAL/REF) or upvalue index (for UPVAL/UPREF)
     LOP_CAPTURE,
 
-    // JUMPIFEQK, JUMPIFNOTEQK: jumps to target offset if the comparison with constant is true (or false, for NOT variants)
-    // A: source register 1
-    // D: jump offset (-32768..32767; 0 means "next instruction" aka "don't jump")
-    // AUX: constant table index
-    LOP_JUMPIFEQK,
-    LOP_JUMPIFNOTEQK,
+    // removed in v3
+    LOP_DEP_JUMPIFEQK,
+    LOP_DEP_JUMPIFNOTEQK,
 
     // FASTCALL1: perform a fast call of a built-in function using 1 register argument
     // A: builtin function id (see LuauBuiltinFunction)
@@ -377,14 +376,14 @@ enum LuauOpcode
 
     // JUMPXEQKNIL, JUMPXEQKB: jumps to target offset if the comparison with constant is true (or false, see AUX)
     // A: source register 1
-    // D: jump offset (-32768..32767; 0 means "next instruction" aka "don't jump")
+    // D: jump offset (-32768..32767; 1 means "next instruction" aka "don't jump")
     // AUX: constant value (for boolean) in low bit, NOT flag (that flips comparison result) in high bit
     LOP_JUMPXEQKNIL,
     LOP_JUMPXEQKB,
 
     // JUMPXEQKN, JUMPXEQKS: jumps to target offset if the comparison with constant is true (or false, see AUX)
     // A: source register 1
-    // D: jump offset (-32768..32767; 0 means "next instruction" aka "don't jump")
+    // D: jump offset (-32768..32767; 1 means "next instruction" aka "don't jump")
     // AUX: constant table index in low 24 bits, NOT flag (that flips comparison result) in high bit
     LOP_JUMPXEQKN,
     LOP_JUMPXEQKS,
@@ -444,9 +443,9 @@ enum LuauOpcode
 enum LuauBytecodeTag
 {
     // Bytecode version; runtime supports [MIN, MAX], compiler emits TARGET by default but may emit a higher version when flags are enabled
-    LBC_VERSION_MIN = 2,
+    LBC_VERSION_MIN = 3,
     LBC_VERSION_MAX = 3,
-    LBC_VERSION_TARGET = 2,
+    LBC_VERSION_TARGET = 3,
     // Types of constant table entries
     LBC_CONSTANT_NIL = 0,
     LBC_CONSTANT_BOOLEAN,
@@ -550,6 +549,10 @@ enum LuauBuiltinFunction
 
     // bit32.extract(_, k, k)
     LBF_BIT32_EXTRACTK,
+
+    // get/setmetatable
+    LBF_GETMETATABLE,
+    LBF_SETMETATABLE,
 };
 
 // Capture type, used in LOP_CAPTURE

@@ -17,7 +17,11 @@ const size_t kPageSize = 4096;
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if defined(__FreeBSD__) && !(_POSIX_C_SOURCE >= 200112L)
+const size_t kPageSize = getpagesize();
+#else
 const size_t kPageSize = sysconf(_SC_PAGESIZE);
+#endif
 #endif
 
 #include <stdlib.h>
@@ -36,12 +40,16 @@ void* pagedAllocate(size_t size)
 {
     // By default we use operator new/delete instead of malloc/free so that they can be overridden externally
     if (!FFlag::DebugLuauFreezeArena)
+    {
         return ::operator new(size, std::nothrow);
+    }
 
     // On Windows, VirtualAlloc results in 64K granularity allocations; we allocate in chunks of ~32K so aligned_malloc is a little more efficient
     // On Linux, we must use mmap because using regular heap results in mprotect() fragmenting the page table and us bumping into 64K mmap limit.
 #ifdef _WIN32
     return _aligned_malloc(size, kPageSize);
+#elif defined(__FreeBSD__)
+    return aligned_alloc(kPageSize, size);
 #else
     return mmap(nullptr, pageAlign(size), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 #endif
@@ -55,6 +63,8 @@ void pagedDeallocate(void* ptr, size_t size)
 
 #ifdef _WIN32
     _aligned_free(ptr);
+#elif defined(__FreeBSD__)
+    free(ptr);
 #else
     int rc = munmap(ptr, size);
     LUAU_ASSERT(rc == 0);

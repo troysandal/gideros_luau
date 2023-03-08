@@ -1,6 +1,6 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 #include "Luau/Scope.h"
 
 #include <algorithm>
@@ -9,8 +9,8 @@
 
 #include "doctest.h"
 
-LUAU_FASTFLAG(LuauCheckGenericHOFTypes)
-LUAU_FASTFLAG(LuauSpecialTypesAsterisked)
+LUAU_FASTFLAG(LuauInstantiateInSubtyping)
+LUAU_FASTFLAG(LuauTypeMismatchInvarianceInError)
 
 using namespace Luau;
 
@@ -224,7 +224,7 @@ TEST_CASE_FIXTURE(Fixture, "infer_generic_function")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId idType = requireType("id");
-    const FunctionTypeVar* idFun = get<FunctionTypeVar>(idType);
+    const FunctionType* idFun = get<FunctionType>(idType);
     REQUIRE(idFun);
     auto [args, varargs] = flatten(idFun->argTypes);
     auto [rets, varrets] = flatten(idFun->retTypes);
@@ -247,7 +247,7 @@ TEST_CASE_FIXTURE(Fixture, "infer_generic_local_function")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId idType = requireType("id");
-    const FunctionTypeVar* idFun = get<FunctionTypeVar>(idType);
+    const FunctionType* idFun = get<FunctionType>(idType);
     REQUIRE(idFun);
     auto [args, varargs] = flatten(idFun->argTypes);
     auto [rets, varrets] = flatten(idFun->retTypes);
@@ -282,8 +282,14 @@ TEST_CASE_FIXTURE(Fixture, "infer_generic_methods")
         function x:f(): string return self:id("hello") end
         function x:g(): number return self:id(37) end
     )");
-    // TODO: Quantification should be doing the conversion, not normalization.
-    LUAU_REQUIRE_ERRORS(result);
+
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        LUAU_REQUIRE_NO_ERRORS(result);
+    else
+    {
+        // TODO: Quantification should be doing the conversion, not normalization.
+        LUAU_REQUIRE_ERRORS(result);
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "calling_self_generic_methods")
@@ -296,7 +302,8 @@ TEST_CASE_FIXTURE(Fixture, "calling_self_generic_methods")
             local y: number = self:id(37)
         end
     )");
-    // TODO: Should typecheck but currently errors CLI-39916
+
+    // TODO: Should typecheck but currently errors CLI-54277
     LUAU_REQUIRE_ERRORS(result);
 }
 
@@ -718,12 +725,24 @@ y.a.c = y
     )");
 
     LUAU_REQUIRE_ERRORS(result);
-    CHECK_EQ(toString(result.errors[0]),
-        R"(Type 'y' could not be converted into 'T<string>'
+    if (FFlag::LuauTypeMismatchInvarianceInError)
+    {
+        CHECK_EQ(toString(result.errors[0]),
+            R"(Type 'y' could not be converted into 'T<string>'
+caused by:
+  Property 'a' is not compatible. Type '{ c: T<string>?, d: number }' could not be converted into 'U<string>'
+caused by:
+  Property 'd' is not compatible. Type 'number' could not be converted into 'string' in an invariant context)");
+    }
+    else
+    {
+        CHECK_EQ(toString(result.errors[0]),
+            R"(Type 'y' could not be converted into 'T<string>'
 caused by:
   Property 'a' is not compatible. Type '{ c: T<string>?, d: number }' could not be converted into 'U<string>'
 caused by:
   Property 'd' is not compatible. Type 'number' could not be converted into 'string')");
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "generic_type_pack_unification1")
@@ -794,7 +813,7 @@ wrapper(test)
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ(toString(result.errors[0]), R"(Argument count mismatch. Function expects 2 arguments, but only 1 is specified)");
+    CHECK_EQ(toString(result.errors[0]), R"(Argument count mismatch. Function 'wrapper' expects 2 arguments, but only 1 is specified)");
 }
 
 TEST_CASE_FIXTURE(Fixture, "generic_argument_count_too_many")
@@ -811,7 +830,7 @@ wrapper(test2, 1, "", 3)
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ(toString(result.errors[0]), R"(Argument count mismatch. Function expects 3 arguments, but 4 are specified)");
+    CHECK_EQ(toString(result.errors[0]), R"(Argument count mismatch. Function 'wrapper' expects 3 arguments, but 4 are specified)");
 }
 
 TEST_CASE_FIXTURE(Fixture, "generic_function")
@@ -842,14 +861,14 @@ TEST_CASE_FIXTURE(Fixture, "generic_table_method")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId tType = requireType("T");
-    TableTypeVar* tTable = getMutable<TableTypeVar>(tType);
+    TableType* tTable = getMutable<TableType>(tType);
     REQUIRE(tTable != nullptr);
 
     REQUIRE(tTable->props.count("bar"));
     TypeId barType = tTable->props["bar"].type;
     REQUIRE(barType != nullptr);
 
-    const FunctionTypeVar* ftv = get<FunctionTypeVar>(follow(barType));
+    const FunctionType* ftv = get<FunctionType>(follow(barType));
     REQUIRE_MESSAGE(ftv != nullptr, "Should be a function: " << *barType);
 
     std::vector<TypeId> args = flatten(ftv->argTypes).first;
@@ -875,20 +894,20 @@ TEST_CASE_FIXTURE(Fixture, "correctly_instantiate_polymorphic_member_functions")
     LUAU_REQUIRE_NO_ERRORS(result);
     dumpErrors(result);
 
-    const TableTypeVar* t = get<TableTypeVar>(requireType("T"));
+    const TableType* t = get<TableType>(requireType("T"));
     REQUIRE(t != nullptr);
 
     std::optional<Property> fooProp = get(t->props, "foo");
     REQUIRE(bool(fooProp));
 
-    const FunctionTypeVar* foo = get<FunctionTypeVar>(follow(fooProp->type));
+    const FunctionType* foo = get<FunctionType>(follow(fooProp->type));
     REQUIRE(bool(foo));
 
     std::optional<TypeId> ret_ = first(foo->retTypes);
     REQUIRE(bool(ret_));
     TypeId ret = follow(*ret_);
 
-    REQUIRE_EQ(getPrimitiveType(ret), PrimitiveTypeVar::Number);
+    REQUIRE_EQ(getPrimitiveType(ret), PrimitiveType::Number);
 }
 
 /*
@@ -915,20 +934,20 @@ TEST_CASE_FIXTURE(Fixture, "instantiate_cyclic_generic_function")
     )");
 
     TypeId g = requireType("g");
-    const FunctionTypeVar* gFun = get<FunctionTypeVar>(g);
+    const FunctionType* gFun = get<FunctionType>(g);
     REQUIRE(gFun != nullptr);
 
     auto optionArg = first(gFun->argTypes);
     REQUIRE(bool(optionArg));
 
     TypeId arg = follow(*optionArg);
-    const TableTypeVar* argTable = get<TableTypeVar>(arg);
+    const TableType* argTable = get<TableType>(arg);
     REQUIRE(argTable != nullptr);
 
     std::optional<Property> methodProp = get(argTable->props, "method");
     REQUIRE(bool(methodProp));
 
-    const FunctionTypeVar* methodFunction = get<FunctionTypeVar>(methodProp->type);
+    const FunctionType* methodFunction = get<FunctionType>(methodProp->type);
     REQUIRE(methodFunction != nullptr);
 
     std::optional<TypeId> methodArg = first(methodFunction->argTypes);
@@ -956,7 +975,10 @@ TEST_CASE_FIXTURE(Fixture, "instantiate_generic_function_in_assignments")
     TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
     REQUIRE(tm);
     CHECK_EQ("((number) -> number, string) -> number", toString(tm->wantedType));
-    CHECK_EQ("((number) -> number, number) -> number", toString(tm->givenType));
+    if (FFlag::LuauInstantiateInSubtyping)
+        CHECK_EQ("<a, b...>((a) -> (b...), a) -> (b...)", toString(tm->givenType));
+    else
+        CHECK_EQ("((number) -> number, number) -> number", toString(tm->givenType));
 }
 
 TEST_CASE_FIXTURE(Fixture, "instantiate_generic_function_in_assignments2")
@@ -976,7 +998,10 @@ TEST_CASE_FIXTURE(Fixture, "instantiate_generic_function_in_assignments2")
     TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
     REQUIRE(tm);
     CHECK_EQ("(string, string) -> number", toString(tm->wantedType));
-    CHECK_EQ("((string) -> number, string) -> number", toString(*tm->givenType));
+    if (FFlag::LuauInstantiateInSubtyping)
+        CHECK_EQ("<a, b...>((a) -> (b...), a) -> (b...)", toString(tm->givenType));
+    else
+        CHECK_EQ("((string) -> number, string) -> number", toString(*tm->givenType));
 }
 
 TEST_CASE_FIXTURE(Fixture, "self_recursive_instantiated_param")
@@ -1003,12 +1028,9 @@ TEST_CASE_FIXTURE(Fixture, "no_stack_overflow_from_quantifying")
 
     LUAU_REQUIRE_ERRORS(result);
 
-    std::optional<TypeFun> t0 = getMainModule()->getModuleScope()->lookupType("t0");
+    std::optional<TypeId> t0 = lookupType("t0");
     REQUIRE(t0);
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(t0->type));
-    else
-        CHECK_EQ("<error-type>", toString(t0->type));
+    CHECK_EQ("*error-type*", toString(*t0));
 
     auto it = std::find_if(result.errors.begin(), result.errors.end(), [](TypeError& err) {
         return get<OccursCheckFailed>(err);
@@ -1026,8 +1048,11 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "infer_generic_function_function_argument")
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
+}
 
-    result = check(R"(
+TEST_CASE_FIXTURE(BuiltinsFixture, "infer_generic_function_function_argument_2")
+{
+    CheckResult result = check(R"(
         local function map<a, b>(arr: {a}, f: (a) -> b)
             local r = {}
             for i,v in ipairs(arr) do
@@ -1041,8 +1066,11 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "infer_generic_function_function_argument")
 
     LUAU_REQUIRE_NO_ERRORS(result);
     REQUIRE_EQ("{boolean}", toString(requireType("r")));
+}
 
-    check(R"(
+TEST_CASE_FIXTURE(BuiltinsFixture, "infer_generic_function_function_argument_3")
+{
+    CheckResult result = check(R"(
         local function foldl<a, b>(arr: {a}, init: b, f: (b, a) -> b)
             local r = init
             for i,v in ipairs(arr) do
@@ -1102,18 +1130,7 @@ local b = sumrec(sum) -- ok
 local c = sumrec(function(x, y, f) return f(x, y) end) -- type binders are not inferred
     )");
 
-    if (FFlag::LuauCheckGenericHOFTypes)
-    {
-        LUAU_REQUIRE_NO_ERRORS(result);
-    }
-    else
-    {
-        LUAU_REQUIRE_ERRORS(result);
-        CHECK_EQ(
-            "Type '(a, b, (a, b) -> (c...)) -> (c...)' could not be converted into '<a>(a, a, (a, a) -> a) -> a'; different number of generic type "
-            "parameters",
-            toString(result.errors[0]));
-    }
+    LUAU_REQUIRE_NO_ERRORS(result);
 }
 
 TEST_CASE_FIXTURE(Fixture, "substitution_with_bound_table")
@@ -1198,10 +1215,6 @@ TEST_CASE_FIXTURE(Fixture, "quantify_functions_even_if_they_have_an_explicit_gen
 
 TEST_CASE_FIXTURE(Fixture, "do_not_always_instantiate_generic_intersection_types")
 {
-    ScopedFastFlag sff[] = {
-        {"LuauMaybeGenericIntersectionTypes", true},
-    };
-
     CheckResult result = check(R"(
         --!strict
         type Array<T> = { [number]: T }
@@ -1213,6 +1226,66 @@ TEST_CASE_FIXTURE(Fixture, "do_not_always_instantiate_generic_intersection_types
         local _Arr : Array<any> & Array_Statics = {} :: Array_Statics
     )");
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "hof_subtype_instantiation_regression")
+{
+    CheckResult result = check(R"(
+--!strict
+
+local function defaultSort<T>(a: T, b: T)
+    return true
+end
+type A = any
+return function<T>(array: {T}): {T}
+    table.sort(array, defaultSort)
+    return array
+end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "higher_rank_polymorphism_should_not_accept_instantiated_arguments")
+{
+    ScopedFastFlag sffs[] = {
+        {"LuauInstantiateInSubtyping", true},
+    };
+
+    CheckResult result = check(R"(
+--!strict
+
+local function instantiate(f: <a>(a) -> a): (number) -> number
+    return f
+end
+
+instantiate(function(x: string) return "foo" end)
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    auto tm1 = get<TypeMismatch>(result.errors[0]);
+    REQUIRE(tm1);
+
+    CHECK_EQ("<a>(a) -> a", toString(tm1->wantedType));
+    CHECK_EQ("<a>(string) -> string", toString(tm1->givenType));
+}
+
+TEST_CASE_FIXTURE(Fixture, "bidirectional_checking_and_generalization_play_nice")
+{
+    CheckResult result = check(R"(
+        local foo = function(a)
+            return a()
+        end
+
+        local a = foo(function() return 1 end)
+        local b = foo(function() return "bar" end)
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK("number" == toString(requireType("a")));
+    CHECK("string" == toString(requireType("b")));
 }
 
 TEST_SUITE_END();

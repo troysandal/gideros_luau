@@ -6,6 +6,8 @@ namespace Luau
 namespace Unifiable
 {
 
+static int nextIndex = 0;
+
 Free::Free(TypeLevel level)
     : index(++nextIndex)
     , level(level)
@@ -13,11 +15,19 @@ Free::Free(TypeLevel level)
 }
 
 Free::Free(Scope* scope)
-    : scope(scope)
+    : index(++nextIndex)
+    , scope(scope)
 {
 }
 
-int Free::nextIndex = 0;
+Free::Free(Scope* scope, TypeLevel level)
+    : index(++nextIndex)
+    , level(level)
+    , scope(scope)
+{
+}
+
+int Free::DEPRECATED_nextIndex = 0;
 
 Generic::Generic()
     : index(++nextIndex)
@@ -61,7 +71,7 @@ Generic::Generic(Scope* scope, const Name& name)
 {
 }
 
-int Generic::nextIndex = 0;
+int Generic::DEPRECATED_nextIndex = 0;
 
 Error::Error()
     : index(++nextIndex)

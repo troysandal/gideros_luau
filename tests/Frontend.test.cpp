@@ -81,8 +81,8 @@ struct FrontendFixture : BuiltinsFixture
 {
     FrontendFixture()
     {
-        addGlobalBinding(typeChecker, "game", frontend.typeChecker.anyType, "@test");
-        addGlobalBinding(typeChecker, "script", frontend.typeChecker.anyType, "@test");
+        addGlobalBinding(frontend, "game", frontend.typeChecker.anyType, "@test");
+        addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
     }
 };
 
@@ -157,7 +157,7 @@ TEST_CASE_FIXTURE(FrontendFixture, "automatically_check_dependent_scripts")
     CHECK(bModule->errors.empty());
     Luau::dumpErrors(bModule);
 
-    auto bExports = first(bModule->getModuleScope()->returnType);
+    auto bExports = first(bModule->returnType);
     REQUIRE(!!bExports);
 
     CHECK_EQ("{| b_value: number |}", toString(*bExports));
@@ -243,13 +243,13 @@ TEST_CASE_FIXTURE(FrontendFixture, "nocheck_modules_are_typed")
     ModulePtr aModule = frontend.moduleResolver.modules["game/Gui/Modules/A"];
     REQUIRE(bool(aModule));
 
-    std::optional<TypeId> aExports = first(aModule->getModuleScope()->returnType);
+    std::optional<TypeId> aExports = first(aModule->returnType);
     REQUIRE(bool(aExports));
 
     ModulePtr bModule = frontend.moduleResolver.modules["game/Gui/Modules/B"];
     REQUIRE(bool(bModule));
 
-    std::optional<TypeId> bExports = first(bModule->getModuleScope()->returnType);
+    std::optional<TypeId> bExports = first(bModule->returnType);
     REQUIRE(bool(bExports));
 
     CHECK_EQ(toString(*aExports), toString(*bExports));
@@ -300,7 +300,7 @@ TEST_CASE_FIXTURE(FrontendFixture, "nocheck_cycle_used_by_checked")
     ModulePtr cModule = frontend.moduleResolver.modules["game/Gui/Modules/C"];
     REQUIRE(bool(cModule));
 
-    std::optional<TypeId> cExports = first(cModule->getModuleScope()->returnType);
+    std::optional<TypeId> cExports = first(cModule->returnType);
     REQUIRE(bool(cExports));
     CHECK_EQ("{| a: any, b: any |}", toString(*cExports));
 }
@@ -511,10 +511,33 @@ TEST_CASE_FIXTURE(FrontendFixture, "recheck_if_dependent_script_is_dirty")
     CHECK(bModule->errors.empty());
     Luau::dumpErrors(bModule);
 
-    auto bExports = first(bModule->getModuleScope()->returnType);
+    auto bExports = first(bModule->returnType);
     REQUIRE(!!bExports);
 
     CHECK_EQ("{| b_value: string |}", toString(*bExports));
+}
+
+TEST_CASE_FIXTURE(FrontendFixture, "mark_non_immediate_reverse_deps_as_dirty")
+{
+    fileResolver.source["game/Gui/Modules/A"] = "return {hello=5, world=true}";
+    fileResolver.source["game/Gui/Modules/B"] = R"(
+        return require(game:GetService('Gui').Modules.A)
+    )";
+    fileResolver.source["game/Gui/Modules/C"] = R"(
+        local Modules = game:GetService('Gui').Modules
+        local B = require(Modules.B)
+        return {c_value = B.hello}
+    )";
+
+    frontend.check("game/Gui/Modules/C");
+
+    std::vector<Luau::ModuleName> markedDirty;
+    frontend.markDirty("game/Gui/Modules/A", &markedDirty);
+
+    REQUIRE(markedDirty.size() == 3);
+    CHECK(std::find(markedDirty.begin(), markedDirty.end(), "game/Gui/Modules/A") != markedDirty.end());
+    CHECK(std::find(markedDirty.begin(), markedDirty.end(), "game/Gui/Modules/B") != markedDirty.end());
+    CHECK(std::find(markedDirty.begin(), markedDirty.end(), "game/Gui/Modules/C") != markedDirty.end());
 }
 
 #if 0
@@ -768,7 +791,7 @@ TEST_CASE_FIXTURE(FrontendFixture, "discard_type_graphs")
 
     ModulePtr module = fe.moduleResolver.getModule("Module/A");
 
-    CHECK_EQ(0, module->internalTypes.typeVars.size());
+    CHECK_EQ(0, module->internalTypes.types.size());
     CHECK_EQ(0, module->internalTypes.typePacks.size());
     CHECK_EQ(0, module->astTypes.size());
     CHECK_EQ(0, module->astResolvedTypes.size());
@@ -1027,11 +1050,6 @@ TEST_CASE("check_without_builtin_next")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "reexport_cyclic_type")
 {
-    ScopedFastFlag sff[] = {
-        {"LuauForceExportSurfacesToBeNormal", true},
-        {"LuauLowerBoundsCalculation", true},
-    };
-
     fileResolver.source["Module/A"] = R"(
         type F<T> = (set: G<T>) -> ()
 
@@ -1063,19 +1081,14 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "reexport_cyclic_type")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "reexport_type_alias")
 {
-    ScopedFastFlag sff[] = {
-        {"LuauForceExportSurfacesToBeNormal", true},
-        {"LuauLowerBoundsCalculation", true},
-    };
-
     fileResolver.source["Module/A"] = R"(
         type KeyOfTestEvents = "test-file-start" | "test-file-success" | "test-file-failure" | "test-case-result"
-        type unknown = any
+        type MyAny = any
 
         export type TestFileEvent<T = KeyOfTestEvents> = (
             eventName: T,
             args: any --[[ ROBLOX TODO: Unhandled node for type: TSIndexedAccessType ]] --[[ TestEvents[T] ]]
-        ) -> unknown
+        ) -> MyAny
 
         return {}
     )";

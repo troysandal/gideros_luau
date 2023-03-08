@@ -30,6 +30,12 @@ bool verbose = false;
 // Default optimization level for conformance test; can be overridden via -On
 int optimizationLevel = 1;
 
+// Run conformance tests with native code generation
+bool codegen = false;
+
+// Something to seed a pseudorandom number generator with
+std::optional<unsigned> randomSeed;
+
 static bool skipFastFlag(const char* flagName)
 {
     if (strncmp(flagName, "Test", 4) == 0)
@@ -252,6 +258,11 @@ int main(int argc, char** argv)
         verbose = true;
     }
 
+    if (doctest::parseFlag(argc, argv, "--codegen"))
+    {
+        codegen = true;
+    }
+
     int level = -1;
     if (doctest::parseIntOption(argc, argv, "-O", doctest::option_int, level))
     {
@@ -259,6 +270,16 @@ int main(int argc, char** argv)
             std::cerr << "Optimization level must be between 0 and 2 inclusive." << std::endl;
         else
             optimizationLevel = level;
+    }
+
+    int rseed = -1;
+    if (doctest::parseIntOption(argc, argv, "--random-seed=", doctest::option_int, rseed))
+        randomSeed = unsigned(rseed);
+
+    if (doctest::parseOption(argc, argv, "--randomize") && !randomSeed)
+    {
+        randomSeed = unsigned(time(nullptr));
+        printf("Using RNG seed %u\n", *randomSeed);
     }
 
     if (std::vector<doctest::String> flags; doctest::parseCommaSepArgs(argc, argv, "--fflags=", flags))
@@ -295,6 +316,8 @@ int main(int argc, char** argv)
         printf(" --verbose                             Enables verbose output (e.g. lua 'print' statements)\n");
         printf(" --fflags=                             Sets specified fast flags\n");
         printf(" --list-fflags                         List all fast flags\n");
+        printf(" --randomize                           Use a random RNG seed\n");
+        printf(" --random-seed=n                       Use a particular RNG seed\n");
     }
     return result;
 }

@@ -4,26 +4,20 @@ print('testing metatables')
 
 local unpack = table.unpack
 
-X = 20; B = 30
-
-local _G = getfenv()
-setfenv(1, setmetatable({}, {__index=_G}))
-
-collectgarbage()
-
-X = X+10
-assert(X == 30 and _G.X == 20)
-B = false
-assert(B == false)
-B = nil
-assert(B == 30)
-
 assert(getmetatable{} == nil)
 assert(getmetatable(4) == nil)
 assert(getmetatable(nil) == nil)
 a={}; setmetatable(a, {__metatable = "xuxu",
                     __tostring=function(x) return x.name end})
 assert(getmetatable(a) == "xuxu")
+ud=newproxy(true); getmetatable(ud).__metatable = "xuxu"
+assert(getmetatable(ud) == "xuxu")
+
+assert(pcall(getmetatable) == false)
+assert(pcall(function() return getmetatable() end) == false)
+assert(select(2, pcall(getmetatable, {})) == nil)
+assert(select(2, pcall(getmetatable, ud)) == "xuxu")
+
 local res,err = pcall(tostring, a)
 assert(not res and err == "'__tostring' must return a string")
 -- cannot change a protected metatable
@@ -296,13 +290,7 @@ x = c(3,4,5)
 assert(i == 3 and x[1] == 3 and x[3] == 5)
 
 
-assert(_G.X == 20)
-assert(_G == getfenv(0))
-
 print'+'
-
-local _g = _G
-setfenv(1, setmetatable({}, {__index=function (_,k) return _g[k] end}))
 
 -- testing proxies
 assert(getmetatable(newproxy()) == nil)
@@ -476,5 +464,27 @@ do
     assert(ei[k] == v)
   end
 end
+
+function testfenv()
+  X = 20; B = 30
+
+  local _G = getfenv()
+  setfenv(1, setmetatable({}, {__index=_G}))
+
+  X = X+10
+  assert(X == 30 and _G.X == 20)
+  B = false
+  assert(B == false)
+  B = nil
+  assert(B == 30)
+
+  assert(_G.X == 20)
+  assert(_G == getfenv(0))
+
+  assert(pcall(getfenv, 10) == false)
+  assert(pcall(setfenv, setfenv, {}) == false)
+end
+
+testfenv() -- DONT MOVE THIS LINE
 
 return 'OK'

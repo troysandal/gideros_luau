@@ -17,20 +17,7 @@
 LUAU_FASTINTVARIABLE(LuauRecursionLimit, 1000)
 LUAU_FASTINTVARIABLE(LuauParseErrorLimit, 100)
 
-LUAU_FASTFLAGVARIABLE(LuauFixNamedFunctionParse, false)
-LUAU_DYNAMIC_FASTFLAGVARIABLE(LuaReportParseWrongNamedType, false)
-
-bool lua_telemetry_parsed_named_non_function_type = false;
-
-LUAU_FASTFLAGVARIABLE(LuauErrorDoubleHexPrefix, false)
-LUAU_FASTFLAGVARIABLE(LuauLintParseIntegerIssues, false)
-LUAU_DYNAMIC_FASTFLAGVARIABLE(LuaReportParseIntegerIssues, false)
-
-LUAU_FASTFLAGVARIABLE(LuauInterpolatedStringBaseSupport, true)
-
-bool lua_telemetry_parsed_out_of_range_bin_integer = false;
-bool lua_telemetry_parsed_out_of_range_hex_integer = false;
-bool lua_telemetry_parsed_double_prefix_hex_integer = false;
+LUAU_FASTFLAGVARIABLE(LuauParserErrorsOnMissingDefaultTypePackArgument, false)
 
 #define ERROR_INVALID_INTERP_DOUBLE_BRACE "Double braces are not permitted within interpolated strings. Did you mean '\\{'?"
 
@@ -165,15 +152,16 @@ ParseResult Parser::parse(const char* buffer, size_t bufferSize, AstNameTable& n
     try
     {
         AstStatBlock* root = p.parseChunk();
+        size_t lines = p.lexer.current().location.end.line + (bufferSize > 0 && buffer[bufferSize - 1] != '\n');
 
-        return ParseResult{root, std::move(p.hotcomments), std::move(p.parseErrors), std::move(p.commentLocations)};
+        return ParseResult{root, lines, std::move(p.hotcomments), std::move(p.parseErrors), std::move(p.commentLocations)};
     }
     catch (ParseError& err)
     {
         // when catching a fatal error, append it to the list of non-fatal errors and return
         p.parseErrors.push_back(err);
 
-        return ParseResult{nullptr, {}, p.parseErrors};
+        return ParseResult{nullptr, 0, {}, p.parseErrors};
     }
 }
 
@@ -774,7 +762,7 @@ AstStat* Parser::parseTypeAlias(const Location& start, bool exported)
 
     AstType* type = parseTypeAnnotation();
 
-    return allocator.alloc<AstStatTypeAlias>(Location(start, type->location), name->name, generics, genericPacks, type, exported);
+    return allocator.alloc<AstStatTypeAlias>(Location(start, type->location), name->name, name->location, generics, genericPacks, type, exported);
 }
 
 AstDeclaredClassProp Parser::parseDeclaredClassMethod()
@@ -812,9 +800,8 @@ AstDeclaredClassProp Parser::parseDeclaredClassMethod()
 
     if (args.size() == 0 || args[0].name.name != "self" || args[0].annotation != nullptr)
     {
-        return AstDeclaredClassProp{fnName.name,
-            reportTypeAnnotationError(Location(start, end), {}, /*isMissing*/ false, "'self' must be present as the unannotated first parameter"),
-            true};
+        return AstDeclaredClassProp{
+            fnName.name, reportTypeAnnotationError(Location(start, end), {}, "'self' must be present as the unannotated first parameter"), true};
     }
 
     // Skip the first index.
@@ -825,8 +812,7 @@ AstDeclaredClassProp Parser::parseDeclaredClassMethod()
         if (args[i].annotation)
             vars.push_back(args[i].annotation);
         else
-            vars.push_back(reportTypeAnnotationError(
-                Location(start, end), {}, /*isMissing*/ false, "All declaration parameters aside from 'self' must be annotated"));
+            vars.push_back(reportTypeAnnotationError(Location(start, end), {}, "All declaration parameters aside from 'self' must be annotated"));
     }
 
     if (vararg && !varargAnnotation)
@@ -905,6 +891,25 @@ AstStat* Parser::parseDeclaration(const Location& start)
             if (lexer.current().type == Lexeme::ReservedFunction)
             {
                 props.push_back(parseDeclaredClassMethod());
+            }
+            else if (lexer.current().type == '[')
+            {
+                const Lexeme begin = lexer.current();
+                nextLexeme(); // [
+
+                std::optional<AstArray<char>> chars = parseCharArray();
+
+                expectMatchAndConsume(']', begin);
+                expectAndConsume(':', "property type annotation");
+                AstType* type = parseTypeAnnotation();
+
+                // TODO: since AstName conains a char*, it can't contain null
+                bool containsNull = chars && (strnlen(chars->data, chars->size) < chars->size);
+
+                if (chars && !containsNull)
+                    props.push_back(AstDeclaredClassProp{AstName(chars->data), type, false});
+                else
+                    report(begin.location, "String literal contains malformed escape sequence");
             }
             else
             {
@@ -1065,6 +1070,12 @@ void Parser::parseExprList(TempVector<AstExpr*>& result)
     {
         nextLexeme();
 
+        if (lexer.current().type == ')')
+        {
+            report(lexer.current().location, "Expected expression after ',' but got ')' instead");
+            break;
+        }
+
         result.push_back(parseExpr());
     }
 }
@@ -1151,7 +1162,14 @@ AstTypePack* Parser::parseTypeList(TempVector<AstType*>& result, TempVector<std:
         result.push_back(parseTypeAnnotation());
         if (lexer.current().type != ',')
             break;
+
         nextLexeme();
+
+        if (lexer.current().type == ')')
+        {
+            report(lexer.current().location, "Expected type after ',' but got ')' instead");
+            break;
+        }
     }
 
     return nullptr;
@@ -1233,7 +1251,11 @@ std::pair<Location, AstTypeList> Parser::parseReturnTypeAnnotation()
         {
             AstType* returnType = parseTypeAnnotation(result, innerBegin);
 
-            return {Location{location, returnType->location}, AstTypeList{copy(&returnType, 1), varargAnnotation}};
+            // If parseTypeAnnotation parses nothing, then returnType->location.end only points at the last non-type-pack
+            // type to successfully parse.  We need the span of the whole annotation.
+            Position endPos = result.size() == 1 ? location.end : returnType->location.end;
+
+            return {Location{location.begin, endPos}, AstTypeList{copy(&returnType, 1), varargAnnotation}};
         }
 
         return {location, AstTypeList{copy(result), varargAnnotation}};
@@ -1401,7 +1423,7 @@ AstTypeOrPack Parser::parseFunctionTypeAnnotation(bool allowPack)
 
     AstArray<AstType*> paramTypes = copy(params);
 
-    if (FFlag::LuauFixNamedFunctionParse && !names.empty())
+    if (!names.empty())
         forceFunctionType = true;
 
     bool returnTypeIntroducer = lexer.current().type == Lexeme::SkinnyArrow || lexer.current().type == ':';
@@ -1409,9 +1431,6 @@ AstTypeOrPack Parser::parseFunctionTypeAnnotation(bool allowPack)
     // Not a function at all. Just a parenthesized type. Or maybe a type pack with a single element
     if (params.size() == 1 && !varargAnnotation && !forceFunctionType && !returnTypeIntroducer)
     {
-        if (DFFlag::LuaReportParseWrongNamedType && !names.empty())
-            lua_telemetry_parsed_named_non_function_type = true;
-
         if (allowPack)
             return {{}, allocator.alloc<AstTypePackExplicit>(begin.location, AstTypeList{paramTypes, nullptr})};
         else
@@ -1419,12 +1438,7 @@ AstTypeOrPack Parser::parseFunctionTypeAnnotation(bool allowPack)
     }
 
     if (!forceFunctionType && !returnTypeIntroducer && allowPack)
-    {
-        if (DFFlag::LuaReportParseWrongNamedType && !names.empty())
-            lua_telemetry_parsed_named_non_function_type = true;
-
         return {{}, allocator.alloc<AstTypePackExplicit>(begin.location, AstTypeList{paramTypes, varargAnnotation})};
-    }
 
     AstArray<std::optional<AstArgumentName>> paramNames = copy(names);
 
@@ -1513,7 +1527,7 @@ AstType* Parser::parseTypeAnnotation(TempVector<AstType*>& parts, const Location
 
     if (isUnion && isIntersection)
     {
-        return reportTypeAnnotationError(Location(begin, parts.back()->location), copy(parts), /*isMissing*/ false,
+        return reportTypeAnnotationError(Location(begin, parts.back()->location), copy(parts),
             "Mixing union and intersection types is not allowed; consider wrapping in parentheses.");
     }
 
@@ -1574,44 +1588,43 @@ AstTypeOrPack Parser::parseSimpleTypeAnnotation(bool allowPack)
 {
     incrementRecursionCounter("type annotation");
 
-    Location begin = lexer.current().location;
+    Location start = lexer.current().location;
 
     if (lexer.current().type == Lexeme::ReservedNil)
     {
         nextLexeme();
-        return {allocator.alloc<AstTypeReference>(begin, std::nullopt, nameNil), {}};
+        return {allocator.alloc<AstTypeReference>(start, std::nullopt, nameNil), {}};
     }
     else if (lexer.current().type == Lexeme::ReservedTrue)
     {
         nextLexeme();
-        return {allocator.alloc<AstTypeSingletonBool>(begin, true)};
+        return {allocator.alloc<AstTypeSingletonBool>(start, true)};
     }
     else if (lexer.current().type == Lexeme::ReservedFalse)
     {
         nextLexeme();
-        return {allocator.alloc<AstTypeSingletonBool>(begin, false)};
+        return {allocator.alloc<AstTypeSingletonBool>(start, false)};
     }
     else if (lexer.current().type == Lexeme::RawString || lexer.current().type == Lexeme::QuotedString)
     {
         if (std::optional<AstArray<char>> value = parseCharArray())
         {
             AstArray<char> svalue = *value;
-            return {allocator.alloc<AstTypeSingletonString>(begin, svalue)};
+            return {allocator.alloc<AstTypeSingletonString>(start, svalue)};
         }
         else
-            return {reportTypeAnnotationError(begin, {}, /*isMissing*/ false, "String literal contains malformed escape sequence")};
+            return {reportTypeAnnotationError(start, {}, "String literal contains malformed escape sequence")};
     }
     else if (lexer.current().type == Lexeme::InterpStringBegin || lexer.current().type == Lexeme::InterpStringSimple)
     {
         parseInterpString();
 
-        return {reportTypeAnnotationError(begin, {}, /*isMissing*/ false, "Interpolated string literals cannot be used as types")};
+        return {reportTypeAnnotationError(start, {}, "Interpolated string literals cannot be used as types")};
     }
     else if (lexer.current().type == Lexeme::BrokenString)
     {
-        Location location = lexer.current().location;
         nextLexeme();
-        return {reportTypeAnnotationError(location, {}, /*isMissing*/ false, "Malformed string")};
+        return {reportTypeAnnotationError(start, {}, "Malformed string")};
     }
     else if (lexer.current().type == Lexeme::Name)
     {
@@ -1642,7 +1655,7 @@ AstTypeOrPack Parser::parseSimpleTypeAnnotation(bool allowPack)
 
             expectMatchAndConsume(')', typeofBegin);
 
-            return {allocator.alloc<AstTypeTypeof>(Location(begin, end), expr), {}};
+            return {allocator.alloc<AstTypeTypeof>(Location(start, end), expr), {}};
         }
 
         bool hasParameters = false;
@@ -1656,7 +1669,7 @@ AstTypeOrPack Parser::parseSimpleTypeAnnotation(bool allowPack)
 
         Location end = lexer.previousLocation();
 
-        return {allocator.alloc<AstTypeReference>(Location(begin, end), prefix, name.name, hasParameters, parameters), {}};
+        return {allocator.alloc<AstTypeReference>(Location(start, end), prefix, name.name, hasParameters, parameters), {}};
     }
     else if (lexer.current().type == '{')
     {
@@ -1668,23 +1681,22 @@ AstTypeOrPack Parser::parseSimpleTypeAnnotation(bool allowPack)
     }
     else if (lexer.current().type == Lexeme::ReservedFunction)
     {
-        Location location = lexer.current().location;
-
         nextLexeme();
 
-        return {reportTypeAnnotationError(location, {}, /*isMissing*/ false,
+        return {reportTypeAnnotationError(start, {},
                     "Using 'function' as a type annotation is not supported, consider replacing with a function type annotation e.g. '(...any) -> "
                     "...any'"),
             {}};
     }
     else
     {
-        Location location = lexer.current().location;
-
         // For a missing type annotation, capture 'space' between last token and the next one
-        location = Location(lexer.previousLocation().end, lexer.current().location.begin);
-
-        return {reportTypeAnnotationError(location, {}, /*isMissing*/ true, "Expected type, got %s", lexer.current().toString().c_str()), {}};
+        Location astErrorlocation(lexer.previousLocation().end, start.begin);
+        // The parse error includes the next lexeme to make it easier to display where the error is (e.g. in an IDE or a CLI error message).
+        // Including the current lexeme also makes the parse error consistent with other parse errors returned by Luau.
+        Location parseErrorLocation(lexer.previousLocation().end, start.end);
+        return {
+            reportMissingTypeAnnotationError(parseErrorLocation, astErrorlocation, "Expected type, got %s", lexer.current().toString().c_str()), {}};
     }
 }
 
@@ -2105,95 +2117,8 @@ AstExpr* Parser::parseAssertionExpr()
         return expr;
 }
 
-static const char* parseInteger_DEPRECATED(double& result, const char* data, int base)
-{
-    LUAU_ASSERT(!FFlag::LuauLintParseIntegerIssues);
-
-    char* end = nullptr;
-    unsigned long long value = strtoull(data, &end, base);
-
-    if (value == ULLONG_MAX && errno == ERANGE)
-    {
-        // 'errno' might have been set before we called 'strtoull', but we don't want the overhead of resetting a TLS variable on each call
-        // so we only reset it when we get a result that might be an out-of-range error and parse again to make sure
-        errno = 0;
-        value = strtoull(data, &end, base);
-
-        if (errno == ERANGE)
-        {
-            if (DFFlag::LuaReportParseIntegerIssues)
-            {
-                if (base == 2)
-                    lua_telemetry_parsed_out_of_range_bin_integer = true;
-                else
-                    lua_telemetry_parsed_out_of_range_hex_integer = true;
-            }
-        }
-    }
-
-    result = double(value);
-    return *end == 0 ? nullptr : "Malformed number";
-}
-
-static const char* parseNumber_DEPRECATED2(double& result, const char* data)
-{
-    LUAU_ASSERT(!FFlag::LuauLintParseIntegerIssues);
-
-    // binary literal
-    if (data[0] == '0' && (data[1] == 'b' || data[1] == 'B') && data[2])
-        return parseInteger_DEPRECATED(result, data + 2, 2);
-
-    // hexadecimal literal
-    if (data[0] == '0' && (data[1] == 'x' || data[1] == 'X') && data[2])
-    {
-        if (DFFlag::LuaReportParseIntegerIssues && data[2] == '0' && (data[3] == 'x' || data[3] == 'X'))
-            lua_telemetry_parsed_double_prefix_hex_integer = true;
-
-        return parseInteger_DEPRECATED(result, data + 2, 16);
-    }
-
-    char* end = nullptr;
-    double value = strtod(data, &end);
-
-    result = value;
-    return *end == 0 ? nullptr : "Malformed number";
-}
-
-static bool parseNumber_DEPRECATED(double& result, const char* data)
-{
-    LUAU_ASSERT(!FFlag::LuauLintParseIntegerIssues);
-
-    // binary literal
-    if (data[0] == '0' && (data[1] == 'b' || data[1] == 'B') && data[2])
-    {
-        char* end = nullptr;
-        unsigned long long value = strtoull(data + 2, &end, 2);
-
-        result = double(value);
-        return *end == 0;
-    }
-    // hexadecimal literal
-    else if (data[0] == '0' && (data[1] == 'x' || data[1] == 'X') && data[2])
-    {
-        char* end = nullptr;
-        unsigned long long value = strtoull(data + 2, &end, 16);
-
-        result = double(value);
-        return *end == 0;
-    }
-    else
-    {
-        char* end = nullptr;
-        double value = strtod(data, &end);
-
-        result = value;
-        return *end == 0;
-    }
-}
-
 static ConstantNumberParseResult parseInteger(double& result, const char* data, int base)
 {
-    LUAU_ASSERT(FFlag::LuauLintParseIntegerIssues);
     LUAU_ASSERT(base == 2 || base == 16);
 
     char* end = nullptr;
@@ -2212,17 +2137,7 @@ static ConstantNumberParseResult parseInteger(double& result, const char* data, 
         value = strtoull(data, &end, base);
 
         if (errno == ERANGE)
-        {
-            if (DFFlag::LuaReportParseIntegerIssues)
-            {
-                if (base == 2)
-                    lua_telemetry_parsed_out_of_range_bin_integer = true;
-                else
-                    lua_telemetry_parsed_out_of_range_hex_integer = true;
-            }
-
             return base == 2 ? ConstantNumberParseResult::BinOverflow : ConstantNumberParseResult::HexOverflow;
-        }
     }
 
     return ConstantNumberParseResult::Ok;
@@ -2230,26 +2145,13 @@ static ConstantNumberParseResult parseInteger(double& result, const char* data, 
 
 static ConstantNumberParseResult parseDouble(double& result, const char* data)
 {
-    LUAU_ASSERT(FFlag::LuauLintParseIntegerIssues);
-
     // binary literal
     if (data[0] == '0' && (data[1] == 'b' || data[1] == 'B') && data[2])
         return parseInteger(result, data + 2, 2);
 
     // hexadecimal literal
     if (data[0] == '0' && (data[1] == 'x' || data[1] == 'X') && data[2])
-    {
-        if (!FFlag::LuauErrorDoubleHexPrefix && data[2] == '0' && (data[3] == 'x' || data[3] == 'X'))
-        {
-            if (DFFlag::LuaReportParseIntegerIssues)
-                lua_telemetry_parsed_double_prefix_hex_integer = true;
-
-            ConstantNumberParseResult parseResult = parseInteger(result, data + 2, 16);
-            return parseResult == ConstantNumberParseResult::Malformed ? parseResult : ConstantNumberParseResult::DoublePrefix;
-        }
-
         return parseInteger(result, data, 16); // pass in '0x' prefix, it's handled by 'strtoull'
-    }
 
     char* end = nullptr;
     double value = strtod(data, &end);
@@ -2292,11 +2194,12 @@ AstExpr* Parser::parseSimpleExpr()
     {
         return parseNumber();
     }
-    else if (lexer.current().type == Lexeme::RawString || lexer.current().type == Lexeme::QuotedString || (FFlag::LuauInterpolatedStringBaseSupport && lexer.current().type == Lexeme::InterpStringSimple))
+    else if (lexer.current().type == Lexeme::RawString || lexer.current().type == Lexeme::QuotedString ||
+             lexer.current().type == Lexeme::InterpStringSimple)
     {
         return parseString();
     }
-    else if (FFlag::LuauInterpolatedStringBaseSupport && lexer.current().type == Lexeme::InterpStringBegin)
+    else if (lexer.current().type == Lexeme::InterpStringBegin)
     {
         return parseInterpString();
     }
@@ -2415,9 +2318,12 @@ AstExpr* Parser::parseTableConstructor()
 
     MatchLexeme matchBrace = lexer.current();
     expectAndConsume('{', "table literal");
+    unsigned lastElementIndent = 0;
 
     while (lexer.current().type != '}')
     {
+        lastElementIndent = lexer.current().location.begin.column;
+
         if (lexer.current().type == '[')
         {
             MatchLexeme matchLocationBracket = lexer.current();
@@ -2462,10 +2368,13 @@ AstExpr* Parser::parseTableConstructor()
         {
             nextLexeme();
         }
-        else
+        else if ((lexer.current().type == '[' || lexer.current().type == Lexeme::Name) && lexer.current().location.begin.column == lastElementIndent)
         {
-            if (lexer.current().type != '}')
-                break;
+            report(lexer.current().location, "Expected ',' after table constructor element");
+        }
+        else if (lexer.current().type != '}')
+        {
+            break;
         }
     }
 
@@ -2599,12 +2508,21 @@ std::pair<AstArray<AstGenericType>, AstArray<AstGenericTypePack>> Parser::parseG
 
                         namePacks.push_back({name, nameLocation, typePack});
                     }
-                    else if (lexer.current().type == '(')
+                    else if (!FFlag::LuauParserErrorsOnMissingDefaultTypePackArgument && lexer.current().type == '(')
                     {
                         auto [type, typePack] = parseTypeOrPackAnnotation();
 
                         if (type)
                             report(Location(packBegin.location.begin, lexer.previousLocation().end), "Expected type pack after '=', got type");
+
+                        namePacks.push_back({name, nameLocation, typePack});
+                    }
+                    else if (FFlag::LuauParserErrorsOnMissingDefaultTypePackArgument)
+                    {
+                        auto [type, typePack] = parseTypeOrPackAnnotation();
+
+                        if (type)
+                            report(type->location, "Expected type pack after '=', got type");
 
                         namePacks.push_back({name, nameLocation, typePack});
                     }
@@ -2638,7 +2556,15 @@ std::pair<AstArray<AstGenericType>, AstArray<AstGenericTypePack>> Parser::parseG
             }
 
             if (lexer.current().type == ',')
+            {
                 nextLexeme();
+
+                if (lexer.current().type == '>')
+                {
+                    report(lexer.current().location, "Expected type after ',' but got '>' instead");
+                    break;
+                }
+            }
             else
                 break;
         }
@@ -2700,7 +2626,8 @@ AstArray<AstTypeOrPack> Parser::parseTypeParams()
 
 std::optional<AstArray<char>> Parser::parseCharArray()
 {
-    LUAU_ASSERT(lexer.current().type == Lexeme::QuotedString || lexer.current().type == Lexeme::RawString || lexer.current().type == Lexeme::InterpStringSimple);
+    LUAU_ASSERT(lexer.current().type == Lexeme::QuotedString || lexer.current().type == Lexeme::RawString ||
+                lexer.current().type == Lexeme::InterpStringSimple);
 
     scratchData.assign(lexer.current().data, lexer.current().length);
 
@@ -2737,26 +2664,22 @@ AstExpr* Parser::parseInterpString()
     TempVector<AstExpr*> expressions(scratchExpr);
 
     Location startLocation = lexer.current().location;
+    Location endLocation;
 
-    do {
+    do
+    {
         Lexeme currentLexeme = lexer.current();
-        LUAU_ASSERT(
-            currentLexeme.type == Lexeme::InterpStringBegin
-            || currentLexeme.type == Lexeme::InterpStringMid
-            || currentLexeme.type == Lexeme::InterpStringEnd
-            || currentLexeme.type == Lexeme::InterpStringSimple
-        );
+        LUAU_ASSERT(currentLexeme.type == Lexeme::InterpStringBegin || currentLexeme.type == Lexeme::InterpStringMid ||
+                    currentLexeme.type == Lexeme::InterpStringEnd || currentLexeme.type == Lexeme::InterpStringSimple);
 
-        Location location = currentLexeme.location;
-
-        Location startOfBrace = Location(location.end, 1);
+        endLocation = currentLexeme.location;
 
         scratchData.assign(currentLexeme.data, currentLexeme.length);
 
         if (!Lexer::fixupQuotedString(scratchData))
         {
             nextLexeme();
-            return reportExprError(startLocation, {}, "Interpolated string literal contains malformed escape sequence");
+            return reportExprError(Location{startLocation, endLocation}, {}, "Interpolated string literal contains malformed escape sequence");
         }
 
         AstArray<char> chars = copy(scratchData);
@@ -2767,15 +2690,36 @@ AstExpr* Parser::parseInterpString()
 
         if (currentLexeme.type == Lexeme::InterpStringEnd || currentLexeme.type == Lexeme::InterpStringSimple)
         {
-            AstArray<AstArray<char>> stringsArray = copy(strings);
-            AstArray<AstExpr*> expressionsArray = copy(expressions);
-
-            return allocator.alloc<AstExprInterpString>(startLocation, stringsArray, expressionsArray);
+            break;
         }
 
-        AstExpr* expression = parseExpr();
+        bool errorWhileChecking = false;
 
-        expressions.push_back(expression);
+        switch (lexer.current().type)
+        {
+        case Lexeme::InterpStringMid:
+        case Lexeme::InterpStringEnd:
+        {
+            errorWhileChecking = true;
+            nextLexeme();
+            expressions.push_back(reportExprError(endLocation, {}, "Malformed interpolated string, expected expression inside '{}'"));
+            break;
+        }
+        case Lexeme::BrokenString:
+        {
+            errorWhileChecking = true;
+            nextLexeme();
+            expressions.push_back(reportExprError(endLocation, {}, "Malformed interpolated string, did you forget to add a '`'?"));
+            break;
+        }
+        default:
+            expressions.push_back(parseExpr());
+        }
+
+        if (errorWhileChecking)
+        {
+            break;
+        }
 
         switch (lexer.current().type)
         {
@@ -2785,14 +2729,18 @@ AstExpr* Parser::parseInterpString()
             break;
         case Lexeme::BrokenInterpDoubleBrace:
             nextLexeme();
-            return reportExprError(location, {}, ERROR_INVALID_INTERP_DOUBLE_BRACE);
+            return reportExprError(endLocation, {}, ERROR_INVALID_INTERP_DOUBLE_BRACE);
         case Lexeme::BrokenString:
             nextLexeme();
-            return reportExprError(location, {}, "Malformed interpolated string, did you forget to add a '}'?");
+            return reportExprError(endLocation, {}, "Malformed interpolated string, did you forget to add a '}'?");
         default:
-            return reportExprError(location, {}, "Malformed interpolated string, got %s", lexer.current().toString().c_str());
+            return reportExprError(endLocation, {}, "Malformed interpolated string, got %s", lexer.current().toString().c_str());
         }
     } while (true);
+
+    AstArray<AstArray<char>> stringsArray = copy(strings);
+    AstArray<AstExpr*> expressionsArray = copy(expressions);
+    return allocator.alloc<AstExprInterpString>(Location{startLocation, endLocation}, stringsArray, expressionsArray);
 }
 
 AstExpr* Parser::parseNumber()
@@ -2807,49 +2755,14 @@ AstExpr* Parser::parseNumber()
         scratchData.erase(std::remove(scratchData.begin(), scratchData.end(), '_'), scratchData.end());
     }
 
-    if (FFlag::LuauLintParseIntegerIssues)
-    {
-        double value = 0;
-        ConstantNumberParseResult result = parseDouble(value, scratchData.c_str());
-        nextLexeme();
+    double value = 0;
+    ConstantNumberParseResult result = parseDouble(value, scratchData.c_str());
+    nextLexeme();
 
-        if (result == ConstantNumberParseResult::Malformed)
-            return reportExprError(start, {}, "Malformed number");
+    if (result == ConstantNumberParseResult::Malformed)
+        return reportExprError(start, {}, "Malformed number");
 
-        return allocator.alloc<AstExprConstantNumber>(start, value, result);
-    }
-    else if (DFFlag::LuaReportParseIntegerIssues)
-    {
-        double value = 0;
-        if (const char* error = parseNumber_DEPRECATED2(value, scratchData.c_str()))
-        {
-            nextLexeme();
-
-            return reportExprError(start, {}, "%s", error);
-        }
-        else
-        {
-            nextLexeme();
-
-            return allocator.alloc<AstExprConstantNumber>(start, value);
-        }
-    }
-    else
-    {
-        double value = 0;
-        if (parseNumber_DEPRECATED(value, scratchData.c_str()))
-        {
-            nextLexeme();
-
-            return allocator.alloc<AstExprConstantNumber>(start, value);
-        }
-        else
-        {
-            nextLexeme();
-
-            return reportExprError(start, {}, "Malformed number");
-        }
-    }
+    return allocator.alloc<AstExprConstantNumber>(start, value, result);
 }
 
 AstLocal* Parser::pushLocal(const Binding& binding)
@@ -3020,8 +2933,7 @@ bool Parser::expectMatchEndAndConsume(Lexeme::Type type, const MatchLexeme& begi
     {
         // If the token matches on a different line and a different column, it suggests misleading indentation
         // This can be used to pinpoint the problem location for a possible future *actual* mismatch
-        if (lexer.current().location.begin.line != begin.position.line &&
-            lexer.current().location.begin.column != begin.position.column &&
+        if (lexer.current().location.begin.line != begin.position.line && lexer.current().location.begin.column != begin.position.column &&
             endMismatchSuspect.position.line < begin.position.line) // Only replace the previous suspect with more recent suspects
         {
             endMismatchSuspect = begin;
@@ -3153,14 +3065,24 @@ AstExprError* Parser::reportExprError(const Location& location, const AstArray<A
     return allocator.alloc<AstExprError>(location, expressions, unsigned(parseErrors.size() - 1));
 }
 
-AstTypeError* Parser::reportTypeAnnotationError(const Location& location, const AstArray<AstType*>& types, bool isMissing, const char* format, ...)
+AstTypeError* Parser::reportTypeAnnotationError(const Location& location, const AstArray<AstType*>& types, const char* format, ...)
 {
     va_list args;
     va_start(args, format);
     report(location, format, args);
     va_end(args);
 
-    return allocator.alloc<AstTypeError>(location, types, isMissing, unsigned(parseErrors.size() - 1));
+    return allocator.alloc<AstTypeError>(location, types, false, unsigned(parseErrors.size() - 1));
+}
+
+AstTypeError* Parser::reportMissingTypeAnnotationError(const Location& parseErrorLocation, const Location& astErrorLocation, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    report(parseErrorLocation, format, args);
+    va_end(args);
+
+    return allocator.alloc<AstTypeError>(astErrorLocation, AstArray<AstType*>{}, true, unsigned(parseErrors.size() - 1));
 }
 
 void Parser::nextLexeme()

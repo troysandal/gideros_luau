@@ -2,7 +2,7 @@
 #pragma once
 
 #include "Luau/TypedAllocator.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 #include "Luau/TypePack.h"
 
 #include <vector>
@@ -12,7 +12,7 @@ namespace Luau
 
 struct TypeArena
 {
-    TypedAllocator<TypeVar> typeVars;
+    TypedAllocator<Type> types;
     TypedAllocator<TypePackVar> typePacks;
 
     void clear();
@@ -20,18 +20,22 @@ struct TypeArena
     template<typename T>
     TypeId addType(T tv)
     {
-        if constexpr (std::is_same_v<T, UnionTypeVar>)
+        if constexpr (std::is_same_v<T, UnionType>)
             LUAU_ASSERT(tv.options.size() >= 2);
 
-        return addTV(TypeVar(std::move(tv)));
+        return addTV(Type(std::move(tv)));
     }
 
-    TypeId addTV(TypeVar&& tv);
+    TypeId addTV(Type&& tv);
 
     TypeId freshType(TypeLevel level);
+    TypeId freshType(Scope* scope);
+    TypeId freshType(Scope* scope, TypeLevel level);
+
+    TypePackId freshTypePack(Scope* scope);
 
     TypePackId addTypePack(std::initializer_list<TypeId> types);
-    TypePackId addTypePack(std::vector<TypeId> types);
+    TypePackId addTypePack(std::vector<TypeId> types, std::optional<TypePackId> tail = {});
     TypePackId addTypePack(TypePack pack);
     TypePackId addTypePack(TypePackVar pack);
 

@@ -6,10 +6,11 @@
 
 #include <string>
 
+LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution)
+
 namespace Luau
 {
 
-// TODO Rename this to Name once the old type alias is gone.
 struct Symbol
 {
     Symbol()
@@ -36,13 +37,21 @@ struct Symbol
     AstLocal* local;
     AstName global;
 
+    explicit operator bool() const
+    {
+        return local != nullptr || global.value != nullptr;
+    }
+
     bool operator==(const Symbol& rhs) const
     {
         if (local)
             return local == rhs.local;
-        if (global.value)
+        else if (global.value)
             return rhs.global.value && global == rhs.global.value; // Subtlety: AstName::operator==(const char*) uses strcmp, not pointer identity.
-        return false;
+        else if (FFlag::DebugLuauDeferredConstraintResolution)
+            return !rhs.local && !rhs.global.value; // Reflexivity: we already know `this` Symbol is empty, so check that rhs is.
+        else
+            return false;
     }
 
     bool operator!=(const Symbol& rhs) const
@@ -58,8 +67,8 @@ struct Symbol
             return global < rhs.global;
         else if (local)
             return true;
-        else
-            return false;
+
+        return false;
     }
 
     AstName astName() const

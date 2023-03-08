@@ -1,3 +1,4 @@
+// This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
 #include "Luau/Common.h"
@@ -8,6 +9,8 @@
 namespace Luau
 {
 namespace CodeGen
+{
+namespace X64
 {
 
 enum class CategoryX64 : uint8_t
@@ -60,7 +63,7 @@ struct OperandX64
     constexpr OperandX64 operator[](OperandX64&& addr) const
     {
         LUAU_ASSERT(cat == CategoryX64::mem);
-        LUAU_ASSERT(memSize != SizeX64::none && index == noreg && scale == 1 && base == noreg && imm == 0);
+        LUAU_ASSERT(index == noreg && scale == 1 && base == noreg && imm == 0);
         LUAU_ASSERT(addr.memSize == SizeX64::none);
 
         addr.cat = CategoryX64::mem;
@@ -69,13 +72,13 @@ struct OperandX64
     }
 };
 
+constexpr OperandX64 addr{SizeX64::none, noreg, 1, noreg, 0};
 constexpr OperandX64 byte{SizeX64::byte, noreg, 1, noreg, 0};
 constexpr OperandX64 word{SizeX64::word, noreg, 1, noreg, 0};
 constexpr OperandX64 dword{SizeX64::dword, noreg, 1, noreg, 0};
 constexpr OperandX64 qword{SizeX64::qword, noreg, 1, noreg, 0};
 constexpr OperandX64 xmmword{SizeX64::xmmword, noreg, 1, noreg, 0};
 constexpr OperandX64 ymmword{SizeX64::ymmword, noreg, 1, noreg, 0};
-constexpr OperandX64 ptr{sizeof(void*) == 4 ? SizeX64::dword : SizeX64::qword, noreg, 1, noreg, 0};
 
 constexpr OperandX64 operator*(RegisterX64 reg, uint8_t scale)
 {
@@ -91,6 +94,11 @@ constexpr OperandX64 operator*(RegisterX64 reg, uint8_t scale)
 constexpr OperandX64 operator+(RegisterX64 reg, int32_t disp)
 {
     return OperandX64(SizeX64::none, noreg, 1, reg, disp);
+}
+
+constexpr OperandX64 operator-(RegisterX64 reg, int32_t disp)
+{
+    return OperandX64(SizeX64::none, noreg, 1, reg, -disp);
 }
 
 constexpr OperandX64 operator+(RegisterX64 base, RegisterX64 index)
@@ -132,5 +140,6 @@ constexpr OperandX64 operator+(RegisterX64 base, OperandX64 op)
     return op;
 }
 
+} // namespace X64
 } // namespace CodeGen
 } // namespace Luau

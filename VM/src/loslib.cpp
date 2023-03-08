@@ -33,6 +33,21 @@ static time_t timegm(struct tm* timep)
 {
     return _mkgmtime(timep);
 }
+#elif defined(__FreeBSD__)
+static tm* gmtime_r(const time_t* timep, tm* result)
+{
+    return gmtime_s(timep, result) == 0 ? result : NULL;
+}
+
+static tm* localtime_r(const time_t* timep, tm* result)
+{
+    return localtime_s(timep, result) == 0 ? result : NULL;
+}
+
+static time_t timegm(struct tm* timep)
+{
+    return mktime(timep);
+}
 #endif
 
 static int os_clock(lua_State* L)
@@ -208,7 +223,7 @@ static int os_date(lua_State* L)
                 char buff[200]; // should be big enough for any conversion result
                 cc[1] = *(++s);
                 reslen = strftime(buff, sizeof(buff), cc, stm);
-                luaL_addlstring(&b, buff, reslen);
+                luaL_addlstring(&b, buff, reslen, -1);
             }
         }
         luaL_pushresult(&b);

@@ -57,6 +57,7 @@ const char* const luaT_eventname[] = {
     "__le",
     "__concat",
     "__type",
+    "__metatable",
 
 	"__idiv",
 	"__max",

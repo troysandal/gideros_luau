@@ -1,25 +1,37 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #pragma once
 
-#include "Luau/FileResolver.h"
 #include "Luau/Location.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 #include "Luau/Variant.h"
-#include "Luau/TypeArena.h"
 
 namespace Luau
 {
+
+struct FileResolver;
+struct TypeArena;
 struct TypeError;
 
 struct TypeMismatch
 {
+    enum Context
+    {
+        CovariantContext,
+        InvariantContext
+    };
+
     TypeMismatch() = default;
     TypeMismatch(TypeId wantedType, TypeId givenType);
     TypeMismatch(TypeId wantedType, TypeId givenType, std::string reason);
-    TypeMismatch(TypeId wantedType, TypeId givenType, std::string reason, TypeError error);
+    TypeMismatch(TypeId wantedType, TypeId givenType, std::string reason, std::optional<TypeError> error);
+
+    TypeMismatch(TypeId wantedType, TypeId givenType, Context context);
+    TypeMismatch(TypeId wantedType, TypeId givenType, std::string reason, Context context);
+    TypeMismatch(TypeId wantedType, TypeId givenType, std::string reason, std::optional<TypeError> error, Context context);
 
     TypeId wantedType = nullptr;
     TypeId givenType = nullptr;
+    Context context = CovariantContext;
 
     std::string reason;
     std::shared_ptr<TypeError> error;
@@ -33,7 +45,6 @@ struct UnknownSymbol
     {
         Binding,
         Type,
-        Generic
     };
     Name name;
     Context context;
@@ -81,7 +92,7 @@ struct OnlyTablesCanHaveMethods
 struct DuplicateTypeDefinition
 {
     Name name;
-    Location previousLocation;
+    std::optional<Location> previousLocation;
 
     bool operator==(const DuplicateTypeDefinition& rhs) const;
 };
@@ -91,13 +102,16 @@ struct CountMismatch
     enum Context
     {
         Arg,
-        Result,
+        FunctionResult,
+        ExprListResult,
         Return,
     };
     size_t expected;
+    std::optional<size_t> maximum;
     size_t actual;
     Context context = Arg;
     bool isVariadic = false;
+    std::string function;
 
     bool operator==(const CountMismatch& rhs) const;
 };
@@ -300,12 +314,41 @@ struct NormalizationTooComplex
     }
 };
 
+struct TypePackMismatch
+{
+    TypePackId wantedTp;
+    TypePackId givenTp;
+
+    bool operator==(const TypePackMismatch& rhs) const;
+};
+
+struct DynamicPropertyLookupOnClassesUnsafe
+{
+    TypeId ty;
+
+    bool operator==(const DynamicPropertyLookupOnClassesUnsafe& rhs) const;
+};
+
 using TypeErrorData = Variant<TypeMismatch, UnknownSymbol, UnknownProperty, NotATable, CannotExtendTable, OnlyTablesCanHaveMethods,
     DuplicateTypeDefinition, CountMismatch, FunctionDoesNotTakeSelf, FunctionRequiresSelf, OccursCheckFailed, UnknownRequire,
     IncorrectGenericParameterCount, SyntaxError, CodeTooComplex, UnificationTooComplex, UnknownPropButFoundLikeProp, GenericError, InternalError,
     CannotCallNonFunction, ExtraInformation, DeprecatedApiUsed, ModuleHasCyclicDependency, IllegalRequire, FunctionExitsWithoutReturning,
     DuplicateGenericParameter, CannotInferBinaryOperation, MissingProperties, SwappedGenericTypeParameter, OptionalValueAccess, MissingUnionProperty,
-    TypesAreUnrelated, NormalizationTooComplex>;
+    TypesAreUnrelated, NormalizationTooComplex, TypePackMismatch, DynamicPropertyLookupOnClassesUnsafe>;
+
+struct TypeErrorSummary
+{
+    Location location;
+    ModuleName moduleName;
+    int code;
+
+    TypeErrorSummary(const Location& location, const ModuleName& moduleName, int code)
+        : location(location)
+        , moduleName(moduleName)
+        , code(code)
+    {
+    }
+};
 
 struct TypeError
 {
@@ -313,6 +356,7 @@ struct TypeError
     ModuleName moduleName;
     TypeErrorData data;
 
+    static int minCode();
     int code() const;
 
     TypeError() = default;
@@ -330,6 +374,8 @@ struct TypeError
     }
 
     bool operator==(const TypeError& rhs) const;
+
+    TypeErrorSummary summary() const;
 };
 
 template<typename T>
@@ -372,6 +418,10 @@ struct InternalErrorReporter
 class InternalCompilerError : public std::exception
 {
 public:
+    explicit InternalCompilerError(const std::string& message)
+        : message(message)
+    {
+    }
     explicit InternalCompilerError(const std::string& message, const std::string& moduleName)
         : message(message)
         , moduleName(moduleName)
@@ -386,7 +436,7 @@ public:
     virtual const char* what() const throw();
 
     const std::string message;
-    const std::string moduleName;
+    const std::optional<std::string> moduleName;
     const std::optional<Location> location;
 };
 

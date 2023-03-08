@@ -9,13 +9,13 @@ namespace Luau
 
 void TypeArena::clear()
 {
-    typeVars.clear();
+    types.clear();
     typePacks.clear();
 }
 
-TypeId TypeArena::addTV(TypeVar&& tv)
+TypeId TypeArena::addTV(Type&& tv)
 {
-    TypeId allocated = typeVars.allocate(std::move(tv));
+    TypeId allocated = types.allocate(std::move(tv));
 
     asMutable(allocated)->owningArena = this;
 
@@ -24,7 +24,34 @@ TypeId TypeArena::addTV(TypeVar&& tv)
 
 TypeId TypeArena::freshType(TypeLevel level)
 {
-    TypeId allocated = typeVars.allocate(FreeTypeVar{level});
+    TypeId allocated = types.allocate(FreeType{level});
+
+    asMutable(allocated)->owningArena = this;
+
+    return allocated;
+}
+
+TypeId TypeArena::freshType(Scope* scope)
+{
+    TypeId allocated = types.allocate(FreeType{scope});
+
+    asMutable(allocated)->owningArena = this;
+
+    return allocated;
+}
+
+TypeId TypeArena::freshType(Scope* scope, TypeLevel level)
+{
+    TypeId allocated = types.allocate(FreeType{scope, level});
+
+    asMutable(allocated)->owningArena = this;
+
+    return allocated;
+}
+
+TypePackId TypeArena::freshTypePack(Scope* scope)
+{
+    TypePackId allocated = typePacks.allocate(FreeTypePack{scope});
 
     asMutable(allocated)->owningArena = this;
 
@@ -40,9 +67,9 @@ TypePackId TypeArena::addTypePack(std::initializer_list<TypeId> types)
     return allocated;
 }
 
-TypePackId TypeArena::addTypePack(std::vector<TypeId> types)
+TypePackId TypeArena::addTypePack(std::vector<TypeId> types, std::optional<TypePackId> tail)
 {
-    TypePackId allocated = typePacks.allocate(TypePack{std::move(types)});
+    TypePackId allocated = typePacks.allocate(TypePack{std::move(types), tail});
 
     asMutable(allocated)->owningArena = this;
 
@@ -72,7 +99,7 @@ void freeze(TypeArena& arena)
     if (!FFlag::DebugLuauFreezeArena)
         return;
 
-    arena.typeVars.freeze();
+    arena.types.freeze();
     arena.typePacks.freeze();
 }
 
@@ -81,7 +108,7 @@ void unfreeze(TypeArena& arena)
     if (!FFlag::DebugLuauFreezeArena)
         return;
 
-    arena.typeVars.unfreeze();
+    arena.types.unfreeze();
     arena.typePacks.unfreeze();
 }
 

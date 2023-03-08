@@ -6,6 +6,7 @@
 
 #include "doctest.h"
 
+#include <math.h>
 #include <ostream>
 
 using namespace Luau;
@@ -58,6 +59,9 @@ TEST_CASE("encode_constants")
     AstExprConstantBool b{Location(), true};
     AstExprConstantNumber n{Location(), 8.2};
     AstExprConstantNumber bigNum{Location(), 0.1677721600000003};
+    AstExprConstantNumber positiveInfinity{Location(), INFINITY};
+    AstExprConstantNumber negativeInfinity{Location(), -INFINITY};
+    AstExprConstantNumber nan{Location(), NAN};
 
     AstArray<char> charString;
     charString.data = const_cast<char*>("a\x1d\0\\\"b");
@@ -69,6 +73,9 @@ TEST_CASE("encode_constants")
     CHECK_EQ(R"({"type":"AstExprConstantBool","location":"0,0 - 0,0","value":true})", toJson(&b));
     CHECK_EQ(R"({"type":"AstExprConstantNumber","location":"0,0 - 0,0","value":8.1999999999999993})", toJson(&n));
     CHECK_EQ(R"({"type":"AstExprConstantNumber","location":"0,0 - 0,0","value":0.16777216000000031})", toJson(&bigNum));
+    CHECK_EQ(R"({"type":"AstExprConstantNumber","location":"0,0 - 0,0","value":Infinity})", toJson(&positiveInfinity));
+    CHECK_EQ(R"({"type":"AstExprConstantNumber","location":"0,0 - 0,0","value":-Infinity})", toJson(&negativeInfinity));
+    CHECK_EQ(R"({"type":"AstExprConstantNumber","location":"0,0 - 0,0","value":NaN})", toJson(&nan));
     CHECK_EQ("{\"type\":\"AstExprConstantString\",\"location\":\"0,0 - 0,0\",\"value\":\"a\\u001d\\u0000\\\\\\\"b\"}", toJson(&needsEscaping));
 }
 
@@ -178,12 +185,10 @@ TEST_CASE_FIXTURE(JsonEncoderFixture, "encode_AstExprIfThen")
 
 TEST_CASE_FIXTURE(JsonEncoderFixture, "encode_AstExprInterpString")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     AstStat* statement = expectParseStatement("local a = `var = {x}`");
 
     std::string_view expected =
-        R"({"type":"AstStatLocal","location":"0,0 - 0,17","vars":[{"luauType":null,"name":"a","type":"AstLocal","location":"0,6 - 0,7"}],"values":[{"type":"AstExprInterpString","location":"0,10 - 0,17","strings":["var = ",""],"expressions":[{"type":"AstExprGlobal","location":"0,18 - 0,19","global":"x"}]}]})";
+        R"({"type":"AstStatLocal","location":"0,0 - 0,21","vars":[{"luauType":null,"name":"a","type":"AstLocal","location":"0,6 - 0,7"}],"values":[{"type":"AstExprInterpString","location":"0,10 - 0,21","strings":["var = ",""],"expressions":[{"type":"AstExprGlobal","location":"0,18 - 0,19","global":"x"}]}]})";
 
     CHECK(toJson(statement) == expected);
 }
@@ -440,7 +445,7 @@ TEST_CASE_FIXTURE(JsonEncoderFixture, "encode_annotation")
     AstStat* statement = expectParseStatement("type T = ((number) -> (string | nil)) & ((string) -> ())");
 
     std::string_view expected =
-        R"({"type":"AstStatTypeAlias","location":"0,0 - 0,55","name":"T","generics":[],"genericPacks":[],"type":{"type":"AstTypeIntersection","location":"0,9 - 0,55","types":[{"type":"AstTypeFunction","location":"0,10 - 0,35","generics":[],"genericPacks":[],"argTypes":{"type":"AstTypeList","types":[{"type":"AstTypeReference","location":"0,11 - 0,17","name":"number","parameters":[]}]},"returnTypes":{"type":"AstTypeList","types":[{"type":"AstTypeUnion","location":"0,23 - 0,35","types":[{"type":"AstTypeReference","location":"0,23 - 0,29","name":"string","parameters":[]},{"type":"AstTypeReference","location":"0,32 - 0,35","name":"nil","parameters":[]}]}]}},{"type":"AstTypeFunction","location":"0,41 - 0,55","generics":[],"genericPacks":[],"argTypes":{"type":"AstTypeList","types":[{"type":"AstTypeReference","location":"0,42 - 0,48","name":"string","parameters":[]}]},"returnTypes":{"type":"AstTypeList","types":[]}}]},"exported":false})";
+        R"({"type":"AstStatTypeAlias","location":"0,0 - 0,55","name":"T","generics":[],"genericPacks":[],"type":{"type":"AstTypeIntersection","location":"0,9 - 0,55","types":[{"type":"AstTypeFunction","location":"0,10 - 0,36","generics":[],"genericPacks":[],"argTypes":{"type":"AstTypeList","types":[{"type":"AstTypeReference","location":"0,11 - 0,17","name":"number","parameters":[]}]},"returnTypes":{"type":"AstTypeList","types":[{"type":"AstTypeUnion","location":"0,23 - 0,35","types":[{"type":"AstTypeReference","location":"0,23 - 0,29","name":"string","parameters":[]},{"type":"AstTypeReference","location":"0,32 - 0,35","name":"nil","parameters":[]}]}]}},{"type":"AstTypeFunction","location":"0,41 - 0,55","generics":[],"genericPacks":[],"argTypes":{"type":"AstTypeList","types":[{"type":"AstTypeReference","location":"0,42 - 0,48","name":"string","parameters":[]}]},"returnTypes":{"type":"AstTypeList","types":[]}}]},"exported":false})";
 
     CHECK(toJson(statement) == expected);
 }

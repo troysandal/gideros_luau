@@ -1,15 +1,12 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 
+#include "ConstraintGraphBuilderFixture.h"
 #include "Fixture.h"
-
 #include "doctest.h"
-
-#include "Luau/ConstraintGraphBuilder.h"
-#include "Luau/ConstraintSolver.h"
 
 using namespace Luau;
 
-static TypeId requireBinding(NotNull<Scope> scope, const char* name)
+static TypeId requireBinding(Scope* scope, const char* name)
 {
     auto b = linearSearchForBinding(scope, name);
     LUAU_ASSERT(b.has_value());
@@ -20,17 +17,10 @@ TEST_SUITE_BEGIN("ConstraintSolver");
 
 TEST_CASE_FIXTURE(ConstraintGraphBuilderFixture, "hello")
 {
-    AstStatBlock* block = parse(R"(
+    solve(R"(
         local a = 55
         local b = a
     )");
-
-    cgb.visit(block);
-    NotNull<Scope> rootScope = NotNull(cgb.rootScope);
-
-    ConstraintSolver cs{&arena, rootScope};
-
-    cs.run();
 
     TypeId bType = requireBinding(rootScope, "b");
 
@@ -39,28 +29,20 @@ TEST_CASE_FIXTURE(ConstraintGraphBuilderFixture, "hello")
 
 TEST_CASE_FIXTURE(ConstraintGraphBuilderFixture, "generic_function")
 {
-    AstStatBlock* block = parse(R"(
+    solve(R"(
         local function id(a)
             return a
         end
     )");
-
-    cgb.visit(block);
-    NotNull<Scope> rootScope = NotNull(cgb.rootScope);
-
-    ConstraintSolver cs{&arena, rootScope};
-
-    cs.run();
 
     TypeId idType = requireBinding(rootScope, "id");
 
     CHECK("<a>(a) -> a" == toString(idType));
 }
 
-#if 1
 TEST_CASE_FIXTURE(ConstraintGraphBuilderFixture, "proper_let_generalization")
 {
-    AstStatBlock* block = parse(R"(
+    solve(R"(
         local function a(c)
             local function d(e)
                 return c
@@ -72,19 +54,10 @@ TEST_CASE_FIXTURE(ConstraintGraphBuilderFixture, "proper_let_generalization")
         local b = a(5)
     )");
 
-    cgb.visit(block);
-    NotNull<Scope> rootScope = NotNull(cgb.rootScope);
-
-    ToStringOptions opts;
-
-    ConstraintSolver cs{&arena, rootScope};
-
-    cs.run();
-
     TypeId idType = requireBinding(rootScope, "b");
 
+    ToStringOptions opts;
     CHECK("<a>(a) -> number" == toString(idType, opts));
 }
-#endif
 
 TEST_SUITE_END();

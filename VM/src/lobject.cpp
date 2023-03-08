@@ -105,7 +105,7 @@ const char* luaO_pushvfstring(lua_State* L, const char* fmt, va_list argp)
     char result[LUA_BUFFERSIZE];
     vsnprintf(result, sizeof(result), fmt, argp);
 
-    setsvalue2s(L, L->top, luaS_new(L, result));
+    setsvalue(L, L->top, luaS_new(L, result));
     incr_top(L);
     return svalue(L->top - 1);
 }
@@ -120,44 +120,40 @@ const char* luaO_pushfstring(lua_State* L, const char* fmt, ...)
     return msg;
 }
 
-void luaO_chunkid(char* out, const char* source, size_t bufflen)
+const char* luaO_chunkid(char* buf, size_t buflen, const char* source, size_t srclen)
 {
     if (*source == '=')
     {
-        source++; // skip the `='
-        size_t srclen = strlen(source);
-        size_t dstlen = srclen < bufflen ? srclen : bufflen - 1;
-        memcpy(out, source, dstlen);
-        out[dstlen] = '\0';
+        if (srclen <= buflen)
+            return source + 1;
+        // truncate the part after =
+        memcpy(buf, source + 1, buflen - 1);
+        buf[buflen - 1] = '\0';
     }
     else if (*source == '@')
     {
-        size_t l;
-        source++; // skip the `@'
-        bufflen -= sizeof("...");
-        l = strlen(source);
-        strcpy(out, "");
-        if (l > bufflen)
-        {
-            source += (l - bufflen); // get last part of file name
-            strcat(out, "...");
-        }
-        strcat(out, source);
+        if (srclen <= buflen)
+            return source + 1;
+        // truncate the part after @
+        memcpy(buf, "...", 3);
+        memcpy(buf + 3, source + srclen - (buflen - 4), buflen - 4);
+        buf[buflen - 1] = '\0';
     }
     else
-    {                                         // out = [string "string"]
+    {                                         // buf = [string "string"]
         size_t len = strcspn(source, "\n\r"); // stop at first newline
-        bufflen -= sizeof("[string \"...\"]");
-        if (len > bufflen)
-            len = bufflen;
-        strcpy(out, "[string \"");
+        buflen -= sizeof("[string \"...\"]");
+        if (len > buflen)
+            len = buflen;
+        strcpy(buf, "[string \"");
         if (source[len] != '\0')
         { // must truncate?
-            strncat(out, source, len);
-            strcat(out, "...");
+            strncat(buf, source, len);
+            strcat(buf, "...");
         }
         else
-            strcat(out, source);
-        strcat(out, "\"]");
+            strcat(buf, source);
+        strcat(buf, "\"]");
     }
+    return buf;
 }

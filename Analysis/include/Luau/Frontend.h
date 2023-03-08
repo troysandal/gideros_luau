@@ -83,8 +83,13 @@ struct FrontendOptions
     // is complete.
     bool retainFullTypeGraphs = false;
 
-    // Run typechecking only in mode required for autocomplete (strict mode in order to get more precise type information)
+    // Run typechecking only in mode required for autocomplete (strict mode in
+    // order to get more precise type information)
     bool forAutocomplete = false;
+
+    // If not empty, randomly shuffle the constraint set before attempting to
+    // solve.  Use this value to seed the random number generator.
+    std::optional<unsigned> randomizeConstraintResolutionSeed;
 };
 
 struct CheckResult
@@ -125,8 +130,8 @@ struct Frontend
     Frontend(FileResolver* fileResolver, ConfigResolver* configResolver, const FrontendOptions& options = {});
 
     CheckResult check(const ModuleName& name, std::optional<FrontendOptions> optionOverride = {}); // new shininess
-    LintResult lint(const ModuleName& name, std::optional<LintOptions> enabledLintWarnings = {});
 
+    LintResult lint(const ModuleName& name, std::optional<LintOptions> enabledLintWarnings = {});
     LintResult lint(const SourceModule& module, std::optional<LintOptions> enabledLintWarnings = {});
 
     bool isDirty(const ModuleName& name, bool forAutocomplete = false) const;
@@ -157,23 +162,25 @@ struct Frontend
     ScopePtr getGlobalScope();
 
 private:
-    ModulePtr check(const SourceModule& sourceModule, Mode mode, const ScopePtr& environmentScope);
+    ModulePtr check(const SourceModule& sourceModule, Mode mode, std::vector<RequireCycle> requireCycles, bool forAutocomplete = false, bool recordJsonLog = false);
 
-    std::pair<SourceNode*, SourceModule*> getSourceNode(CheckResult& checkResult, const ModuleName& name);
+    std::pair<SourceNode*, SourceModule*> getSourceNode(const ModuleName& name);
     SourceModule parse(const ModuleName& name, std::string_view src, const ParseOptions& parseOptions);
 
-    bool parseGraph(std::vector<ModuleName>& buildQueue, CheckResult& checkResult, const ModuleName& root, bool forAutocomplete);
+    bool parseGraph(std::vector<ModuleName>& buildQueue, const ModuleName& root, bool forAutocomplete);
 
     static LintResult classifyLints(const std::vector<LintWarning>& warnings, const Config& config);
 
-    ScopePtr getModuleEnvironment(const SourceModule& module, const Config& config, bool forAutocomplete = false);
+    ScopePtr getModuleEnvironment(const SourceModule& module, const Config& config, bool forAutocomplete);
 
     std::unordered_map<std::string, ScopePtr> environments;
     std::unordered_map<std::string, std::function<void(TypeChecker&, ScopePtr)>> builtinDefinitions;
 
-    ScopePtr globalScope;
+    BuiltinTypes builtinTypes_;
 
 public:
+    const NotNull<BuiltinTypes> builtinTypes;
+
     FileResolver* fileResolver;
     FrontendModuleResolver moduleResolver;
     FrontendModuleResolver moduleResolverForAutocomplete;
@@ -183,13 +190,23 @@ public:
     FrontendOptions options;
     InternalErrorReporter iceHandler;
     TypeArena globalTypes;
-    TypeArena arenaForAutocomplete;
 
     std::unordered_map<ModuleName, SourceNode> sourceNodes;
     std::unordered_map<ModuleName, SourceModule> sourceModules;
     std::unordered_map<ModuleName, RequireTraceResult> requireTrace;
 
     Stats stats = {};
+
+private:
+    ScopePtr globalScope;
 };
+
+ModulePtr check(const SourceModule& sourceModule, const std::vector<RequireCycle>& requireCycles, NotNull<BuiltinTypes> builtinTypes,
+    NotNull<InternalErrorReporter> iceHandler, NotNull<ModuleResolver> moduleResolver, NotNull<FileResolver> fileResolver,
+    const ScopePtr& globalScope, FrontendOptions options);
+
+ModulePtr check(const SourceModule& sourceModule, const std::vector<RequireCycle>& requireCycles, NotNull<BuiltinTypes> builtinTypes,
+    NotNull<InternalErrorReporter> iceHandler, NotNull<ModuleResolver> moduleResolver, NotNull<FileResolver> fileResolver,
+    const ScopePtr& globalScope, FrontendOptions options, bool recordJsonLog);
 
 } // namespace Luau

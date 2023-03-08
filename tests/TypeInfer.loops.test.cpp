@@ -4,8 +4,8 @@
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
-#include "Luau/VisitTypeVar.h"
+#include "Luau/Type.h"
+#include "Luau/VisitType.h"
 
 #include "Fixture.h"
 
@@ -13,7 +13,7 @@
 
 using namespace Luau;
 
-LUAU_FASTFLAG(LuauSpecialTypesAsterisked)
+LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution)
 
 TEST_SUITE_BEGIN("TypeInferLoops");
 
@@ -109,6 +109,18 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_with_just_one_iterator_is_ok")
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
+TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_loop_with_zero_iterators_dcr")
+{
+    ScopedFastFlag sff{"DebugLuauDeferredConstraintResolution", true};
+
+    CheckResult result = check(R"(
+        function no_iter() end
+        for key in no_iter() do end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+}
+
 TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_with_a_custom_iterator_should_type_check")
 {
     CheckResult result = check(R"(
@@ -141,13 +153,10 @@ TEST_CASE_FIXTURE(Fixture, "for_in_loop_on_error")
         end
     )");
 
-    CHECK_EQ(2, result.errors.size());
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
 
     TypeId p = requireType("p");
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(p));
-    else
-        CHECK_EQ("<error-type>", toString(p));
+    CHECK_EQ("*error-type*", toString(p));
 }
 
 TEST_CASE_FIXTURE(Fixture, "for_in_loop_on_non_function")
@@ -230,6 +239,30 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_loop_error_on_iterator_requiring_args
     CHECK_EQ(acm->context, CountMismatch::Arg);
     CHECK_EQ(2, acm->expected);
     CHECK_EQ(0, acm->actual);
+}
+
+TEST_CASE_FIXTURE(Fixture, "for_in_loop_with_incompatible_args_to_iterator")
+{
+    CheckResult result = check(R"(
+        function my_iter(state: string, index: number)
+            return state, index
+        end
+
+        local my_state = {}
+        local first_index = "first"
+
+        -- Type errors here.  my_state and first_index cannot be passed to my_iter
+        for a, b in my_iter, my_state, first_index do
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
+
+    CHECK(get<TypeMismatch>(result.errors[1]));
+    CHECK(Location{{9, 29}, {9, 37}} == result.errors[0].location);
+
+    CHECK(get<TypeMismatch>(result.errors[1]));
+    CHECK(Location{{9, 39}, {9, 50}} == result.errors[1].location);
 }
 
 TEST_CASE_FIXTURE(Fixture, "for_in_loop_with_custom_iterator")
@@ -489,6 +522,16 @@ TEST_CASE_FIXTURE(Fixture, "fuzz_fail_missing_instantitation_follow")
     )");
 }
 
+TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_with_generic_next")
+{
+    CheckResult result = check(R"(
+        for k: number, v: number in next, {1, 2, 3} do
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
 TEST_CASE_FIXTURE(Fixture, "loop_iter_basic")
 {
     CheckResult result = check(R"(
@@ -503,7 +546,7 @@ TEST_CASE_FIXTURE(Fixture, "loop_iter_basic")
         end
     )");
 
-    LUAU_REQUIRE_ERROR_COUNT(0, result);
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(*typeChecker.numberType, *requireType("key"));
 }
 
@@ -547,16 +590,103 @@ TEST_CASE_FIXTURE(Fixture, "loop_iter_no_indexer_nonstrict")
     LUAU_REQUIRE_ERROR_COUNT(0, result);
 }
 
-TEST_CASE_FIXTURE(BuiltinsFixture, "loop_iter_iter_metamethod")
+TEST_CASE_FIXTURE(BuiltinsFixture, "loop_iter_metamethod_nil")
 {
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
     CheckResult result = check(R"(
-        local t = {}
-        setmetatable(t, { __iter = function(o) return next, o.children end })
+        local t = setmetatable({}, { __iter = function(o) return next, nil end, })
+        for k: number, v: string in t do
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(toString(result.errors[0]) == "Type 'nil' could not be converted into '{- [a]: b -}'");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "loop_iter_metamethod_not_enough_returns")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local t = setmetatable({}, { __iter = function(o) end })
+        for k: number, v: string in t do
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(result.errors[0] == TypeError{
+                                  Location{{2, 36}, {2, 37}},
+                                  GenericError{"__iter must return at least one value"},
+                              });
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "loop_iter_metamethod_ok")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local t = setmetatable({
+            children = {"foo"}
+        }, { __iter = function(o) return next, o.children end })
         for k: number, v: string in t do
         end
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(0, result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "loop_iter_metamethod_ok_with_inference")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local t = setmetatable({
+            children = {"foo"}
+        }, { __iter = function(o) return next, o.children end })
+
+        local a, b
+        for k, v in t do
+            a = k
+            b = v
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireType("a")) == "number");
+    CHECK(toString(requireType("b")) == "string");
+}
+
+TEST_CASE_FIXTURE(Fixture, "for_loop_lower_bound_is_string")
+{
+    CheckResult result = check(R"(
+        for i: unknown = 1, 10 do end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "for_loop_lower_bound_is_string_2")
+{
+    CheckResult result = check(R"(
+        for i: never = 1, 10 do end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ("Type 'number' could not be converted into 'never'", toString(result.errors[0]));
+}
+
+TEST_CASE_FIXTURE(Fixture, "for_loop_lower_bound_is_string_3")
+{
+    CheckResult result = check(R"(
+        for i: number | string = 1, 10 do end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
 }
 
 TEST_SUITE_END();

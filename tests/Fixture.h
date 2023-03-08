@@ -10,59 +10,31 @@
 #include "Luau/ModuleResolver.h"
 #include "Luau/Scope.h"
 #include "Luau/ToString.h"
-#include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
+#include "Luau/Type.h"
 
 #include "IostreamOptional.h"
 #include "ScopedFlags.h"
 
-#include <iostream>
 #include <string>
 #include <unordered_map>
-
 #include <optional>
 
 namespace Luau
 {
 
+struct TypeChecker;
+
 struct TestFileResolver
     : FileResolver
     , ModuleResolver
 {
-    std::optional<ModuleInfo> resolveModuleInfo(const ModuleName& currentModuleName, const AstExpr& pathExpr) override
-    {
-        if (auto name = pathExprToModuleName(currentModuleName, pathExpr))
-            return {{*name, false}};
+    std::optional<ModuleInfo> resolveModuleInfo(const ModuleName& currentModuleName, const AstExpr& pathExpr) override;
 
-        return std::nullopt;
-    }
+    const ModulePtr getModule(const ModuleName& moduleName) const override;
 
-    const ModulePtr getModule(const ModuleName& moduleName) const override
-    {
-        LUAU_ASSERT(false);
-        return nullptr;
-    }
+    bool moduleExists(const ModuleName& moduleName) const override;
 
-    bool moduleExists(const ModuleName& moduleName) const override
-    {
-        auto it = source.find(moduleName);
-        return (it != source.end());
-    }
-
-    std::optional<SourceCode> readSource(const ModuleName& name) override
-    {
-        auto it = source.find(name);
-        if (it == source.end())
-            return std::nullopt;
-
-        SourceCode::Type sourceType = SourceCode::Module;
-
-        auto it2 = sourceTypes.find(name);
-        if (it2 != sourceTypes.end())
-            sourceType = it2->second;
-
-        return SourceCode{it->second, sourceType};
-    }
+    std::optional<SourceCode> readSource(const ModuleName& name) override;
 
     std::optional<ModuleInfo> resolveModule(const ModuleInfo* context, AstExpr* expr) override;
 
@@ -80,14 +52,7 @@ struct TestConfigResolver : ConfigResolver
     Config defaultConfig;
     std::unordered_map<ModuleName, Config> configFiles;
 
-    const Config& getConfig(const ModuleName& name) const override
-    {
-        auto it = configFiles.find(name);
-        if (it != configFiles.end())
-            return it->second;
-
-        return defaultConfig;
-    }
+    const Config& getConfig(const ModuleName& name) const override;
 };
 
 struct Fixture
@@ -113,7 +78,7 @@ struct Fixture
     ModulePtr getMainModule();
     SourceModule* getMainSourceModule();
 
-    std::optional<PrimitiveTypeVar::Type> getPrimitiveType(TypeId ty);
+    std::optional<PrimitiveType::Type> getPrimitiveType(TypeId ty);
     std::optional<TypeId> getType(const std::string& name);
     TypeId requireType(const std::string& name);
     TypeId requireType(const ModuleName& moduleName, const std::string& name);
@@ -126,16 +91,18 @@ struct Fixture
 
     std::optional<TypeId> lookupType(const std::string& name);
     std::optional<TypeId> lookupImportedType(const std::string& moduleAlias, const std::string& name);
+    TypeId requireTypeAlias(const std::string& name);
 
     ScopedFastFlag sff_DebugLuauFreezeArena;
-    ScopedFastFlag sff_UnknownNever{"LuauUnknownAndNeverType", true};
 
     TestFileResolver fileResolver;
     TestConfigResolver configResolver;
+    NullModuleResolver moduleResolver;
     std::unique_ptr<SourceModule> sourceModule;
     Frontend frontend;
     InternalErrorReporter ice;
     TypeChecker& typeChecker;
+    NotNull<BuiltinTypes> builtinTypes;
 
     std::string decorateWithTypes(const std::string& code);
 
@@ -157,17 +124,6 @@ struct Fixture
 struct BuiltinsFixture : Fixture
 {
     BuiltinsFixture(bool freeze = true, bool prepareAutocomplete = false);
-};
-
-struct ConstraintGraphBuilderFixture : Fixture
-{
-    TypeArena arena;
-    ModulePtr mainModule;
-    ConstraintGraphBuilder cgb;
-
-    ScopedFastFlag forceTheFlag;
-
-    ConstraintGraphBuilderFixture();
 };
 
 ModuleName fromString(std::string_view name);
@@ -195,75 +151,8 @@ std::optional<TypeId> lookupName(ScopePtr scope, const std::string& name); // Wa
 
 std::optional<TypeId> linearSearchForBinding(Scope* scope, const char* name);
 
-struct Nth
-{
-    int classIndex;
-    int nth;
-};
-
-template<typename T>
-Nth nth(int nth = 1)
-{
-    static_assert(std::is_base_of_v<AstNode, T>, "T must be a derived class of AstNode");
-    LUAU_ASSERT(nth > 0); // Did you mean to use `nth<T>(1)`?
-
-    return Nth{T::ClassIndex(), nth};
-}
-
-struct FindNthOccurenceOf : public AstVisitor
-{
-    Nth requestedNth;
-    int currentOccurrence = 0;
-    AstNode* theNode = nullptr;
-
-    FindNthOccurenceOf(Nth nth);
-
-    bool checkIt(AstNode* n);
-
-    bool visit(AstNode* n) override;
-    bool visit(AstType* n) override;
-    bool visit(AstTypePack* n) override;
-};
-
-/** DSL querying of the AST.
- *
- * Given an AST, one can query for a particular node directly without having to manually unwrap the tree, for example:
- *
- * ```
- * if a and b then
- *   print(a + b)
- * end
- *
- * function f(x, y)
- *   return x + y
- * end
- * ```
- *
- * There are numerous ways to access the second AstExprBinary.
- * 1. Luau::query<AstExprBinary>(block, {nth<AstStatFunction>(), nth<AstExprBinary>()})
- * 2. Luau::query<AstExprBinary>(Luau::query<AstStatFunction>(block))
- * 3. Luau::query<AstExprBinary>(block, {nth<AstExprBinary>(2)})
- */
-template<typename T, size_t N = 1>
-T* query(AstNode* node, const std::vector<Nth>& nths = {nth<T>(N)})
-{
-    static_assert(std::is_base_of_v<AstNode, T>, "T must be a derived class of AstNode");
-
-    // If a nested query call fails to find the node in question, subsequent calls can propagate rather than trying to do more.
-    // This supports `query(query(...))`
-
-    for (Nth nth : nths)
-    {
-        if (!node)
-            return nullptr;
-
-        FindNthOccurenceOf finder{nth};
-        node->visit(&finder);
-        node = finder.theNode;
-    }
-
-    return node ? node->as<T>() : nullptr;
-}
+void registerHiddenTypes(Frontend* frontend);
+void createSomeClasses(Frontend* frontend);
 
 } // namespace Luau
 

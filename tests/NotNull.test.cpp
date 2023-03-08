@@ -1,3 +1,4 @@
+// This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/NotNull.h"
 
 #include "doctest.h"
@@ -7,6 +8,8 @@
 #include <string>
 
 using Luau::NotNull;
+
+static_assert(!std::is_convertible<NotNull<int>, bool>::value, "NotNull<T> ought not to be convertible into bool");
 
 namespace
 {

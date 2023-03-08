@@ -4,8 +4,8 @@
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
-#include "Luau/VisitTypeVar.h"
+#include "Luau/Type.h"
+#include "Luau/VisitType.h"
 
 #include "Fixture.h"
 #include "ScopedFlags.h"
@@ -14,10 +14,9 @@
 
 #include <algorithm>
 
-LUAU_FASTFLAG(LuauLowerBoundsCalculation);
 LUAU_FASTFLAG(LuauFixLocationSpanTableIndexExpr);
 LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution);
-LUAU_FASTFLAG(LuauSpecialTypesAsterisked);
+LUAU_FASTFLAG(LuauInstantiateInSubtyping);
 
 using namespace Luau;
 
@@ -29,7 +28,7 @@ TEST_CASE_FIXTURE(Fixture, "tc_hello_world")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId aType = requireType("a");
-    CHECK_EQ(getPrimitiveType(aType), PrimitiveTypeVar::Number);
+    CHECK_EQ(getPrimitiveType(aType), PrimitiveType::Number);
 }
 
 TEST_CASE_FIXTURE(Fixture, "tc_propagation")
@@ -38,7 +37,7 @@ TEST_CASE_FIXTURE(Fixture, "tc_propagation")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId bType = requireType("b");
-    CHECK_EQ(getPrimitiveType(bType), PrimitiveTypeVar::Number);
+    CHECK_EQ(getPrimitiveType(bType), PrimitiveType::Number);
 }
 
 TEST_CASE_FIXTURE(Fixture, "tc_error")
@@ -66,7 +65,7 @@ TEST_CASE_FIXTURE(Fixture, "infer_locals_with_nil_value")
     LUAU_REQUIRE_NO_ERRORS(result);
 
     TypeId ty = requireType("f");
-    CHECK_EQ(getPrimitiveType(ty), PrimitiveTypeVar::String);
+    CHECK_EQ(getPrimitiveType(ty), PrimitiveType::String);
 }
 
 TEST_CASE_FIXTURE(Fixture, "infer_locals_via_assignment_from_its_call_site")
@@ -87,7 +86,6 @@ TEST_CASE_FIXTURE(Fixture, "infer_in_nocheck_mode")
 {
     ScopedFastFlag sff[]{
         {"DebugLuauDeferredConstraintResolution", false},
-        {"LuauLowerBoundsCalculation", true},
     };
 
     CheckResult result = check(R"(
@@ -215,7 +213,7 @@ TEST_CASE_FIXTURE(Fixture, "crazy_complexity")
         A:A():A():A():A():A():A():A():A():A():A():A()
     )");
 
-    std::cout << "OK!  Allocated " << typeChecker.typeVars.size() << " typevars" << std::endl;
+    std::cout << "OK!  Allocated " << typeChecker.types.size() << " types" << std::endl;
 }
 #endif
 
@@ -239,20 +237,10 @@ TEST_CASE_FIXTURE(Fixture, "type_errors_infer_types")
     // TODO: Should we assert anything about these tests when DCR is being used?
     if (!FFlag::DebugLuauDeferredConstraintResolution)
     {
-        if (FFlag::LuauSpecialTypesAsterisked)
-        {
-            CHECK_EQ("*error-type*", toString(requireType("c")));
-            CHECK_EQ("*error-type*", toString(requireType("d")));
-            CHECK_EQ("*error-type*", toString(requireType("e")));
-            CHECK_EQ("*error-type*", toString(requireType("f")));
-        }
-        else
-        {
-            CHECK_EQ("<error-type>", toString(requireType("c")));
-            CHECK_EQ("<error-type>", toString(requireType("d")));
-            CHECK_EQ("<error-type>", toString(requireType("e")));
-            CHECK_EQ("<error-type>", toString(requireType("f")));
-        }
+        CHECK_EQ("*error-type*", toString(requireType("c")));
+        CHECK_EQ("*error-type*", toString(requireType("d")));
+        CHECK_EQ("*error-type*", toString(requireType("e")));
+        CHECK_EQ("*error-type*", toString(requireType("f")));
     }
 }
 
@@ -306,7 +294,7 @@ TEST_CASE_FIXTURE(Fixture, "exponential_blowup_from_copying_types")
 
     // If we're not careful about copying, this ends up with O(2^N) types rather than O(N)
     // (in this case 5 vs 31).
-    CHECK_GE(5, module->interfaceTypes.typeVars.size());
+    CHECK_GE(5, module->interfaceTypes.types.size());
 }
 
 // In these tests, a successful parse is required, so we need the parser to return the AST and then we can test the recursion depth limit in type
@@ -363,7 +351,7 @@ TEST_CASE_FIXTURE(Fixture, "check_expr_recursion_limit")
     CheckResult result = check(R"(("foo"))" + rep(":lower()", limit));
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK(nullptr != get<CodeTooComplex>(result.errors[0]));
+    CHECK_MESSAGE(nullptr != get<CodeTooComplex>(result.errors[0]), "Expected CodeTooComplex but got " << toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "globals")
@@ -451,7 +439,10 @@ end
 _ += not _
 do end
 )");
+}
 
+TEST_CASE_FIXTURE(Fixture, "cyclic_follow_2")
+{
     check(R"(
 --!nonstrict
 n13,_,table,_,l0,_,_ = ...
@@ -467,7 +458,7 @@ end
 )");
 }
 
-struct FindFreeTypeVars
+struct FindFreeTypes
 {
     bool foundOne = false;
 
@@ -499,7 +490,7 @@ TEST_CASE_FIXTURE(Fixture, "tc_after_error_recovery")
     LUAU_REQUIRE_ERRORS(result);
 
     TypeId aType = requireType("a");
-    CHECK_EQ(getPrimitiveType(aType), PrimitiveTypeVar::Number);
+    CHECK_EQ(getPrimitiveType(aType), PrimitiveType::Number);
 }
 
 // Check that type checker knows about error expressions
@@ -660,13 +651,10 @@ TEST_CASE_FIXTURE(Fixture, "no_stack_overflow_from_isoptional")
 
     LUAU_REQUIRE_ERRORS(result);
 
-    std::optional<TypeFun> t0 = getMainModule()->getModuleScope()->lookupType("t0");
+    std::optional<TypeId> t0 = lookupType("t0");
     REQUIRE(t0);
 
-    if (FFlag::LuauSpecialTypesAsterisked)
-        CHECK_EQ("*error-type*", toString(t0->type));
-    else
-        CHECK_EQ("<error-type>", toString(t0->type));
+    CHECK_EQ("*error-type*", toString(*t0));
 
     auto it = std::find_if(result.errors.begin(), result.errors.end(), [](TypeError& err) {
         return get<OccursCheckFailed>(err);
@@ -773,7 +761,7 @@ TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions1")
     CheckResult result = check(R"(local a = if true then "true" else "false")");
     LUAU_REQUIRE_NO_ERRORS(result);
     TypeId aType = requireType("a");
-    CHECK_EQ(getPrimitiveType(aType), PrimitiveTypeVar::String);
+    CHECK_EQ(getPrimitiveType(aType), PrimitiveType::String);
 }
 
 TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions2")
@@ -784,7 +772,7 @@ local a = if false then "a" elseif false then "b" else "c"
     )");
     LUAU_REQUIRE_NO_ERRORS(result);
     TypeId aType = requireType("a");
-    CHECK_EQ(getPrimitiveType(aType), PrimitiveTypeVar::String);
+    CHECK_EQ(getPrimitiveType(aType), PrimitiveType::String);
 }
 
 TEST_CASE_FIXTURE(Fixture, "tc_if_else_expressions_type_union")
@@ -831,8 +819,6 @@ end
 
 TEST_CASE_FIXTURE(Fixture, "tc_interpolated_string_basic")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     CheckResult result = check(R"(
         local foo: string = `hello {"world"}`
     )");
@@ -842,8 +828,6 @@ TEST_CASE_FIXTURE(Fixture, "tc_interpolated_string_basic")
 
 TEST_CASE_FIXTURE(Fixture, "tc_interpolated_string_with_invalid_expression")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     CheckResult result = check(R"(
         local function f(x: number) end
 
@@ -855,8 +839,6 @@ TEST_CASE_FIXTURE(Fixture, "tc_interpolated_string_with_invalid_expression")
 
 TEST_CASE_FIXTURE(Fixture, "tc_interpolated_string_constant_type")
 {
-    ScopedFastFlag sff{"LuauInterpolatedStringBaseSupport", true};
-
     CheckResult result = check(R"(
         local foo: "hello" = `hello`
     )");
@@ -869,11 +851,11 @@ TEST_CASE_FIXTURE(Fixture, "tc_interpolated_string_constant_type")
  *
  * We had an issue here where the scope for the `if` block here would
  * have an elevated TypeLevel even though there is no function nesting going on.
- * This would result in a free typevar for the type of _ that was much higher than
+ * This would result in a free type for the type of _ that was much higher than
  * it should be.  This type would be erroneously quantified in the definition of `aaa`.
  * This in turn caused an ice when evaluating `_()` in the while loop.
  */
-TEST_CASE_FIXTURE(Fixture, "free_typevars_introduced_within_control_flow_constructs_do_not_get_an_elevated_TypeLevel")
+TEST_CASE_FIXTURE(Fixture, "free_types_introduced_within_control_flow_constructs_do_not_get_an_elevated_TypeLevel")
 {
     check(R"(
         --!strict
@@ -999,7 +981,28 @@ TEST_CASE_FIXTURE(Fixture, "cli_50041_committing_txnlog_in_apollo_client_error")
         end
     )");
 
-    LUAU_REQUIRE_NO_ERRORS(result);
+    if (FFlag::LuauInstantiateInSubtyping)
+    {
+        // though this didn't error before the flag, it seems as though it should error since fields of a table are invariant.
+        // the user's intent would likely be that these "method" fields would be read-only, but without an annotation, accepting this should be
+        // unsound.
+
+        LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+        CHECK_EQ(
+            R"(Type 't1 where t1 = {+ getStoreFieldName: (t1, {| fieldName: string |} & {| from: number? |}) -> (a, b...) +}' could not be converted into 'Policies'
+caused by:
+  Property 'getStoreFieldName' is not compatible. Type 't1 where t1 = ({+ getStoreFieldName: t1 +}, {| fieldName: string |} & {| from: number? |}) -> (a, b...)' could not be converted into '(Policies, FieldSpecifier) -> string'
+caused by:
+  Argument #2 type is not compatible. Type 'FieldSpecifier' could not be converted into 'FieldSpecifier & {| from: number? |}'
+caused by:
+  Not all intersection parts are compatible. Table type 'FieldSpecifier' not compatible with type '{| from: number? |}' because the former has extra field 'fieldName')",
+            toString(result.errors[0]));
+    }
+    else
+    {
+        LUAU_REQUIRE_NO_ERRORS(result);
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "type_infer_recursion_limit_no_ice")
@@ -1018,6 +1021,34 @@ TEST_CASE_FIXTURE(Fixture, "type_infer_recursion_limit_no_ice")
 
     LUAU_REQUIRE_ERRORS(result);
     CHECK_EQ("Code is too complex to typecheck! Consider simplifying the code around this area", toString(result.errors[0]));
+}
+
+TEST_CASE_FIXTURE(Fixture, "type_infer_recursion_limit_normalizer")
+{
+    ScopedFastInt sfi("LuauTypeInferRecursionLimit", 10);
+
+    CheckResult result = check(R"(
+        function f<a,b,c,d,e,f,g,h,i,j>()
+            local x : a&b&c&d&e&f&g&h&(i?)
+            local y : (a&b&c&d&e&f&g&h&i)? = x
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ("Internal error: Code is too complex to typecheck! Consider adding type annotations around this area", toString(result.errors[0]));
+}
+
+TEST_CASE_FIXTURE(Fixture, "type_infer_cache_limit_normalizer")
+{
+    ScopedFastInt sfi("LuauNormalizeCacheLimit", 10);
+
+    CheckResult result = check(R"(
+        local x : ((number) -> number) & ((string) -> string) & ((nil) -> nil) & (({}) -> {})
+        local y : (number | string | nil | {}) -> (number | string | nil | {}) = x
+    )");
+
+    LUAU_REQUIRE_ERRORS(result);
+    CHECK_EQ("Internal error: Code is too complex to typecheck! Consider adding type annotations around this area", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "follow_on_new_types_in_substitution")
@@ -1043,46 +1074,7 @@ TEST_CASE_FIXTURE(Fixture, "follow_on_new_types_in_substitution")
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
-/**
- * The problem we had here was that the type of q in B.h was initially inferring to {} | {prop: free} before we bound
- * that second table to the enclosing union.
- */
-TEST_CASE_FIXTURE(Fixture, "do_not_bind_a_free_table_to_a_union_containing_that_table")
-{
-    ScopedFastFlag flag[] = {
-        {"LuauLowerBoundsCalculation", true},
-    };
-
-    CheckResult result = check(R"(
-        --!strict
-
-        local A = {}
-
-        function A:f()
-            local t = {}
-
-            for key, value in pairs(self) do
-                t[key] = value
-            end
-
-            return t
-        end
-
-        local B = A:f()
-
-        function B.g(t)
-            assert(type(t) == "table")
-            assert(t.prop ~= nil)
-        end
-
-        function B.h(q)
-            q = q or {}
-            return q or {}
-        end
-    )");
-}
-
-TEST_CASE_FIXTURE(Fixture, "types stored in astResolvedTypes")
+TEST_CASE_FIXTURE(Fixture, "types_stored_in_astResolvedTypes")
 {
     CheckResult result = check(R"(
 type alias = typeof("hello")
@@ -1103,6 +1095,84 @@ end
     auto annotation = arg->annotation;
 
     CHECK_EQ(*getMainModule()->astResolvedTypes.find(annotation), *ty);
+}
+
+TEST_CASE_FIXTURE(Fixture, "bidirectional_checking_of_higher_order_function")
+{
+    CheckResult result = check(R"(
+        function higher(cb: (number) -> ()) end
+
+        higher(function(n)      -- no error here.  n : number
+            local e: string = n -- error here.  n /: string
+        end)
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    Location location = result.errors[0].location;
+    CHECK(location.begin.line == 4);
+    CHECK(location.end.line == 4);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "it_is_ok_to_have_inconsistent_number_of_return_values_in_nonstrict")
+{
+    CheckResult result = check(R"(
+        --!nonstrict
+        function validate(stats, hits, misses)
+            local checked = {}
+
+            for _,l in ipairs(hits) do
+                if not (stats[l] and stats[l] > 0) then
+                    return false, string.format("expected line %d to be hit", l)
+                end
+                checked[l] = true
+            end
+
+            for _,l in ipairs(misses) do
+                if not (stats[l] and stats[l] == 0) then
+                    return false, string.format("expected line %d to be missed", l)
+                end
+                checked[l] = true
+            end
+
+            for k,v in pairs(stats) do
+                if type(k) == "number" and not checked[k] then
+                    return false, string.format("expected line %d to be absent", k)
+                end
+            end
+
+            return true
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "fuzz_free_table_type_change_during_index_check")
+{
+    ScopedFastFlag sff{"LuauScalarShapeUnifyToMtOwner2", true};
+
+    CheckResult result = check(R"(
+local _ = nil
+while _["" >= _] do
+end
+    )");
+
+    LUAU_REQUIRE_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "typechecking_in_type_guards")
+{
+    ScopedFastFlag sff{"LuauTypecheckTypeguards", true};
+
+    CheckResult result = check(R"(
+local a = type(foo) == 'nil'
+local b = typeof(foo) ~= 'nil'
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
+    CHECK(toString(result.errors[0]) == "Unknown global 'foo'");
+    CHECK(toString(result.errors[1]) == "Unknown global 'foo'");
 }
 
 TEST_SUITE_END();

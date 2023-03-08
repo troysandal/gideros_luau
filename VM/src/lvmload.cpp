@@ -148,29 +148,30 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
     lua_newtable(L);
     while (offset<size) {
 
-        uint8_t version = read<uint8_t>(data, size, offset);
+    	uint8_t version = read<uint8_t>(data, size, offset);
 
-        // 0 means the rest of the bytecode is the error message
-        if (version == 0)
-        {
-            char chunkid[LUA_IDSIZE];
-            luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
-            lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
-            return 1;
-        }
+		// 0 means the rest of the bytecode is the error message
+		if (version == 0)
+		{
+			char chunkbuf[LUA_IDSIZE];
+			const char* chunkid = luaO_chunkid(chunkbuf, sizeof(chunkbuf), chunkname, strlen(chunkname));
+			lua_pushfstring(L, "%s%.*s", chunkid, int(size - offset), data + offset);
+			return 1;
+		}
+
 		if (version < LBC_VERSION_MIN || version > LBC_VERSION_MAX)
 		{
-			char chunkid[LUA_IDSIZE];
-			luaO_chunkid(chunkid, chunkname, LUA_IDSIZE);
+			char chunkbuf[LUA_IDSIZE];
+			const char* chunkid = luaO_chunkid(chunkbuf, sizeof(chunkbuf), chunkname, strlen(chunkname));
 			lua_pushfstring(L, "%s: bytecode version mismatch (expected [%d..%d], got %d)", chunkid, LBC_VERSION_MIN, LBC_VERSION_MAX, version);
 			return 1;
 		}
 
-        unsigned int chunkNameLength = readVarInt(data, size, offset);
-        std::string chunkName=std::string(data + offset, chunkNameLength);
-        offset += chunkNameLength;
-        if (chunkName.size()>0)
-        	chunkname=chunkName.c_str();
+		unsigned int chunkNameLength = readVarInt(data, size, offset);
+		std::string chunkName=std::string(data + offset, chunkNameLength);
+		offset += chunkNameLength;
+		if (chunkName.size()>0)
+			chunkname=chunkName.c_str();
 
 		// pause GC for the duration of deserialization - some objects we're creating aren't rooted
 		// TODO: if an allocation error happens mid-load, we do not unpause GC!
@@ -202,6 +203,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 		{
 			Proto* p = luaF_newproto(L);
 			p->source = source;
+			p->bytecodeid = int(i);
 
 			p->maxstacksize = read<uint8_t>(data, size, offset);
 			p->numparams = read<uint8_t>(data, size, offset);
@@ -215,6 +217,7 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 
 			p->sizek = readVarInt(data, size, offset);
 			p->k = luaM_newarray(L, p->sizek, TValue, p->memcat);
+
 
 	#ifdef HARDMEMTESTS
 			// this is redundant during normal runs, but resolveImportSafe can trigger GC checks under HARDMEMTESTS
@@ -242,32 +245,32 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
 
                 case LBC_CONSTANT_NUMBER:
                 {
-                    double v = read<double>(data, size, offset);
-                    setnvalue(&p->k[j], v);
-                    break;
-                }
+					double v = read<double>(data, size, offset);
+					setnvalue(&p->k[j], v);
+					break;
+				}
 
-                case LBC_CONSTANT_STRING:
-                {
-                    TString* v = readString(strings, data, size, offset);
-                    setsvalue2n(L, &p->k[j], v);
-                    break;
-                }
+				case LBC_CONSTANT_STRING:
+				{
+					TString* v = readString(strings, data, size, offset);
+					setsvalue(L, &p->k[j], v);
+					break;
+				}
 
-                case LBC_CONSTANT_IMPORT:
-                {
-                    uint32_t iid = read<uint32_t>(data, size, offset);
-                    resolveImportSafe(L, envt, p->k, iid);
-                    setobj(L, &p->k[j], L->top - 1);
-                    L->top--;
-                    break;
-                }
+				case LBC_CONSTANT_IMPORT:
+				{
+					uint32_t iid = read<uint32_t>(data, size, offset);
+					resolveImportSafe(L, envt, p->k, iid);
+					setobj(L, &p->k[j], L->top - 1);
+					L->top--;
+					break;
+				}
 
-                case LBC_CONSTANT_TABLE:
-                {
-                    int keys = readVarInt(data, size, offset);
-                    Table* h = luaH_new(L, 0, keys);
-                    for (int i = 0; i < keys; ++i)
+				case LBC_CONSTANT_TABLE:
+				{
+					int keys = readVarInt(data, size, offset);
+					Table* h = luaH_new(L, 0, keys);
+					for (int i = 0; i < keys; ++i)
                     {
                         int key = readVarInt(data, size, offset);
                         TValue* val = luaH_set(L, h, &p->k[key]);

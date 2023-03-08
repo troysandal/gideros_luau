@@ -4,14 +4,17 @@
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/Scope.h"
 #include "Luau/TypeInfer.h"
-#include "Luau/TypeVar.h"
-#include "Luau/VisitTypeVar.h"
+#include "Luau/Type.h"
+#include "Luau/VisitType.h"
 
 #include "Fixture.h"
+#include "ClassFixture.h"
 
 #include "doctest.h"
 
 using namespace Luau;
+
+LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution)
 
 TEST_SUITE_BEGIN("TypeInferOperators");
 
@@ -33,7 +36,7 @@ TEST_CASE_FIXTURE(Fixture, "or_joins_types_with_no_extras")
         local x:number|string = s
         local y = x or "s"
     )");
-    CHECK_EQ(0, result.errors.size());
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(toString(*requireType("s")), "number | string");
     CHECK_EQ(toString(*requireType("y")), "number | string");
 }
@@ -44,18 +47,22 @@ TEST_CASE_FIXTURE(Fixture, "or_joins_types_with_no_superfluous_union")
         local s = "a" or "b"
         local x:string = s
     )");
-    CHECK_EQ(0, result.errors.size());
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(*requireType("s"), *typeChecker.stringType);
 }
 
-TEST_CASE_FIXTURE(Fixture, "and_adds_boolean")
+TEST_CASE_FIXTURE(Fixture, "and_does_not_always_add_boolean")
 {
+    ScopedFastFlag sff[]{
+        {"LuauTryhardAnd", true},
+    };
+
     CheckResult result = check(R"(
         local s = "a" and 10
         local x:boolean|number = s
     )");
-    CHECK_EQ(0, result.errors.size());
-    CHECK_EQ(toString(*requireType("s")), "boolean | number");
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK_EQ(toString(*requireType("s")), "number");
 }
 
 TEST_CASE_FIXTURE(Fixture, "and_adds_boolean_no_superfluous_union")
@@ -64,7 +71,7 @@ TEST_CASE_FIXTURE(Fixture, "and_adds_boolean_no_superfluous_union")
         local s = "a" and true
         local x:boolean = s
     )");
-    CHECK_EQ(0, result.errors.size());
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(*requireType("x"), *typeChecker.booleanType);
 }
 
@@ -73,7 +80,7 @@ TEST_CASE_FIXTURE(Fixture, "and_or_ternary")
     CheckResult result = check(R"(
         local s = (1/2) > 0.5 and "a" or 10
     )");
-    CHECK_EQ(0, result.errors.size());
+    LUAU_REQUIRE_NO_ERRORS(result);
     CHECK_EQ(toString(*requireType("s")), "number | string");
 }
 
@@ -81,14 +88,14 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "primitive_arith_no_metatable")
 {
     CheckResult result = check(R"(
         function add(a: number, b: string)
-            return a + (tonumber(b) :: number), a .. b
+            return a + (tonumber(b) :: number), tostring(a) .. b
         end
         local n, s = add(2,"3")
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    const FunctionTypeVar* functionType = get<FunctionTypeVar>(requireType("add"));
+    const FunctionType* functionType = get<FunctionType>(requireType("add"));
 
     std::optional<TypeId> retType = first(functionType->retTypes);
     REQUIRE(retType.has_value());
@@ -368,17 +375,41 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "compound_assign_metatable")
         type V2B = { x: number, y: number }
         local v2b: V2B = { x = 0, y = 0 }
         local VMT = {}
-        type V2 = typeof(setmetatable(v2b, VMT))
 
-        function VMT.__add(a: V2, b: V2): V2
+        VMT.__add = function(a: V2, b: V2): V2
             return setmetatable({ x = a.x + b.x, y = a.y + b.y }, VMT)
         end
+
+        type V2 = typeof(setmetatable(v2b, VMT))
 
         local v1: V2 = setmetatable({ x = 1, y = 2 }, VMT)
         local v2: V2 = setmetatable({ x = 3, y = 4 }, VMT)
         v1 += v2
     )");
-    CHECK_EQ(0, result.errors.size());
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "compound_assign_result_must_be_compatible_with_var")
+{
+    CheckResult result = check(R"(
+        function __add(left, right)
+            return 123
+        end
+
+        local mt = {
+            __add = __add,
+        }
+
+        local x = setmetatable({}, mt)
+        local v: number
+
+        v += x -- okay: number + x -> number
+        x += v -- not okay: x </: number
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(result.errors[0] == TypeError{Location{{13, 8}, {13, 14}}, TypeMismatch{requireType("x"), builtinTypes->numberType}});
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "compound_assign_mismatch_metatable")
@@ -398,11 +429,9 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "compound_assign_mismatch_metatable")
         local v2: V2 = setmetatable({ x = 3, y = 4 }, VMT)
         v1 %= v2
     )");
-    LUAU_REQUIRE_ERROR_COUNT(1, result);
 
-    TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
-    CHECK_EQ(*tm->wantedType, *requireType("v2"));
-    CHECK_EQ(*tm->givenType, *typeChecker.numberType);
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK("Type 'number' could not be converted into 'V2'" == toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "CallOrOfFunctions")
@@ -432,15 +461,16 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "typecheck_unary_minus")
 {
     CheckResult result = check(R"(
         --!strict
-        local foo = {
-            value = 10
-        }
+        local foo
         local mt = {}
-        setmetatable(foo, mt)
 
-        mt.__unm = function(val: typeof(foo)): string
-            return val.value .. "test"
+        mt.__unm = function(val): string
+            return tostring(val.value) .. "test"
         end
+
+        foo = setmetatable({
+            value = 10
+        }, mt)
 
         local a = -foo
 
@@ -457,24 +487,31 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "typecheck_unary_minus")
     CHECK_EQ("string", toString(requireType("a")));
     CHECK_EQ("number", toString(requireType("b")));
 
-    GenericError* gen = get<GenericError>(result.errors[0]);
-    REQUIRE_EQ(gen->message, "Unary operator '-' not supported by type 'bar'");
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+    {
+        CHECK(toString(result.errors[0]) == "Type 'bar' could not be converted into 'number'");
+    }
+    else
+    {
+        GenericError* gen = get<GenericError>(result.errors[0]);
+        REQUIRE(gen);
+        REQUIRE_EQ(gen->message, "Unary operator '-' not supported by type 'bar'");
+    }
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "typecheck_unary_minus_error")
 {
     CheckResult result = check(R"(
         --!strict
-        local foo = {
-            value = 10
-        }
-
         local mt = {}
-        setmetatable(foo, mt)
 
         mt.__unm = function(val: boolean): string
             return "test"
         end
+
+        local foo = setmetatable({
+            value = 10
+        }, mt)
 
         local a = -foo
     )");
@@ -492,15 +529,15 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "typecheck_unary_len_error")
 {
     CheckResult result = check(R"(
         --!strict
-        local foo = {
-            value = 10
-        }
         local mt = {}
-        setmetatable(foo, mt)
 
-        mt.__len = function(val: any): string
+        mt.__len = function(val): string
             return "test"
         end
+
+        local foo = setmetatable({
+            value = 10,
+        }, mt)
 
         local a = #foo
     )");
@@ -558,15 +595,21 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "disallow_string_and_types_without_metatables
     LUAU_REQUIRE_ERROR_COUNT(3, result);
 
     TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
-    REQUIRE_EQ(*tm->wantedType, *typeChecker.numberType);
-    REQUIRE_EQ(*tm->givenType, *typeChecker.stringType);
+    REQUIRE(tm);
+    CHECK_EQ(*tm->wantedType, *typeChecker.numberType);
+    CHECK_EQ(*tm->givenType, *typeChecker.stringType);
+
+    GenericError* gen1 = get<GenericError>(result.errors[1]);
+    REQUIRE(gen1);
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        CHECK_EQ(gen1->message, "Operator + is not applicable for '{ value: number }' and 'number' because neither type has a metatable");
+    else
+        CHECK_EQ(gen1->message, "Binary operator '+' not supported by types 'foo' and 'number'");
 
     TypeMismatch* tm2 = get<TypeMismatch>(result.errors[2]);
+    REQUIRE(tm2);
     CHECK_EQ(*tm2->wantedType, *typeChecker.numberType);
     CHECK_EQ(*tm2->givenType, *requireType("foo"));
-
-    GenericError* gen2 = get<GenericError>(result.errors[1]);
-    REQUIRE_EQ(gen2->message, "Binary operator '+' not supported by types 'foo' and 'number'");
 }
 
 // CLI-29033
@@ -611,12 +654,10 @@ TEST_CASE_FIXTURE(Fixture, "strict_binary_op_where_lhs_unknown")
 {
     std::vector<std::string> ops = {"+", "-", "*", "/", "%", "^", ".."};
 
-    std::string src = R"(
-        function foo(a, b)
-    )";
+    std::string src = "function foo(a, b)\n";
 
     for (const auto& op : ops)
-        src += "local _ = a " + op + "b\n";
+        src += "local _ = a " + op + " b\n";
 
     src += "end";
 
@@ -651,7 +692,11 @@ TEST_CASE_FIXTURE(Fixture, "error_on_invalid_operand_types_to_relational_operato
 
     GenericError* ge = get<GenericError>(result.errors[0]);
     REQUIRE(ge);
-    CHECK_EQ("Type 'boolean' cannot be compared with relational operator <", ge->message);
+
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        CHECK_EQ("Types 'boolean' and 'boolean' cannot be compared with relational operator <", ge->message);
+    else
+        CHECK_EQ("Type 'boolean' cannot be compared with relational operator <", ge->message);
 }
 
 TEST_CASE_FIXTURE(Fixture, "error_on_invalid_operand_types_to_relational_operators2")
@@ -666,7 +711,10 @@ TEST_CASE_FIXTURE(Fixture, "error_on_invalid_operand_types_to_relational_operato
 
     GenericError* ge = get<GenericError>(result.errors[0]);
     REQUIRE(ge);
-    CHECK_EQ("Type 'number | string' cannot be compared with relational operator <", ge->message);
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        CHECK_EQ("Types 'number | string' and 'number | string' cannot be compared with relational operator <", ge->message);
+    else
+        CHECK_EQ("Type 'number | string' cannot be compared with relational operator <", ge->message);
 }
 
 TEST_CASE_FIXTURE(Fixture, "cli_38355_recursive_union")
@@ -792,6 +840,21 @@ TEST_CASE_FIXTURE(Fixture, "operator_eq_operands_are_not_subtypes_of_each_other_
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
+TEST_CASE_FIXTURE(Fixture, "operator_eq_completely_incompatible")
+{
+    ScopedFastFlag sff{"LuauIntersectionTestForEquality", true};
+
+    CheckResult result = check(R"(
+        local a: string | number = "hi"
+        local b: {x: string}? = {x = "bye"}
+
+        local r1 = a == b
+        local r2 = b == a
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
+}
+
 TEST_CASE_FIXTURE(Fixture, "refine_and_or")
 {
     CheckResult result = check(R"(
@@ -871,8 +934,6 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "equality_operations_succeed_if_any_union_bra
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "expected_types_through_binary_and")
 {
-    ScopedFastFlag sff{"LuauBinaryNeedsExpectedTypesToo", true};
-
     CheckResult result = check(R"(
         local x: "a" | "b" | boolean = math.random() > 0.5 and "a"
     )");
@@ -882,13 +943,162 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "expected_types_through_binary_and")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "expected_types_through_binary_or")
 {
-    ScopedFastFlag sff{"LuauBinaryNeedsExpectedTypesToo", true};
-
     CheckResult result = check(R"(
         local x: "a" | "b" | boolean = math.random() > 0.5 or "b"
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(ClassFixture, "unrelated_classes_cannot_be_compared")
+{
+    ScopedFastFlag sff{"LuauIntersectionTestForEquality", true};
+
+    CheckResult result = check(R"(
+        local a = BaseClass.New()
+        local b = UnrelatedClass.New()
+
+        local c = a == b
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "unrelated_primitives_cannot_be_compared")
+{
+    ScopedFastFlag sff{"LuauIntersectionTestForEquality", true};
+
+    CheckResult result = check(R"(
+        local c = 5 == true
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "mm_ops_must_return_a_value")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local mm = {
+            __add = function(self, other)
+                return
+            end,
+        }
+
+        local x = setmetatable({}, mm)
+        local y = x + 123
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
+
+    CHECK(requireType("y") == builtinTypes->errorRecoveryType());
+
+    const GenericError* ge = get<GenericError>(result.errors[1]);
+    REQUIRE(ge);
+    CHECK(ge->message == "Metamethod '__add' must return a value");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "mm_comparisons_must_return_a_boolean")
+{
+    if (!FFlag::DebugLuauDeferredConstraintResolution)
+        return;
+
+    CheckResult result = check(R"(
+        local mm1 = {
+            __lt = function(self, other)
+                return 123
+            end,
+        }
+
+        local mm2 = {
+            __lt = function(self, other)
+                return
+            end,
+        }
+
+        local o1 = setmetatable({}, mm1)
+        local v1 = o1 < o1
+
+        local o2 = setmetatable({}, mm2)
+        local v2 = o2 < o2
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(4, result);
+
+    CHECK(requireType("v1") == builtinTypes->booleanType);
+    CHECK(requireType("v2") == builtinTypes->booleanType);
+
+    CHECK(toString(result.errors[1]) == "Metamethod '__lt' must return a boolean");
+    CHECK(toString(result.errors[3]) == "Metamethod '__lt' must return a boolean");
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "reworked_and")
+{
+    ScopedFastFlag sff[]{
+        {"LuauTryhardAnd", true},
+    };
+
+    CheckResult result = check(R"(
+local a: number? = 5
+local b: boolean = (a or 1) > 10
+local c -- free
+
+local x = a and 1
+local y = 'a' and 1
+local z = b and 1
+local w = c and 1
+    )");
+
+    CHECK("number?" == toString(requireType("x")));
+    CHECK("number" == toString(requireType("y")));
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        CHECK("false | number" == toString(requireType("z")));
+    else
+        CHECK("boolean | number" == toString(requireType("z"))); // 'false' widened to boolean
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+        CHECK("((false?) & a) | number" == toString(requireType("w")));
+    else
+        CHECK("(boolean | number)?" == toString(requireType("w")));
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "reworked_or")
+{
+    ScopedFastFlag sff[]{
+        {"LuauTryhardAnd", true},
+    };
+
+    CheckResult result = check(R"(
+local a: number | false = 5
+local b: number? = 6
+local c: boolean = true
+local d: true = true
+local e: false = false
+local f: nil = false
+
+local a1 = a or 'a'
+local b1 = b or 4
+local c1 = c or 'c'
+local d1 = d or 'd'
+local e1 = e or 'e'
+local f1 = f or 'f'
+    )");
+
+    CHECK("number | string" == toString(requireType("a1")));
+    CHECK("number" == toString(requireType("b1")));
+    if (FFlag::DebugLuauDeferredConstraintResolution)
+    {
+        CHECK("string | true" == toString(requireType("c1")));
+        CHECK("string | true" == toString(requireType("d1")));
+    }
+    else
+    {
+        CHECK("boolean | string" == toString(requireType("c1"))); // 'true' widened to boolean
+        CHECK("boolean | string" == toString(requireType("d1"))); // 'true' widened to boolean
+    }
+    CHECK("string" == toString(requireType("e1")));
+    CHECK("string" == toString(requireType("f1")));
 }
 
 TEST_SUITE_END();

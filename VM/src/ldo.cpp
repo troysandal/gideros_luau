@@ -243,14 +243,14 @@ void luaD_call(lua_State* L, StkId func, int nResults)
     {                                        // is a Lua function?
         L->ci->flags |= LUA_CALLINFO_RETURN; // luau_execute will stop after returning from the stack frame
 
-        int oldactive = luaC_threadactive(L);
-        l_setbit(L->stackstate, THREAD_ACTIVEBIT);
+        bool oldactive = L->isactive;
+        L->isactive = true;
         luaC_threadbarrier(L);
 
         luau_execute(L); // call it
 
         if (!oldactive)
-            resetbit(L->stackstate, THREAD_ACTIVEBIT);
+            L->isactive = false;
     }
 
     L->nCcalls--;
@@ -263,18 +263,18 @@ static void seterrorobj(lua_State* L, int errcode, StkId oldtop)
     {
     case LUA_ERRMEM:
     {
-        setsvalue2s(L, oldtop, luaS_newliteral(L, LUA_MEMERRMSG)); // can not fail because string is pinned in luaopen
+        setsvalue(L, oldtop, luaS_newliteral(L, LUA_MEMERRMSG)); // can not fail because string is pinned in luaopen
         break;
     }
     case LUA_ERRERR:
     {
-        setsvalue2s(L, oldtop, luaS_newliteral(L, LUA_ERRERRMSG)); // can not fail because string is pinned in luaopen
+        setsvalue(L, oldtop, luaS_newliteral(L, LUA_ERRERRMSG)); // can not fail because string is pinned in luaopen
         break;
     }
     case LUA_ERRSYNTAX:
     case LUA_ERRRUN:
     {
-        setobjs2s(L, oldtop, L->top - 1); // error message on current top
+        setobj2s(L, oldtop, L->top - 1); // error message on current top
         break;
     }
     }
@@ -419,7 +419,7 @@ static void resume_handle(lua_State* L, void* ud)
 static int resume_error(lua_State* L, const char* msg)
 {
     L->top = L->ci->base;
-    setsvalue2s(L, L->top, luaS_new(L, msg));
+    setsvalue(L, L->top, luaS_new(L, msg));
     incr_top(L);
     return LUA_ERRRUN;
 }
@@ -427,7 +427,7 @@ static int resume_error(lua_State* L, const char* msg)
 static void resume_finish(lua_State* L, int status)
 {
     L->nCcalls = L->baseCcalls;
-    resetbit(L->stackstate, THREAD_ACTIVEBIT);
+    L->isactive = false;
 
     if (status != 0)
     {                                  // error?
@@ -452,7 +452,7 @@ int lua_resume(lua_State* L, lua_State* from, int nargs)
         return resume_error(L, "C stack overflow");
 
     L->baseCcalls = ++L->nCcalls;
-    l_setbit(L->stackstate, THREAD_ACTIVEBIT);
+    L->isactive = true;
 
     luaC_threadbarrier(L);
 
@@ -481,7 +481,7 @@ int lua_resumeerror(lua_State* L, lua_State* from)
         return resume_error(L, "C stack overflow");
 
     L->baseCcalls = ++L->nCcalls;
-    l_setbit(L->stackstate, THREAD_ACTIVEBIT);
+    L->isactive = true;
 
     luaC_threadbarrier(L);
 
@@ -525,8 +525,8 @@ static void callerrfunc(lua_State* L, void* ud)
 {
     StkId errfunc = cast_to(StkId, ud);
 
-    setobjs2s(L, L->top, L->top - 1);
-    setobjs2s(L, L->top - 1, errfunc);
+    setobj2s(L, L->top, L->top - 1);
+    setobj2s(L, L->top - 1, errfunc);
     incr_top(L);
     luaD_call(L, L->top - 2, 1);
 }
@@ -546,7 +546,7 @@ int luaD_pcall(lua_State* L, Pfunc func, void* u, ptrdiff_t old_top, ptrdiff_t e
 {
     unsigned short oldnCcalls = L->nCcalls;
     ptrdiff_t old_ci = saveci(L, L->ci);
-    int oldactive = luaC_threadactive(L);
+    bool oldactive = L->isactive;
     int status = luaD_rawrunprotected(L, func, u);
     if (status != 0)
     {
@@ -560,7 +560,7 @@ int luaD_pcall(lua_State* L, Pfunc func, void* u, ptrdiff_t old_top, ptrdiff_t e
 
         // since the call failed with an error, we might have to reset the 'active' thread state
         if (!oldactive)
-            resetbit(L->stackstate, THREAD_ACTIVEBIT);
+            L->isactive = false;
 
         // Restore nCcalls before calling the debugprotectederror callback which may rely on the proper value to have been restored.
         L->nCcalls = oldnCcalls;

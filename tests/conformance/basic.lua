@@ -93,6 +93,10 @@ assert((function() local a = 1 a = a * 2 return a end)() == 2)
 assert((function() local a = 1 a = a / 2 return a end)() == 0.5)
 assert((function() local a = 5 a = a % 2 return a end)() == 1)
 assert((function() local a = 3 a = a ^ 2 return a end)() == 9)
+assert((function() local a = 3 a = a ^ 3 return a end)() == 27)
+assert((function() local a = 9 a = a ^ 0.5 return a end)() == 3)
+assert((function() local a = -2 a = a ^ 2 return a end)() == 4)
+assert((function() local a = -2 a = a ^ 0.5 return tostring(a) end)() == "nan")
 
 assert((function() local a = '1' a = a .. '2' return a end)() == "12")
 assert((function() local a = '1' a = a .. '2' .. '3' return a end)() == "123")
@@ -110,6 +114,11 @@ assert((function() local a = 1 a = a and 2 return a end)() == 2)
 assert((function() local a = nil a = a and 2 return a end)() == nil)
 assert((function() local a = 1 a = a or 2 return a end)() == 1)
 assert((function() local a = nil a = a or 2 return a end)() == 2)
+
+assert((function() local a a = 1 local b = 2 b = a and b return b end)() == 2)
+assert((function() local a a = nil local b = 2 b = a and b return b end)() == nil)
+assert((function() local a a = 1 local b = 2 b = a or b return b end)() == 1)
+assert((function() local a a = nil local b = 2 b = a or b return b end)() == 2)
 
 -- binary arithmetics coerces strings to numbers (sadly)
 assert(1 + "2" == 3)
@@ -470,6 +479,12 @@ assert(rawequal("a", "a") == true)
 assert(rawequal("a", "b") == false)
 assert((function() a = {} b = {} mt = { __eq = function(l, r) return #l == #r end } setmetatable(a, mt) setmetatable(b, mt) return concat(a == b, rawequal(a, b)) end)() == "true,false")
 
+-- rawequal fallback
+assert(concat(pcall(rawequal, "a", "a")) == "true,true")
+assert(concat(pcall(rawequal, "a", "b")) == "true,false")
+assert(concat(pcall(rawequal, "a", nil)) == "true,false")
+assert(pcall(rawequal, "a") == false)
+
 -- metatable ops
 local function vec3t(x, y, z)
     return setmetatable({x=x, y=y, z=z}, {
@@ -503,6 +518,9 @@ assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(
 assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('abc', 'abd')) end)() == "true,true,false,false")
 assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('ab\\0c', 'ab\\0d')) end)() == "true,true,false,false")
 assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('ab\\0c', 'ab\\0')) end)() == "false,false,true,true")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('\\0a', '\\0b')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', 'a\\0')) end)() == "true,true,false,false")
+assert((function() function cmp(a,b) return a<b,a<=b,a>b,a>=b end return concat(cmp('a', '\200')) end)() == "true,true,false,false")
 
 -- array access
 assert((function() local a = {4,5,6} return a[3] end)() == 6)
@@ -691,7 +709,11 @@ end
 assert(chainTest(100) == "v0,v100")
 
 -- this validates import fallbacks
+assert(idontexist == nil)
+assert(math.idontexist == nil)
 assert(pcall(function() return idontexist.a end) == false)
+assert(pcall(function() return math.pow.a end) == false)
+assert(pcall(function() return math.a.b end) == false)
 
 -- make sure that NaN is preserved by the bytecode compiler
 local realnan = tostring(math.abs(0)/math.abs(0))
@@ -900,6 +922,21 @@ assert((function()
 
     return table.concat(res, ',')
 end)() == "6,8,10")
+
+-- checking for a CFG issue that was missed in IR
+assert((function(b)
+    local res = 0
+
+    if b then
+        for i = 1, 100 do
+            res += i
+        end
+    else
+        res += 100000
+    end
+
+    return res
+end)(true) == 5050)
 
 -- typeof and type require an argument
 assert(pcall(typeof) == false)

@@ -441,6 +441,7 @@
 					./Compiler/include,
 					./Ast/include,
 					./VM/src,
+					./Common/include,
 				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -459,6 +460,7 @@
 					./Compiler/include,
 					./Ast/include,
 					./VM/src,
+					./Common/include,
 				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = "$(TARGET_NAME)";

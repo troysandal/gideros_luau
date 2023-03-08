@@ -11,3 +11,5 @@
 /luau-tests
 /luau-analyze
 __pycache__
+Makefile
+

@@ -445,6 +445,7 @@ LUA_API lua_Callbacks* lua_callbacks(lua_State* L);
 */
 LUA_API size_t lua_newtoken(lua_State* L, const char *str);
 LUA_API void lua_pushtoken(lua_State* L, int token);
+LUA_API int lua_gettoken(lua_State* L, int idx, int token);
 LUA_API int lua_rawgettoken(lua_State* L, int idx, int token);
 LUA_API void lua_rawsettoken(lua_State* L, int idx, int token);
 

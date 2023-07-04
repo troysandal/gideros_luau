@@ -1536,6 +1536,19 @@ void lua_pushtoken(lua_State* L, int token)
     return;
 }
 
+int lua_gettoken(lua_State* L, int idx, int token)
+{
+    api_check(L, token<L->global->ttoken.size());
+    luaC_threadbarrier(L);
+    StkId t = index2addr(L, idx);
+    api_check(L, ttistable(t));
+    TValue key;
+    setsvalue(L, &key, L->global->ttoken[token]);
+    luaV_gettable(L, t, &key, L->top);
+    api_incr_top(L);
+    return ttype(L->top - 1);
+}
+
 int lua_rawgettoken(lua_State* L, int idx, int token)
 {
 	api_check(L, token<L->global->ttoken.size());

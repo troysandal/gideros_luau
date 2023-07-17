@@ -545,6 +545,7 @@ int luaL_ref(lua_State* L, int t)
 #include <errno.h>
 static int errfile (lua_State *L, const char *what, const char *fname) {
   const char *serr = strerror(errno);
+  lua_pushnil(L); //Semantics of luau_load: in case of error table (or nil) and error message are returned
   lua_pushfstring(L, "cannot %s %s: %s", what, fname, serr);
   return 1;
 }
@@ -572,6 +573,7 @@ int luaL_loadfilenamed (lua_State *L, const char *filename, const char *chunknam
 #include <errno.h>
 static int errfile (lua_State *L, const char *what, const char *fname) {
   const char *serr = strerror(errno);
+  lua_pushnil(L); //Semantics of luau_load: in case of error table (or nil) and error message are returned
   lua_pushfstring(L, "cannot %s %s: %s", what, fname, serr);
   return 1;
 }

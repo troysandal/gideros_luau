@@ -32,7 +32,7 @@ defineReplace(expand) {
 INCLUDEPATH += \
 	VM/src \
 	VM/include \
-	Common/Include \
+	Common/include \
         Compiler/include \
         Ast/include \
         ../libgvfs

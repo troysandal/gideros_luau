@@ -1135,7 +1135,7 @@ int lua_gc(lua_State* L, int what, int data)
 
             actualwork += stepsize;
 
-            if (g->gcstate == GCSpause)
+            if ((g->gcstate == GCSpause)||(stepsize==0))
             {            // end of cycle?
                 res = 1; // signal it
                 break;

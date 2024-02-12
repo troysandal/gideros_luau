@@ -434,7 +434,7 @@ static int luaB_loadfile(lua_State *L) {
   int nret=luaL_loadfilenamed(L, s, luaL_optstring(L,2,s));
   if (nret>0) {
       lua_pushnil(L);
-      lua_replace(L,-2);
+      lua_replace(L,-3);
       return 2;
   }
   if (nret==-1) {
@@ -451,7 +451,7 @@ static int luaB_loadstring(lua_State *L) {
   int nret=luaL_loadbuffer(L, s, sz, luaL_optstring(L,2,"string-chunk"));
   if (nret>0) {
       lua_pushnil(L);
-      lua_replace(L,-2);
+      lua_replace(L,-3);
       return 2;
   }
   if (nret==-1) {

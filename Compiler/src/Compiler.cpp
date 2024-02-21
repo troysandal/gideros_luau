@@ -243,7 +243,7 @@ struct Compiler
         if (options.optimizationLevel >= 1 && options.debugLevel >= 2)
             gatherConstUpvals(func);
 
-        bytecode.setDebugFunctionLineDefined(func->location.begin.line + 1);
+        bytecode.setDebugFunctionLineDefined(func->location.begin.line + (func->hasEnd?1:0));
 
         if (options.debugLevel >= 1 && func->debugname.value)
             bytecode.setDebugFunctionName(sref(func->debugname));

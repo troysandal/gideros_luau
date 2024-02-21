@@ -112,8 +112,8 @@ static Closure* auxgetinfo(lua_State* L, const char* what, lua_Debug* ar, Closur
             {
                 TString* source = f->l.p->source;
                 ar->source = getstr(source);
-                ar->what = "Lua";
                 ar->linedefined = f->l.p->linedefined;
+                ar->what = ar->linedefined?"Lua":"main";
                 ar->short_src = luaO_chunkid(ar->ssbuf, sizeof(ar->ssbuf), getstr(source), source->len);
             }
             break;

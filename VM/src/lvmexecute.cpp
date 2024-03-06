@@ -3398,7 +3398,7 @@ void luau_poscall(lua_State* L, StkId first)
 {
     // finish interrupted execution of `OP_CALL'
     if (L->profilerHook)
-      L->profilerHook(L,1);
+      L->profilerHook(L,0);
 
     // ci is our callinfo, cip is our parent
     CallInfo* ci = L->ci;

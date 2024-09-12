@@ -1498,6 +1498,14 @@ void lua_cleartable(lua_State* L, int idx)
     luaH_clear(tt);
 }
 
+int lua_gettablesize(lua_State* L, int idx)
+{
+    StkId t = index2addr(L, idx);
+    api_check(L, ttistable(t));
+    Table* tt = hvalue(t);
+    return luaH_getsize(tt);
+}
+
 lua_Callbacks* lua_callbacks(lua_State* L)
 {
     return &L->global->cb;

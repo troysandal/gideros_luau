@@ -867,3 +867,26 @@ void luaH_clear(Table* tt)
     // back to empty -> no tag methods present
     tt->tmcache = cast_byte(~0);
 }
+
+int luaH_getsize(Table* t)
+{
+    int count=0;
+    if (t->sizearray)
+    {
+        for (int k=0;k<t->sizearray;k++) {
+            if (!ttisnil(&t->array[k]))
+                count++;
+        }
+    }
+
+    if (t->node != dummynode)
+    {
+        for (int i=0; i < sizenode(t); i++)
+        { // then hash part
+            if (!ttisnil(gval(gnode(t, i))))
+                count++;
+        }
+    }
+
+    return count;
+}

@@ -475,6 +475,7 @@ LUA_API int lua_isclosing(lua_State *L);
 LUA_API int lua_findreferences(lua_State* L);
 LUA_API void lua_clonetable(lua_State* L, int idx);
 LUA_API void lua_remaptable(lua_State* L, int idx, int mapIdx);
+LUA_API int lua_gettablesize(lua_State* L, int idx);
 
 
 /******************************************************************************

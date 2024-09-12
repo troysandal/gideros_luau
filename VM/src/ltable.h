@@ -30,6 +30,7 @@ LUAI_FUNC int luaH_getn(Table* t);
 LUAI_FUNC Table* luaH_clone(lua_State* L, Table* tt);
 LUAI_FUNC void luaH_remaptable(Table* t, Table *lt);
 LUAI_FUNC void luaH_clear(Table* tt);
+LUAI_FUNC int luaH_getsize(Table* tt);
 
 #define luaH_setslot(L, t, slot, key) (invalidateTMcache(t), (slot == luaO_nilobject ? luaH_newkey(L, t, key) : cast_to(TValue*, slot)))
 

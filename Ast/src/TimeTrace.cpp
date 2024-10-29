@@ -3,6 +3,7 @@
 
 #include "Luau/StringUtils.h"
 
+#include <algorithm>
 #include <mutex>
 #include <string>
 
@@ -15,7 +16,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <Windows.h>
+#include <windows.h>
 #endif
 
 #ifdef __APPLE__
@@ -40,7 +41,7 @@ static double getClockPeriod()
     mach_timebase_info_data_t result = {};
     mach_timebase_info(&result);
     return double(result.numer) / double(result.denom) * 1e-9;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
     return 1e-9;
 #else
     return 1.0 / double(CLOCKS_PER_SEC);
@@ -55,7 +56,7 @@ static double getClockTimestamp()
     return double(result.QuadPart);
 #elif defined(__APPLE__)
     return double(mach_absolute_time());
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
     timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now.tv_sec * 1e9 + now.tv_nsec;
@@ -90,17 +91,8 @@ namespace TimeTrace
 {
 struct GlobalContext
 {
-    GlobalContext() = default;
     ~GlobalContext()
     {
-        // Ideally we would want all ThreadContext destructors to run
-        // But in VS, not all thread_local object instances are destroyed
-        for (ThreadContext* context : threads)
-        {
-            if (!context->events.empty())
-                context->flushEvents();
-        }
-
         if (traceFile)
             fclose(traceFile);
     }
@@ -110,11 +102,15 @@ struct GlobalContext
     uint32_t nextThreadId = 0;
     std::vector<Token> tokens;
     FILE* traceFile = nullptr;
+
+private:
+    friend std::shared_ptr<GlobalContext> getGlobalContext();
+    GlobalContext() = default;
 };
 
-GlobalContext& getGlobalContext()
+std::shared_ptr<GlobalContext> getGlobalContext()
 {
-    static GlobalContext context;
+    static std::shared_ptr<GlobalContext> context = std::shared_ptr<GlobalContext>{new GlobalContext};
     return context;
 }
 
@@ -189,8 +185,14 @@ void flushEvents(GlobalContext& context, uint32_t threadId, const std::vector<Ev
 
             Token& token = context.tokens[ev.token];
 
-            formatAppend(temp, R"({"name": "%s", "cat": "%s", "ph": "B", "ts": %u, "pid": 0, "tid": %u)", token.name, token.category,
-                ev.data.microsec, threadId);
+            formatAppend(
+                temp,
+                R"({"name": "%s", "cat": "%s", "ph": "B", "ts": %u, "pid": 0, "tid": %u)",
+                token.name,
+                token.category,
+                ev.data.microsec,
+                threadId
+            );
             unfinishedEnter = true;
         }
         break;
@@ -206,10 +208,13 @@ void flushEvents(GlobalContext& context, uint32_t threadId, const std::vector<Ev
                 unfinishedEnter = false;
             }
 
-            formatAppend(temp,
+            formatAppend(
+                temp,
                 R"({"ph": "E", "ts": %u, "pid": 0, "tid": %u},)"
                 "\n",
-                ev.data.microsec, threadId);
+                ev.data.microsec,
+                threadId
+            );
             break;
         case EventType::ArgName:
             LUAU_ASSERT(unfinishedEnter);
@@ -255,13 +260,17 @@ void flushEvents(GlobalContext& context, uint32_t threadId, const std::vector<Ev
 
 ThreadContext& getThreadContext()
 {
+    // Check custom provider that which might implement a custom TLS
+    if (auto provider = threadContextProvider())
+        return provider();
+
     thread_local ThreadContext context;
     return context;
 }
 
 uint16_t createScopeData(const char* name, const char* category)
 {
-    return createToken(Luau::TimeTrace::getGlobalContext(), name, category);
+    return createToken(*Luau::TimeTrace::getGlobalContext(), name, category);
 }
 } // namespace TimeTrace
 } // namespace Luau

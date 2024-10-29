@@ -1,305 +1,743 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/DataFlowGraph.h"
 
-#include "Luau/Breadcrumb.h"
+#include "Luau/Ast.h"
+#include "Luau/BuiltinDefinitions.h"
+#include "Luau/Def.h"
+#include "Luau/Common.h"
 #include "Luau/Error.h"
-#include "Luau/Refinement.h"
+#include "Luau/TimeTrace.h"
+
+#include <memory>
+#include <optional>
 
 LUAU_FASTFLAG(DebugLuauFreezeArena)
-LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution)
+LUAU_FASTFLAG(LuauSolverV2)
+LUAU_FASTFLAG(LuauTypestateBuiltins)
 
 namespace Luau
 {
 
-NullableBreadcrumbId DataFlowGraph::getBreadcrumb(const AstExpr* expr) const
-{
-    // We need to skip through AstExprGroup because DFG doesn't try its best to transitively
-    while (auto group = expr->as<AstExprGroup>())
-        expr = group->expr;
-    if (auto bc = astBreadcrumbs.find(expr))
-        return *bc;
-    return nullptr;
-}
+bool doesCallError(const AstExprCall* call); // TypeInfer.cpp
 
-BreadcrumbId DataFlowGraph::getBreadcrumb(const AstLocal* local) const
+struct ReferencedDefFinder : public AstVisitor
 {
-    auto bc = localBreadcrumbs.find(local);
-    LUAU_ASSERT(bc);
-    return NotNull{*bc};
-}
-
-BreadcrumbId DataFlowGraph::getBreadcrumb(const AstExprLocal* local) const
-{
-    auto bc = astBreadcrumbs.find(local);
-    LUAU_ASSERT(bc);
-    return NotNull{*bc};
-}
-
-BreadcrumbId DataFlowGraph::getBreadcrumb(const AstExprGlobal* global) const
-{
-    auto bc = astBreadcrumbs.find(global);
-    LUAU_ASSERT(bc);
-    return NotNull{*bc};
-}
-
-BreadcrumbId DataFlowGraph::getBreadcrumb(const AstStatDeclareGlobal* global) const
-{
-    auto bc = declaredBreadcrumbs.find(global);
-    LUAU_ASSERT(bc);
-    return NotNull{*bc};
-}
-
-BreadcrumbId DataFlowGraph::getBreadcrumb(const AstStatDeclareFunction* func) const
-{
-    auto bc = declaredBreadcrumbs.find(func);
-    LUAU_ASSERT(bc);
-    return NotNull{*bc};
-}
-
-NullableBreadcrumbId DfgScope::lookup(Symbol symbol) const
-{
-    for (const DfgScope* current = this; current; current = current->parent)
+    bool visit(AstExprLocal* local) override
     {
-        if (auto breadcrumb = current->bindings.find(symbol))
-            return *breadcrumb;
+        referencedLocalDefs.push_back(local->local);
+        return true;
+    }
+    // ast defs is just a mapping from expr -> def in general
+    // will get built up by the dfg builder
+
+    // localDefs, we need to copy over
+    std::vector<AstLocal*> referencedLocalDefs;
+};
+
+struct PushScope
+{
+    ScopeStack& stack;
+
+    PushScope(ScopeStack& stack, DfgScope* scope)
+        : stack(stack)
+    {
+        // `scope` should never be `nullptr` here.
+        LUAU_ASSERT(scope);
+        stack.push_back(scope);
     }
 
+    ~PushScope()
+    {
+        stack.pop_back();
+    }
+};
+
+const RefinementKey* RefinementKeyArena::leaf(DefId def)
+{
+    return allocator.allocate(RefinementKey{nullptr, def, std::nullopt});
+}
+
+const RefinementKey* RefinementKeyArena::node(const RefinementKey* parent, DefId def, const std::string& propName)
+{
+    return allocator.allocate(RefinementKey{parent, def, propName});
+}
+
+DefId DataFlowGraph::getDef(const AstExpr* expr) const
+{
+    auto def = astDefs.find(expr);
+    LUAU_ASSERT(def);
+    return NotNull{*def};
+}
+
+std::optional<DefId> DataFlowGraph::getDefOptional(const AstExpr* expr) const
+{
+    auto def = astDefs.find(expr);
+    if (!def)
+        return std::nullopt;
+    return NotNull{*def};
+}
+
+std::optional<DefId> DataFlowGraph::getRValueDefForCompoundAssign(const AstExpr* expr) const
+{
+    auto def = compoundAssignDefs.find(expr);
+    return def ? std::optional<DefId>(*def) : std::nullopt;
+}
+
+DefId DataFlowGraph::getDef(const AstLocal* local) const
+{
+    auto def = localDefs.find(local);
+    LUAU_ASSERT(def);
+    return NotNull{*def};
+}
+
+DefId DataFlowGraph::getDef(const AstStatDeclareGlobal* global) const
+{
+    auto def = declaredDefs.find(global);
+    LUAU_ASSERT(def);
+    return NotNull{*def};
+}
+
+DefId DataFlowGraph::getDef(const AstStatDeclareFunction* func) const
+{
+    auto def = declaredDefs.find(func);
+    LUAU_ASSERT(def);
+    return NotNull{*def};
+}
+
+const RefinementKey* DataFlowGraph::getRefinementKey(const AstExpr* expr) const
+{
+    if (auto key = astRefinementKeys.find(expr))
+        return *key;
+
     return nullptr;
 }
 
-NullableBreadcrumbId DfgScope::lookup(DefId def, const std::string& key) const
+std::optional<DefId> DfgScope::lookup(Symbol symbol) const
 {
     for (const DfgScope* current = this; current; current = current->parent)
     {
-        if (auto map = props.find(def))
+        if (auto def = current->bindings.find(symbol))
+            return NotNull{*def};
+    }
+
+    return std::nullopt;
+}
+
+std::optional<DefId> DfgScope::lookup(DefId def, const std::string& key) const
+{
+    for (const DfgScope* current = this; current; current = current->parent)
+    {
+        if (auto props = current->props.find(def))
         {
-            if (auto it = map->find(key); it != map->end())
-                return it->second;
+            if (auto it = props->find(key); it != props->end())
+                return NotNull{it->second};
         }
     }
 
-    return nullptr;
+    return std::nullopt;
+}
+
+void DfgScope::inherit(const DfgScope* childScope)
+{
+    for (const auto& [k, a] : childScope->bindings)
+    {
+        if (lookup(k))
+            bindings[k] = a;
+    }
+
+    for (const auto& [k1, a1] : childScope->props)
+    {
+        for (const auto& [k2, a2] : a1)
+            props[k1][k2] = a2;
+    }
+}
+
+bool DfgScope::canUpdateDefinition(Symbol symbol) const
+{
+    for (const DfgScope* current = this; current; current = current->parent)
+    {
+        if (current->bindings.find(symbol))
+            return true;
+        else if (current->scopeType == DfgScope::Loop)
+            return false;
+    }
+
+    return true;
+}
+
+bool DfgScope::canUpdateDefinition(DefId def, const std::string& key) const
+{
+    for (const DfgScope* current = this; current; current = current->parent)
+    {
+        if (auto props = current->props.find(def))
+            return true;
+        else if (current->scopeType == DfgScope::Loop)
+            return false;
+    }
+
+    return true;
 }
 
 DataFlowGraph DataFlowGraphBuilder::build(AstStatBlock* block, NotNull<InternalErrorReporter> handle)
 {
-    LUAU_ASSERT(FFlag::DebugLuauDeferredConstraintResolution);
+    LUAU_TIMETRACE_SCOPE("DataFlowGraphBuilder::build", "Typechecking");
+
+    LUAU_ASSERT(FFlag::LuauSolverV2);
 
     DataFlowGraphBuilder builder;
     builder.handle = handle;
-    builder.moduleScope = builder.childScope(nullptr); // nullptr is the root DFG scope.
-    builder.visitBlockWithoutChildScope(builder.moduleScope, block);
+    DfgScope* moduleScope = builder.makeChildScope(block->location);
+    PushScope ps{builder.scopeStack, moduleScope};
+    builder.visitBlockWithoutChildScope(block);
+    builder.resolveCaptures();
 
     if (FFlag::DebugLuauFreezeArena)
     {
-        builder.defs->allocator.freeze();
-        builder.breadcrumbs->allocator.freeze();
+        builder.defArena->allocator.freeze();
+        builder.keyArena->allocator.freeze();
     }
 
     return std::move(builder.graph);
 }
 
-DfgScope* DataFlowGraphBuilder::childScope(DfgScope* scope)
+std::pair<std::shared_ptr<DataFlowGraph>, std::vector<std::unique_ptr<DfgScope>>> DataFlowGraphBuilder::buildShared(
+    AstStatBlock* block,
+    NotNull<InternalErrorReporter> handle
+)
 {
-    return scopes.emplace_back(new DfgScope{scope}).get();
+
+    LUAU_TIMETRACE_SCOPE("DataFlowGraphBuilder::build", "Typechecking");
+
+    LUAU_ASSERT(FFlag::LuauSolverV2);
+
+    DataFlowGraphBuilder builder;
+    builder.handle = handle;
+    DfgScope* moduleScope = builder.makeChildScope(block->location);
+    PushScope ps{builder.scopeStack, moduleScope};
+    builder.visitBlockWithoutChildScope(block);
+    builder.resolveCaptures();
+
+    if (FFlag::DebugLuauFreezeArena)
+    {
+        builder.defArena->allocator.freeze();
+        builder.keyArena->allocator.freeze();
+    }
+
+    return {std::make_shared<DataFlowGraph>(std::move(builder.graph)), std::move(builder.scopes)};
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatBlock* b)
+DataFlowGraph DataFlowGraphBuilder::updateGraph(
+    const DataFlowGraph& staleGraph,
+    const std::vector<std::unique_ptr<DfgScope>>& scopes,
+    AstStatBlock* fragment,
+    const Position& cursorPos,
+    NotNull<InternalErrorReporter> handle
+)
 {
-    DfgScope* child = childScope(scope);
-    return visitBlockWithoutChildScope(child, b);
+    LUAU_TIMETRACE_SCOPE("DataFlowGraphBuilder::build", "Typechecking");
+    LUAU_ASSERT(FFlag::LuauSolverV2);
+
+    DataFlowGraphBuilder builder;
+    builder.handle = handle;
+    // Generate a list of prepopulated locals
+    ReferencedDefFinder finder;
+    fragment->visit(&finder);
+    for (AstLocal* loc : finder.referencedLocalDefs)
+    {
+        if (staleGraph.localDefs.contains(loc))
+        {
+            builder.graph.localDefs[loc] = *staleGraph.localDefs.find(loc);
+        }
+    }
+
+    // Figure out which scope we should start re-accumulating DFG information from again
+    DfgScope* nearest = nullptr;
+    for (auto& sc : scopes)
+    {
+        if (nearest == nullptr || (sc->location.begin <= cursorPos && nearest->location.begin < sc->location.begin))
+            nearest = sc.get();
+    }
+
+    // The scope stack should start with the nearest enclosing scope so we can resume DFG'ing correctly
+    PushScope ps{builder.scopeStack, nearest};
+    // Conspire for the current scope in the scope stack to be a fresh dfg scope, parented to the above nearest enclosing scope, so any insertions are
+    // isolated there
+    DfgScope* scope = builder.makeChildScope(fragment->location);
+    PushScope psAgain{builder.scopeStack, scope};
+
+    builder.visitBlockWithoutChildScope(fragment);
+
+    if (FFlag::DebugLuauFreezeArena)
+    {
+        builder.defArena->allocator.freeze();
+        builder.keyArena->allocator.freeze();
+    }
+
+    return std::move(builder.graph);
 }
 
-void DataFlowGraphBuilder::visitBlockWithoutChildScope(DfgScope* scope, AstStatBlock* b)
+void DataFlowGraphBuilder::resolveCaptures()
 {
-    for (AstStat* s : b->body)
-        visit(scope, s);
+    for (const auto& [_, capture] : captures)
+    {
+        std::vector<DefId> operands;
+        for (size_t i = capture.versionOffset; i < capture.allVersions.size(); ++i)
+            collectOperands(capture.allVersions[i], &operands);
+
+        for (DefId captureDef : capture.captureDefs)
+        {
+            Phi* phi = const_cast<Phi*>(get<Phi>(captureDef));
+            LUAU_ASSERT(phi);
+            LUAU_ASSERT(phi->operands.empty());
+            phi->operands = operands;
+        }
+    }
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStat* s)
+DfgScope* DataFlowGraphBuilder::currentScope()
+{
+    if (scopeStack.empty())
+        return nullptr; // nullptr is the root DFG scope.
+    return scopeStack.back();
+}
+
+DfgScope* DataFlowGraphBuilder::makeChildScope(Location loc, DfgScope::ScopeType scopeType)
+{
+    return scopes.emplace_back(new DfgScope{currentScope(), scopeType, loc}).get();
+}
+
+void DataFlowGraphBuilder::join(DfgScope* p, DfgScope* a, DfgScope* b)
+{
+    joinBindings(p, *a, *b);
+    joinProps(p, *a, *b);
+}
+
+void DataFlowGraphBuilder::joinBindings(DfgScope* p, const DfgScope& a, const DfgScope& b)
+{
+    for (const auto& [sym, def1] : a.bindings)
+    {
+        if (auto def2 = b.bindings.find(sym))
+            p->bindings[sym] = defArena->phi(NotNull{def1}, NotNull{*def2});
+        else if (auto def2 = p->lookup(sym))
+            p->bindings[sym] = defArena->phi(NotNull{def1}, NotNull{*def2});
+    }
+
+    for (const auto& [sym, def1] : b.bindings)
+    {
+        if (auto def2 = p->lookup(sym))
+            p->bindings[sym] = defArena->phi(NotNull{def1}, NotNull{*def2});
+    }
+}
+
+void DataFlowGraphBuilder::joinProps(DfgScope* result, const DfgScope& a, const DfgScope& b)
+{
+    auto phinodify = [this](DfgScope* scope, const auto& a, const auto& b, DefId parent) mutable
+    {
+        auto& p = scope->props[parent];
+        for (const auto& [k, defA] : a)
+        {
+            if (auto it = b.find(k); it != b.end())
+                p[k] = defArena->phi(NotNull{it->second}, NotNull{defA});
+            else if (auto it = p.find(k); it != p.end())
+                p[k] = defArena->phi(NotNull{it->second}, NotNull{defA});
+            else if (auto def2 = scope->lookup(parent, k))
+                p[k] = defArena->phi(*def2, NotNull{defA});
+            else
+                p[k] = defA;
+        }
+
+        for (const auto& [k, defB] : b)
+        {
+            if (auto it = a.find(k); it != a.end())
+                continue;
+            else if (auto it = p.find(k); it != p.end())
+                p[k] = defArena->phi(NotNull{it->second}, NotNull{defB});
+            else if (auto def2 = scope->lookup(parent, k))
+                p[k] = defArena->phi(*def2, NotNull{defB});
+            else
+                p[k] = defB;
+        }
+    };
+
+    for (const auto& [def, a1] : a.props)
+    {
+        result->props.try_insert(def, {});
+        if (auto a2 = b.props.find(def))
+            phinodify(result, a1, *a2, NotNull{def});
+        else if (auto a2 = result->props.find(def))
+            phinodify(result, a1, *a2, NotNull{def});
+    }
+
+    for (const auto& [def, a1] : b.props)
+    {
+        result->props.try_insert(def, {});
+        if (a.props.find(def))
+            continue;
+        else if (auto a2 = result->props.find(def))
+            phinodify(result, a1, *a2, NotNull{def});
+    }
+}
+
+DefId DataFlowGraphBuilder::lookup(Symbol symbol)
+{
+    DfgScope* scope = currentScope();
+
+    // true if any of the considered scopes are a loop.
+    bool outsideLoopScope = false;
+    for (DfgScope* current = scope; current; current = current->parent)
+    {
+        outsideLoopScope = outsideLoopScope || current->scopeType == DfgScope::Loop;
+
+        if (auto found = current->bindings.find(symbol))
+            return NotNull{*found};
+        else if (current->scopeType == DfgScope::Function)
+        {
+            FunctionCapture& capture = captures[symbol];
+            DefId captureDef = defArena->phi({});
+            capture.captureDefs.push_back(captureDef);
+
+            // If we are outside of a loop scope, then we don't want to actually bind
+            // uses of `symbol` to this new phi node since it will not get populated.
+            if (!outsideLoopScope)
+                scope->bindings[symbol] = captureDef;
+
+            return NotNull{captureDef};
+        }
+    }
+
+    DefId result = defArena->freshCell();
+    scope->bindings[symbol] = result;
+    captures[symbol].allVersions.push_back(result);
+    return result;
+}
+
+DefId DataFlowGraphBuilder::lookup(DefId def, const std::string& key)
+{
+    DfgScope* scope = currentScope();
+    for (DfgScope* current = scope; current; current = current->parent)
+    {
+        if (auto props = current->props.find(def))
+        {
+            if (auto it = props->find(key); it != props->end())
+                return NotNull{it->second};
+        }
+        else if (auto phi = get<Phi>(def); phi && phi->operands.empty()) // Unresolved phi nodes
+        {
+            DefId result = defArena->freshCell();
+            scope->props[def][key] = result;
+            return result;
+        }
+    }
+
+    if (auto phi = get<Phi>(def))
+    {
+        std::vector<DefId> defs;
+        for (DefId operand : phi->operands)
+            defs.push_back(lookup(operand, key));
+
+        DefId result = defArena->phi(defs);
+        scope->props[def][key] = result;
+        return result;
+    }
+    else if (get<Cell>(def))
+    {
+        DefId result = defArena->freshCell();
+        scope->props[def][key] = result;
+        return result;
+    }
+    else
+        handle->ice("Inexhaustive lookup cases in DataFlowGraphBuilder::lookup");
+}
+
+ControlFlow DataFlowGraphBuilder::visit(AstStatBlock* b)
+{
+    DfgScope* child = makeChildScope(b->location);
+
+    ControlFlow cf;
+    {
+        PushScope ps{scopeStack, child};
+        cf = visitBlockWithoutChildScope(b);
+    }
+
+    currentScope()->inherit(child);
+    return cf;
+}
+
+ControlFlow DataFlowGraphBuilder::visitBlockWithoutChildScope(AstStatBlock* b)
+{
+    std::optional<ControlFlow> firstControlFlow;
+    for (AstStat* stat : b->body)
+    {
+        ControlFlow cf = visit(stat);
+        if (cf != ControlFlow::None && !firstControlFlow)
+            firstControlFlow = cf;
+    }
+
+    return firstControlFlow.value_or(ControlFlow::None);
+}
+
+ControlFlow DataFlowGraphBuilder::visit(AstStat* s)
 {
     if (auto b = s->as<AstStatBlock>())
-        return visit(scope, b);
+        return visit(b);
     else if (auto i = s->as<AstStatIf>())
-        return visit(scope, i);
+        return visit(i);
     else if (auto w = s->as<AstStatWhile>())
-        return visit(scope, w);
+        return visit(w);
     else if (auto r = s->as<AstStatRepeat>())
-        return visit(scope, r);
+        return visit(r);
     else if (auto b = s->as<AstStatBreak>())
-        return visit(scope, b);
+        return visit(b);
     else if (auto c = s->as<AstStatContinue>())
-        return visit(scope, c);
+        return visit(c);
     else if (auto r = s->as<AstStatReturn>())
-        return visit(scope, r);
+        return visit(r);
     else if (auto e = s->as<AstStatExpr>())
-        return visit(scope, e);
+        return visit(e);
     else if (auto l = s->as<AstStatLocal>())
-        return visit(scope, l);
+        return visit(l);
     else if (auto f = s->as<AstStatFor>())
-        return visit(scope, f);
+        return visit(f);
     else if (auto f = s->as<AstStatForIn>())
-        return visit(scope, f);
+        return visit(f);
     else if (auto a = s->as<AstStatAssign>())
-        return visit(scope, a);
+        return visit(a);
     else if (auto c = s->as<AstStatCompoundAssign>())
-        return visit(scope, c);
+        return visit(c);
     else if (auto f = s->as<AstStatFunction>())
-        return visit(scope, f);
+        return visit(f);
     else if (auto l = s->as<AstStatLocalFunction>())
-        return visit(scope, l);
+        return visit(l);
     else if (auto t = s->as<AstStatTypeAlias>())
-        return visit(scope, t);
+        return visit(t);
+    else if (auto f = s->as<AstStatTypeFunction>())
+        return visit(f);
     else if (auto d = s->as<AstStatDeclareGlobal>())
-        return visit(scope, d);
+        return visit(d);
     else if (auto d = s->as<AstStatDeclareFunction>())
-        return visit(scope, d);
+        return visit(d);
     else if (auto d = s->as<AstStatDeclareClass>())
-        return visit(scope, d);
+        return visit(d);
     else if (auto error = s->as<AstStatError>())
-        return visit(scope, error);
+        return visit(error);
     else
         handle->ice("Unknown AstStat in DataFlowGraphBuilder::visit");
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatIf* i)
+ControlFlow DataFlowGraphBuilder::visit(AstStatIf* i)
 {
-    // TODO: type states and control flow analysis
-    visitExpr(scope, i->condition);
-    visit(scope, i->thenbody);
+    visitExpr(i->condition);
+
+    DfgScope* thenScope = makeChildScope(i->thenbody->location);
+    DfgScope* elseScope = makeChildScope(i->elsebody ? i->elsebody->location : i->location);
+
+    ControlFlow thencf;
+    {
+        PushScope ps{scopeStack, thenScope};
+        thencf = visit(i->thenbody);
+    }
+
+    ControlFlow elsecf = ControlFlow::None;
     if (i->elsebody)
-        visit(scope, i->elsebody);
+    {
+        PushScope ps{scopeStack, elseScope};
+        elsecf = visit(i->elsebody);
+    }
+
+    DfgScope* scope = currentScope();
+    if (thencf != ControlFlow::None && elsecf == ControlFlow::None)
+        join(scope, scope, elseScope);
+    else if (thencf == ControlFlow::None && elsecf != ControlFlow::None)
+        join(scope, thenScope, scope);
+    else if ((thencf | elsecf) == ControlFlow::None)
+        join(scope, thenScope, elseScope);
+
+    if (thencf == elsecf)
+        return thencf;
+    else if (matches(thencf, ControlFlow::Returns | ControlFlow::Throws) && matches(elsecf, ControlFlow::Returns | ControlFlow::Throws))
+        return ControlFlow::Returns;
+    else
+        return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatWhile* w)
+ControlFlow DataFlowGraphBuilder::visit(AstStatWhile* w)
 {
     // TODO(controlflow): entry point has a back edge from exit point
-    DfgScope* whileScope = childScope(scope);
-    visitExpr(whileScope, w->condition);
-    visit(whileScope, w->body);
+    DfgScope* whileScope = makeChildScope(w->location, DfgScope::Loop);
+
+    {
+        PushScope ps{scopeStack, whileScope};
+        visitExpr(w->condition);
+        visit(w->body);
+    }
+
+    currentScope()->inherit(whileScope);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatRepeat* r)
+ControlFlow DataFlowGraphBuilder::visit(AstStatRepeat* r)
 {
     // TODO(controlflow): entry point has a back edge from exit point
-    DfgScope* repeatScope = childScope(scope); // TODO: loop scope.
-    visitBlockWithoutChildScope(repeatScope, r->body);
-    visitExpr(repeatScope, r->condition);
+    DfgScope* repeatScope = makeChildScope(r->location, DfgScope::Loop);
+
+    {
+        PushScope ps{scopeStack, repeatScope};
+        visitBlockWithoutChildScope(r->body);
+        visitExpr(r->condition);
+    }
+
+    currentScope()->inherit(repeatScope);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatBreak* b)
+ControlFlow DataFlowGraphBuilder::visit(AstStatBreak* b)
 {
-    // TODO: Control flow analysis
-    return; // ok
+    return ControlFlow::Breaks;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatContinue* c)
+ControlFlow DataFlowGraphBuilder::visit(AstStatContinue* c)
 {
-    // TODO: Control flow analysis
-    return; // ok
+    return ControlFlow::Continues;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatReturn* r)
+ControlFlow DataFlowGraphBuilder::visit(AstStatReturn* r)
 {
-    // TODO: Control flow analysis
     for (AstExpr* e : r->list)
-        visitExpr(scope, e);
+        visitExpr(e);
+
+    return ControlFlow::Returns;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatExpr* e)
+ControlFlow DataFlowGraphBuilder::visit(AstStatExpr* e)
 {
-    visitExpr(scope, e->expr);
+    visitExpr(e->expr);
+    if (auto call = e->expr->as<AstExprCall>(); call && doesCallError(call))
+        return ControlFlow::Throws;
+    else
+        return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatLocal* l)
+ControlFlow DataFlowGraphBuilder::visit(AstStatLocal* l)
 {
     // We're gonna need a `visitExprList` and `visitVariadicExpr` (function calls and `...`)
-    std::vector<BreadcrumbId> bcs;
-    bcs.reserve(l->values.size);
+    std::vector<DefId> defs;
+    defs.reserve(l->values.size);
     for (AstExpr* e : l->values)
-        bcs.push_back(visitExpr(scope, e));
+        defs.push_back(visitExpr(e).def);
 
     for (size_t i = 0; i < l->vars.size; ++i)
     {
         AstLocal* local = l->vars.data[i];
         if (local->annotation)
-            visitType(scope, local->annotation);
+            visitType(local->annotation);
 
-        // We need to create a new breadcrumb with new defs to intentionally avoid alias tracking.
-        BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell(), i < bcs.size() ? bcs[i]->metadata : std::nullopt);
-        graph.localBreadcrumbs[local] = bc;
-        scope->bindings[local] = bc;
+        // We need to create a new def to intentionally avoid alias tracking, but we'd like to
+        // make sure that the non-aliased defs are also marked as a subscript for refinements.
+        bool subscripted = i < defs.size() && containsSubscriptedDefinition(defs[i]);
+        DefId def = defArena->freshCell(subscripted);
+        if (i < l->values.size)
+        {
+            AstExpr* e = l->values.data[i];
+            if (const AstExprTable* tbl = e->as<AstExprTable>())
+            {
+                def = defs[i];
+            }
+        }
+        graph.localDefs[local] = def;
+        currentScope()->bindings[local] = def;
+        captures[local].allVersions.push_back(def);
     }
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatFor* f)
+ControlFlow DataFlowGraphBuilder::visit(AstStatFor* f)
 {
-    DfgScope* forScope = childScope(scope); // TODO: loop scope.
+    DfgScope* forScope = makeChildScope(f->location, DfgScope::Loop);
 
-    visitExpr(scope, f->from);
-    visitExpr(scope, f->to);
+    visitExpr(f->from);
+    visitExpr(f->to);
     if (f->step)
-        visitExpr(scope, f->step);
+        visitExpr(f->step);
 
-    if (f->var->annotation)
-        visitType(forScope, f->var->annotation);
-
-    // TODO: RangeMetadata.
-    BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-    graph.localBreadcrumbs[f->var] = bc;
-    scope->bindings[f->var] = bc;
-
-    // TODO(controlflow): entry point has a back edge from exit point
-    visit(forScope, f->body);
-}
-
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatForIn* f)
-{
-    DfgScope* forScope = childScope(scope); // TODO: loop scope.
-
-    for (AstLocal* local : f->vars)
     {
-        if (local->annotation)
-            visitType(forScope, local->annotation);
+        PushScope ps{scopeStack, forScope};
 
-        // TODO: IterMetadata (different from RangeMetadata)
-        BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-        graph.localBreadcrumbs[local] = bc;
-        forScope->bindings[local] = bc;
+        if (f->var->annotation)
+            visitType(f->var->annotation);
+
+        DefId def = defArena->freshCell();
+        graph.localDefs[f->var] = def;
+        currentScope()->bindings[f->var] = def;
+        captures[f->var].allVersions.push_back(def);
+
+        // TODO(controlflow): entry point has a back edge from exit point
+        visit(f->body);
     }
 
-    // TODO(controlflow): entry point has a back edge from exit point
-    // We're gonna need a `visitExprList` and `visitVariadicExpr` (function calls and `...`)
-    for (AstExpr* e : f->values)
-        visitExpr(forScope, e);
+    currentScope()->inherit(forScope);
 
-    visit(forScope, f->body);
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatAssign* a)
+ControlFlow DataFlowGraphBuilder::visit(AstStatForIn* f)
 {
-    for (AstExpr* r : a->values)
-        visitExpr(scope, r);
+    DfgScope* forScope = makeChildScope(f->location, DfgScope::Loop);
 
-    for (AstExpr* l : a->vars)
-        visitLValue(scope, l);
+    {
+        PushScope ps{scopeStack, forScope};
+
+        for (AstLocal* local : f->vars)
+        {
+            if (local->annotation)
+                visitType(local->annotation);
+
+            DefId def = defArena->freshCell();
+            graph.localDefs[local] = def;
+            currentScope()->bindings[local] = def;
+            captures[local].allVersions.push_back(def);
+        }
+
+        // TODO(controlflow): entry point has a back edge from exit point
+        // We're gonna need a `visitExprList` and `visitVariadicExpr` (function calls and `...`)
+        for (AstExpr* e : f->values)
+            visitExpr(e);
+
+        visit(f->body);
+    }
+
+    currentScope()->inherit(forScope);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatCompoundAssign* c)
+ControlFlow DataFlowGraphBuilder::visit(AstStatAssign* a)
 {
-    // TODO: This needs revisiting because this is incorrect. The `c->var` part is both being read and written to,
-    // but the `c->var` only has one pointer address, so we need to come up with a way to store both.
-    // For now, it's not important because we don't have type states, but it is going to be important, e.g.
-    //
-    // local a = 5 -- a[1]
-    // a += 5      -- a[2] = a[1] + 5
-    //
-    // We can't just visit `c->var` as a rvalue and then separately traverse `c->var` as an lvalue, since that's O(n^2).
-    visitLValue(scope, c->var);
-    visitExpr(scope, c->value);
+    std::vector<DefId> defs;
+    defs.reserve(a->values.size);
+    for (AstExpr* e : a->values)
+        defs.push_back(visitExpr(e).def);
+
+    for (size_t i = 0; i < a->vars.size; ++i)
+    {
+        AstExpr* v = a->vars.data[i];
+        visitLValue(v, i < defs.size() ? defs[i] : defArena->freshCell());
+    }
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatFunction* f)
+ControlFlow DataFlowGraphBuilder::visit(AstStatCompoundAssign* c)
+{
+    (void)visitExpr(c->value);
+    (void)visitExpr(c->var);
+
+    return ControlFlow::None;
+}
+
+ControlFlow DataFlowGraphBuilder::visit(AstStatFunction* f)
 {
     // In the old solver, we assumed that the name of the function is always a function in the body
     // but this isn't true, e.g. the following example will print `5`, not a function address.
@@ -311,210 +749,294 @@ void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatFunction* f)
     //
     // which is evidence that references to variables must be a phi node of all possible definitions,
     // but for bug compatibility, we'll assume the same thing here.
-    visitLValue(scope, f->name);
-    visitExpr(scope, f->func);
+    visitLValue(f->name, defArena->freshCell());
+    visitExpr(f->func);
+
+    if (auto local = f->name->as<AstExprLocal>())
+    {
+        // local f
+        // function f()
+        //   if cond() then
+        //     f() -- should reference only the function version and other future version, and nothing prior
+        //   end
+        // end
+        FunctionCapture& capture = captures[local->local];
+        capture.versionOffset = capture.allVersions.size() - 1;
+    }
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatLocalFunction* l)
+ControlFlow DataFlowGraphBuilder::visit(AstStatLocalFunction* l)
 {
-    BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-    graph.localBreadcrumbs[l->name] = bc;
-    scope->bindings[l->name] = bc;
+    DefId def = defArena->freshCell();
+    graph.localDefs[l->name] = def;
+    currentScope()->bindings[l->name] = def;
+    captures[l->name].allVersions.push_back(def);
+    visitExpr(l->func);
 
-    visitExpr(scope, l->func);
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatTypeAlias* t)
+ControlFlow DataFlowGraphBuilder::visit(AstStatTypeAlias* t)
 {
-    DfgScope* unreachable = childScope(scope);
-    visitGenerics(unreachable, t->generics);
-    visitGenericPacks(unreachable, t->genericPacks);
-    visitType(unreachable, t->type);
+    DfgScope* unreachable = makeChildScope(t->location);
+    PushScope ps{scopeStack, unreachable};
+
+    visitGenerics(t->generics);
+    visitGenericPacks(t->genericPacks);
+    visitType(t->type);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatDeclareGlobal* d)
+ControlFlow DataFlowGraphBuilder::visit(AstStatTypeFunction* f)
 {
-    // TODO: AmbientDeclarationMetadata.
-    BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-    graph.declaredBreadcrumbs[d] = bc;
-    scope->bindings[d->name] = bc;
+    DfgScope* unreachable = makeChildScope(f->location);
+    PushScope ps{scopeStack, unreachable};
 
-    visitType(scope, d->type);
+    visitExpr(f->body);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatDeclareFunction* d)
+ControlFlow DataFlowGraphBuilder::visit(AstStatDeclareGlobal* d)
 {
-    // TODO: AmbientDeclarationMetadata.
-    BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-    graph.declaredBreadcrumbs[d] = bc;
-    scope->bindings[d->name] = bc;
+    DefId def = defArena->freshCell();
+    graph.declaredDefs[d] = def;
+    currentScope()->bindings[d->name] = def;
+    captures[d->name].allVersions.push_back(def);
 
-    DfgScope* unreachable = childScope(scope);
-    visitGenerics(unreachable, d->generics);
-    visitGenericPacks(unreachable, d->genericPacks);
-    visitTypeList(unreachable, d->params);
-    visitTypeList(unreachable, d->retTypes);
+    visitType(d->type);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatDeclareClass* d)
+ControlFlow DataFlowGraphBuilder::visit(AstStatDeclareFunction* d)
+{
+    DefId def = defArena->freshCell();
+    graph.declaredDefs[d] = def;
+    currentScope()->bindings[d->name] = def;
+    captures[d->name].allVersions.push_back(def);
+
+    DfgScope* unreachable = makeChildScope(d->location);
+    PushScope ps{scopeStack, unreachable};
+
+    visitGenerics(d->generics);
+    visitGenericPacks(d->genericPacks);
+    visitTypeList(d->params);
+    visitTypeList(d->retTypes);
+
+    return ControlFlow::None;
+}
+
+ControlFlow DataFlowGraphBuilder::visit(AstStatDeclareClass* d)
 {
     // This declaration does not "introduce" any bindings in value namespace,
     // so there's no symbolic value to begin with. We'll traverse the properties
     // because their type annotations may depend on something in the value namespace.
-    DfgScope* unreachable = childScope(scope);
+    DfgScope* unreachable = makeChildScope(d->location);
+    PushScope ps{scopeStack, unreachable};
+
     for (AstDeclaredClassProp prop : d->props)
-        visitType(unreachable, prop.ty);
+        visitType(prop.ty);
+
+    return ControlFlow::None;
 }
 
-void DataFlowGraphBuilder::visit(DfgScope* scope, AstStatError* error)
+ControlFlow DataFlowGraphBuilder::visit(AstStatError* error)
 {
-    DfgScope* unreachable = childScope(scope);
+    DfgScope* unreachable = makeChildScope(error->location);
+    PushScope ps{scopeStack, unreachable};
+
     for (AstStat* s : error->statements)
-        visit(unreachable, s);
+        visit(s);
     for (AstExpr* e : error->expressions)
-        visitExpr(unreachable, e);
+        visitExpr(e);
+
+    return ControlFlow::None;
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExpr* e)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExpr* e)
 {
-    if (auto g = e->as<AstExprGroup>())
-        return visitExpr(scope, g->expr);
-    else if (auto c = e->as<AstExprConstantNil>())
-        return breadcrumbs->add(nullptr, defs->freshCell()); // ok
-    else if (auto c = e->as<AstExprConstantBool>())
-        return breadcrumbs->add(nullptr, defs->freshCell()); // ok
-    else if (auto c = e->as<AstExprConstantNumber>())
-        return breadcrumbs->add(nullptr, defs->freshCell()); // ok
-    else if (auto c = e->as<AstExprConstantString>())
-        return breadcrumbs->add(nullptr, defs->freshCell()); // ok
-    else if (auto l = e->as<AstExprLocal>())
-        return visitExpr(scope, l);
-    else if (auto g = e->as<AstExprGlobal>())
-        return visitExpr(scope, g);
-    else if (auto v = e->as<AstExprVarargs>())
-        return breadcrumbs->add(nullptr, defs->freshCell()); // ok
-    else if (auto c = e->as<AstExprCall>())
-        return visitExpr(scope, c);
-    else if (auto i = e->as<AstExprIndexName>())
-        return visitExpr(scope, i);
-    else if (auto i = e->as<AstExprIndexExpr>())
-        return visitExpr(scope, i);
-    else if (auto f = e->as<AstExprFunction>())
-        return visitExpr(scope, f);
-    else if (auto t = e->as<AstExprTable>())
-        return visitExpr(scope, t);
-    else if (auto u = e->as<AstExprUnary>())
-        return visitExpr(scope, u);
-    else if (auto b = e->as<AstExprBinary>())
-        return visitExpr(scope, b);
-    else if (auto t = e->as<AstExprTypeAssertion>())
-        return visitExpr(scope, t);
-    else if (auto i = e->as<AstExprIfElse>())
-        return visitExpr(scope, i);
-    else if (auto i = e->as<AstExprInterpString>())
-        return visitExpr(scope, i);
-    else if (auto error = e->as<AstExprError>())
-        return visitExpr(scope, error);
-    else
-        handle->ice("Unknown AstExpr in DataFlowGraphBuilder::visitExpr");
-}
-
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprLocal* l)
-{
-    NullableBreadcrumbId breadcrumb = scope->lookup(l->local);
-    if (!breadcrumb)
-        handle->ice("AstExprLocal came before its declaration?");
-
-    graph.astBreadcrumbs[l] = breadcrumb;
-    return NotNull{breadcrumb};
-}
-
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprGlobal* g)
-{
-    NullableBreadcrumbId bc = scope->lookup(g->name);
-    if (!bc)
+    // Some subexpressions could be visited two times. If we've already seen it, just extract it.
+    if (auto def = graph.astDefs.find(e))
     {
-        bc = breadcrumbs->add(nullptr, defs->freshCell());
-        moduleScope->bindings[g->name] = bc;
+        auto key = graph.astRefinementKeys.find(e);
+        return {NotNull{*def}, key ? *key : nullptr};
     }
 
-    graph.astBreadcrumbs[g] = bc;
-    return NotNull{bc};
+    auto go = [&]() -> DataFlowResult
+    {
+        if (auto g = e->as<AstExprGroup>())
+            return visitExpr(g);
+        else if (auto c = e->as<AstExprConstantNil>())
+            return {defArena->freshCell(), nullptr}; // ok
+        else if (auto c = e->as<AstExprConstantBool>())
+            return {defArena->freshCell(), nullptr}; // ok
+        else if (auto c = e->as<AstExprConstantNumber>())
+            return {defArena->freshCell(), nullptr}; // ok
+        else if (auto c = e->as<AstExprConstantString>())
+            return {defArena->freshCell(), nullptr}; // ok
+        else if (auto l = e->as<AstExprLocal>())
+            return visitExpr(l);
+        else if (auto g = e->as<AstExprGlobal>())
+            return visitExpr(g);
+        else if (auto v = e->as<AstExprVarargs>())
+            return {defArena->freshCell(), nullptr}; // ok
+        else if (auto c = e->as<AstExprCall>())
+            return visitExpr(c);
+        else if (auto i = e->as<AstExprIndexName>())
+            return visitExpr(i);
+        else if (auto i = e->as<AstExprIndexExpr>())
+            return visitExpr(i);
+        else if (auto f = e->as<AstExprFunction>())
+            return visitExpr(f);
+        else if (auto t = e->as<AstExprTable>())
+            return visitExpr(t);
+        else if (auto u = e->as<AstExprUnary>())
+            return visitExpr(u);
+        else if (auto b = e->as<AstExprBinary>())
+            return visitExpr(b);
+        else if (auto t = e->as<AstExprTypeAssertion>())
+            return visitExpr(t);
+        else if (auto i = e->as<AstExprIfElse>())
+            return visitExpr(i);
+        else if (auto i = e->as<AstExprInterpString>())
+            return visitExpr(i);
+        else if (auto error = e->as<AstExprError>())
+            return visitExpr(error);
+        else
+            handle->ice("Unknown AstExpr in DataFlowGraphBuilder::visitExpr");
+    };
+
+    auto [def, key] = go();
+    graph.astDefs[e] = def;
+    if (key)
+        graph.astRefinementKeys[e] = key;
+    return {def, key};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprCall* c)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprGroup* group)
 {
-    visitExpr(scope, c->func);
+    return visitExpr(group->expr);
+}
+
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprLocal* l)
+{
+    DefId def = lookup(l->local);
+    const RefinementKey* key = keyArena->leaf(def);
+    return {def, key};
+}
+
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprGlobal* g)
+{
+    DefId def = lookup(g->name);
+    return {def, keyArena->leaf(def)};
+}
+
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprCall* c)
+{
+    visitExpr(c->func);
+
+    if (FFlag::LuauTypestateBuiltins && shouldTypestateForFirstArgument(*c) && c->args.size > 1 && isLValue(*c->args.begin()))
+    {
+        AstExpr* firstArg = *c->args.begin();
+
+        // this logic has to handle the name-like subset of expressions.
+        std::optional<DataFlowResult> result;
+        if (auto l = firstArg->as<AstExprLocal>())
+            result = visitExpr(l);
+        else if (auto g = firstArg->as<AstExprGlobal>())
+            result = visitExpr(g);
+        else if (auto i = firstArg->as<AstExprIndexName>())
+            result = visitExpr(i);
+        else if (auto i = firstArg->as<AstExprIndexExpr>())
+            result = visitExpr(i);
+        else
+            LUAU_UNREACHABLE(); // This is unreachable because the whole thing is guarded by `isLValue`.
+
+        LUAU_ASSERT(result);
+
+        Location location = currentScope()->location;
+        // This scope starts at the end of the call site and continues to the end of the original scope.
+        location.begin = c->location.end;
+        DfgScope* child = makeChildScope(location);
+        scopeStack.push_back(child);
+
+        auto [def, key] = *result;
+        graph.astDefs[firstArg] = def;
+        if (key)
+            graph.astRefinementKeys[firstArg] = key;
+
+        visitLValue(firstArg, def);
+    }
 
     for (AstExpr* arg : c->args)
-        visitExpr(scope, arg);
+        visitExpr(arg);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    // calls should be treated as subscripted.
+    return {defArena->freshCell(/* subscripted */ true), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprIndexName* i)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprIndexName* i)
 {
-    BreadcrumbId parentBreadcrumb = visitExpr(scope, i->expr);
+    auto [parentDef, parentKey] = visitExpr(i->expr);
 
-    std::string key = i->index.value;
-    NullableBreadcrumbId& propBreadcrumb = moduleScope->props[parentBreadcrumb->def][key];
-    if (!propBreadcrumb)
-        propBreadcrumb = breadcrumbs->emplace<FieldMetadata>(parentBreadcrumb, defs->freshCell(), key);
+    std::string index = i->index.value;
 
-    graph.astBreadcrumbs[i] = propBreadcrumb;
-    return NotNull{propBreadcrumb};
+    DefId def = lookup(parentDef, index);
+    return {def, keyArena->node(parentKey, def, index)};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprIndexExpr* i)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprIndexExpr* i)
 {
-    BreadcrumbId parentBreadcrumb = visitExpr(scope, i->expr);
-    BreadcrumbId key = visitExpr(scope, i->index);
+    auto [parentDef, parentKey] = visitExpr(i->expr);
+    visitExpr(i->index);
 
     if (auto string = i->index->as<AstExprConstantString>())
     {
-        std::string key{string->value.data, string->value.size};
-        NullableBreadcrumbId& propBreadcrumb = moduleScope->props[parentBreadcrumb->def][key];
-        if (!propBreadcrumb)
-            propBreadcrumb = breadcrumbs->emplace<FieldMetadata>(parentBreadcrumb, defs->freshCell(), key);
+        std::string index{string->value.data, string->value.size};
 
-        graph.astBreadcrumbs[i] = NotNull{propBreadcrumb};
-        return NotNull{propBreadcrumb};
+        DefId def = lookup(parentDef, index);
+        return {def, keyArena->node(parentKey, def, index)};
     }
 
-    return breadcrumbs->emplace<SubscriptMetadata>(nullptr, defs->freshCell(), key);
+    return {defArena->freshCell(/* subscripted= */ true), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprFunction* f)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprFunction* f)
 {
-    DfgScope* signatureScope = childScope(scope);
+    DfgScope* signatureScope = makeChildScope(f->location, DfgScope::Function);
+    PushScope ps{scopeStack, signatureScope};
 
     if (AstLocal* self = f->self)
     {
         // There's no syntax for `self` to have an annotation if using `function t:m()`
         LUAU_ASSERT(!self->annotation);
 
-        // TODO: ParameterMetadata.
-        BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-        graph.localBreadcrumbs[self] = bc;
-        signatureScope->bindings[self] = bc;
+        DefId def = defArena->freshCell();
+        graph.localDefs[self] = def;
+        signatureScope->bindings[self] = def;
+        captures[self].allVersions.push_back(def);
     }
 
     for (AstLocal* param : f->args)
     {
         if (param->annotation)
-            visitType(signatureScope, param->annotation);
+            visitType(param->annotation);
 
-        // TODO: ParameterMetadata.
-        BreadcrumbId bc = breadcrumbs->add(nullptr, defs->freshCell());
-        graph.localBreadcrumbs[param] = bc;
-        signatureScope->bindings[param] = bc;
+        DefId def = defArena->freshCell();
+        graph.localDefs[param] = def;
+        signatureScope->bindings[param] = def;
+        captures[param].allVersions.push_back(def);
     }
 
     if (f->varargAnnotation)
-        visitTypePack(scope, f->varargAnnotation);
+        visitTypePack(f->varargAnnotation);
 
     if (f->returnAnnotation)
-        visitTypeList(signatureScope, *f->returnAnnotation);
+        visitTypeList(*f->returnAnnotation);
 
     // TODO: function body can be re-entrant, as in mutations that occurs at the end of the function can also be
     // visible to the beginning of the function, so statically speaking, the body of the function has an exit point
@@ -524,164 +1046,190 @@ BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprFunction* f
     // local g = f
     // g() --> function: address
     // g() --> 5
-    visit(signatureScope, f->body);
+    visit(f->body);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {defArena->freshCell(), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprTable* t)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprTable* t)
 {
+    DefId tableCell = defArena->freshCell();
+    currentScope()->props[tableCell] = {};
     for (AstExprTable::Item item : t->items)
     {
+        DataFlowResult result = visitExpr(item.value);
         if (item.key)
-            visitExpr(scope, item.key);
-        visitExpr(scope, item.value);
+        {
+            visitExpr(item.key);
+            if (auto string = item.key->as<AstExprConstantString>())
+                currentScope()->props[tableCell][string->value.data] = result.def;
+        }
     }
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {tableCell, nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprUnary* u)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprUnary* u)
 {
-    visitExpr(scope, u->expr);
+    visitExpr(u->expr);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {defArena->freshCell(), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprBinary* b)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprBinary* b)
 {
-    visitExpr(scope, b->left);
-    visitExpr(scope, b->right);
+    visitExpr(b->left);
+    visitExpr(b->right);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {defArena->freshCell(), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprTypeAssertion* t)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprTypeAssertion* t)
 {
-    // TODO: TypeAssertionMetadata?
-    BreadcrumbId bc = visitExpr(scope, t->expr);
-    visitType(scope, t->annotation);
+    auto [def, key] = visitExpr(t->expr);
+    visitType(t->annotation);
 
-    return bc;
+    return {def, key};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprIfElse* i)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprIfElse* i)
 {
-    visitExpr(scope, i->condition);
-    visitExpr(scope, i->trueExpr);
-    visitExpr(scope, i->falseExpr);
+    visitExpr(i->condition);
+    visitExpr(i->trueExpr);
+    visitExpr(i->falseExpr);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {defArena->freshCell(), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprInterpString* i)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprInterpString* i)
 {
     for (AstExpr* e : i->expressions)
-        visitExpr(scope, e);
+        visitExpr(e);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {defArena->freshCell(), nullptr};
 }
 
-BreadcrumbId DataFlowGraphBuilder::visitExpr(DfgScope* scope, AstExprError* error)
+DataFlowResult DataFlowGraphBuilder::visitExpr(AstExprError* error)
 {
-    DfgScope* unreachable = childScope(scope);
+    DfgScope* unreachable = makeChildScope(error->location);
+    PushScope ps{scopeStack, unreachable};
+
     for (AstExpr* e : error->expressions)
-        visitExpr(unreachable, e);
+        visitExpr(e);
 
-    return breadcrumbs->add(nullptr, defs->freshCell());
+    return {defArena->freshCell(), nullptr};
 }
 
-void DataFlowGraphBuilder::visitLValue(DfgScope* scope, AstExpr* e)
+void DataFlowGraphBuilder::visitLValue(AstExpr* e, DefId incomingDef)
 {
-    if (auto l = e->as<AstExprLocal>())
-        return visitLValue(scope, l);
-    else if (auto g = e->as<AstExprGlobal>())
-        return visitLValue(scope, g);
-    else if (auto i = e->as<AstExprIndexName>())
-        return visitLValue(scope, i);
-    else if (auto i = e->as<AstExprIndexExpr>())
-        return visitLValue(scope, i);
-    else if (auto error = e->as<AstExprError>())
+    auto go = [&]()
     {
-        visitExpr(scope, error); // TODO: is this right?
-        return;
+        if (auto l = e->as<AstExprLocal>())
+            return visitLValue(l, incomingDef);
+        else if (auto g = e->as<AstExprGlobal>())
+            return visitLValue(g, incomingDef);
+        else if (auto i = e->as<AstExprIndexName>())
+            return visitLValue(i, incomingDef);
+        else if (auto i = e->as<AstExprIndexExpr>())
+            return visitLValue(i, incomingDef);
+        else if (auto error = e->as<AstExprError>())
+            return visitLValue(error, incomingDef);
+        else
+            handle->ice("Unknown AstExpr in DataFlowGraphBuilder::visitLValue");
+    };
+
+    graph.astDefs[e] = go();
+}
+
+DefId DataFlowGraphBuilder::visitLValue(AstExprLocal* l, DefId incomingDef)
+{
+    DfgScope* scope = currentScope();
+
+    // In order to avoid alias tracking, we need to clip the reference to the parent def.
+    if (scope->canUpdateDefinition(l->local))
+    {
+        DefId updated = defArena->freshCell(containsSubscriptedDefinition(incomingDef));
+        scope->bindings[l->local] = updated;
+        captures[l->local].allVersions.push_back(updated);
+        return updated;
     }
     else
-        handle->ice("Unknown AstExpr in DataFlowGraphBuilder::visitLValue");
+        return visitExpr(static_cast<AstExpr*>(l)).def;
 }
 
-void DataFlowGraphBuilder::visitLValue(DfgScope* scope, AstExprLocal* l)
+DefId DataFlowGraphBuilder::visitLValue(AstExprGlobal* g, DefId incomingDef)
 {
-    // Bug compatibility: we don't support type states yet, so we need to do this.
-    NullableBreadcrumbId bc = scope->lookup(l->local);
-    LUAU_ASSERT(bc);
+    DfgScope* scope = currentScope();
 
-    graph.astBreadcrumbs[l] = bc;
-    scope->bindings[l->local] = bc;
-}
-
-void DataFlowGraphBuilder::visitLValue(DfgScope* scope, AstExprGlobal* g)
-{
-    // Bug compatibility: we don't support type states yet, so we need to do this.
-    NullableBreadcrumbId bc = scope->lookup(g->name);
-    if (!bc)
-        bc = breadcrumbs->add(nullptr, defs->freshCell());
-
-    graph.astBreadcrumbs[g] = bc;
-    scope->bindings[g->name] = bc;
-}
-
-void DataFlowGraphBuilder::visitLValue(DfgScope* scope, AstExprIndexName* i)
-{
-    // Bug compatibility: we don't support type states yet, so we need to do this.
-    BreadcrumbId parentBreadcrumb = visitExpr(scope, i->expr);
-
-    std::string key = i->index.value;
-    NullableBreadcrumbId propBreadcrumb = scope->lookup(parentBreadcrumb->def, key);
-    if (!propBreadcrumb)
+    // In order to avoid alias tracking, we need to clip the reference to the parent def.
+    if (scope->canUpdateDefinition(g->name))
     {
-        propBreadcrumb = breadcrumbs->emplace<FieldMetadata>(parentBreadcrumb, defs->freshCell(), key);
-        moduleScope->props[parentBreadcrumb->def][key] = propBreadcrumb;
+        DefId updated = defArena->freshCell(containsSubscriptedDefinition(incomingDef));
+        scope->bindings[g->name] = updated;
+        captures[g->name].allVersions.push_back(updated);
+        return updated;
     }
-
-    graph.astBreadcrumbs[i] = propBreadcrumb;
+    else
+        return visitExpr(static_cast<AstExpr*>(g)).def;
 }
 
-void DataFlowGraphBuilder::visitLValue(DfgScope* scope, AstExprIndexExpr* i)
+DefId DataFlowGraphBuilder::visitLValue(AstExprIndexName* i, DefId incomingDef)
 {
-    BreadcrumbId parentBreadcrumb = visitExpr(scope, i->expr);
-    visitExpr(scope, i->index);
+    DefId parentDef = visitExpr(i->expr).def;
 
+    DfgScope* scope = currentScope();
+    if (scope->canUpdateDefinition(parentDef, i->index.value))
+    {
+        DefId updated = defArena->freshCell(containsSubscriptedDefinition(incomingDef));
+        scope->props[parentDef][i->index.value] = updated;
+        return updated;
+    }
+    else
+        return visitExpr(static_cast<AstExpr*>(i)).def;
+}
+
+DefId DataFlowGraphBuilder::visitLValue(AstExprIndexExpr* i, DefId incomingDef)
+{
+    DefId parentDef = visitExpr(i->expr).def;
+    visitExpr(i->index);
+
+    DfgScope* scope = currentScope();
     if (auto string = i->index->as<AstExprConstantString>())
     {
-        std::string key{string->value.data, string->value.size};
-        NullableBreadcrumbId propBreadcrumb = scope->lookup(parentBreadcrumb->def, key);
-        if (!propBreadcrumb)
+        if (scope->canUpdateDefinition(parentDef, string->value.data))
         {
-            propBreadcrumb = breadcrumbs->add(parentBreadcrumb, parentBreadcrumb->def);
-            moduleScope->props[parentBreadcrumb->def][key] = propBreadcrumb;
+            DefId updated = defArena->freshCell(containsSubscriptedDefinition(incomingDef));
+            scope->props[parentDef][string->value.data] = updated;
+            return updated;
         }
-
-        graph.astBreadcrumbs[i] = propBreadcrumb;
+        else
+            return visitExpr(static_cast<AstExpr*>(i)).def;
     }
+    else
+        return defArena->freshCell(/*subscripted=*/true);
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstType* t)
+DefId DataFlowGraphBuilder::visitLValue(AstExprError* error, DefId incomingDef)
+{
+    return visitExpr(error).def;
+}
+
+void DataFlowGraphBuilder::visitType(AstType* t)
 {
     if (auto r = t->as<AstTypeReference>())
-        return visitType(scope, r);
+        return visitType(r);
     else if (auto table = t->as<AstTypeTable>())
-        return visitType(scope, table);
+        return visitType(table);
     else if (auto f = t->as<AstTypeFunction>())
-        return visitType(scope, f);
+        return visitType(f);
     else if (auto tyof = t->as<AstTypeTypeof>())
-        return visitType(scope, tyof);
+        return visitType(tyof);
     else if (auto u = t->as<AstTypeUnion>())
-        return visitType(scope, u);
+        return visitType(u);
     else if (auto i = t->as<AstTypeIntersection>())
-        return visitType(scope, i);
+        return visitType(i);
     else if (auto e = t->as<AstTypeError>())
-        return visitType(scope, e);
+        return visitType(e);
     else if (auto s = t->as<AstTypeSingletonBool>())
         return; // ok
     else if (auto s = t->as<AstTypeSingletonString>())
@@ -690,106 +1238,106 @@ void DataFlowGraphBuilder::visitType(DfgScope* scope, AstType* t)
         handle->ice("Unknown AstType in DataFlowGraphBuilder::visitType");
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeReference* r)
+void DataFlowGraphBuilder::visitType(AstTypeReference* r)
 {
     for (AstTypeOrPack param : r->parameters)
     {
         if (param.type)
-            visitType(scope, param.type);
+            visitType(param.type);
         else
-            visitTypePack(scope, param.typePack);
+            visitTypePack(param.typePack);
     }
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeTable* t)
+void DataFlowGraphBuilder::visitType(AstTypeTable* t)
 {
     for (AstTableProp p : t->props)
-        visitType(scope, p.type);
+        visitType(p.type);
 
     if (t->indexer)
     {
-        visitType(scope, t->indexer->indexType);
-        visitType(scope, t->indexer->resultType);
+        visitType(t->indexer->indexType);
+        visitType(t->indexer->resultType);
     }
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeFunction* f)
+void DataFlowGraphBuilder::visitType(AstTypeFunction* f)
 {
-    visitGenerics(scope, f->generics);
-    visitGenericPacks(scope, f->genericPacks);
-    visitTypeList(scope, f->argTypes);
-    visitTypeList(scope, f->returnTypes);
+    visitGenerics(f->generics);
+    visitGenericPacks(f->genericPacks);
+    visitTypeList(f->argTypes);
+    visitTypeList(f->returnTypes);
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeTypeof* t)
+void DataFlowGraphBuilder::visitType(AstTypeTypeof* t)
 {
-    visitExpr(scope, t->expr);
+    visitExpr(t->expr);
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeUnion* u)
+void DataFlowGraphBuilder::visitType(AstTypeUnion* u)
 {
     for (AstType* t : u->types)
-        visitType(scope, t);
+        visitType(t);
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeIntersection* i)
+void DataFlowGraphBuilder::visitType(AstTypeIntersection* i)
 {
     for (AstType* t : i->types)
-        visitType(scope, t);
+        visitType(t);
 }
 
-void DataFlowGraphBuilder::visitType(DfgScope* scope, AstTypeError* error)
+void DataFlowGraphBuilder::visitType(AstTypeError* error)
 {
     for (AstType* t : error->types)
-        visitType(scope, t);
+        visitType(t);
 }
 
-void DataFlowGraphBuilder::visitTypePack(DfgScope* scope, AstTypePack* p)
+void DataFlowGraphBuilder::visitTypePack(AstTypePack* p)
 {
     if (auto e = p->as<AstTypePackExplicit>())
-        return visitTypePack(scope, e);
+        return visitTypePack(e);
     else if (auto v = p->as<AstTypePackVariadic>())
-        return visitTypePack(scope, v);
+        return visitTypePack(v);
     else if (auto g = p->as<AstTypePackGeneric>())
         return; // ok
     else
         handle->ice("Unknown AstTypePack in DataFlowGraphBuilder::visitTypePack");
 }
 
-void DataFlowGraphBuilder::visitTypePack(DfgScope* scope, AstTypePackExplicit* e)
+void DataFlowGraphBuilder::visitTypePack(AstTypePackExplicit* e)
 {
-    visitTypeList(scope, e->typeList);
+    visitTypeList(e->typeList);
 }
 
-void DataFlowGraphBuilder::visitTypePack(DfgScope* scope, AstTypePackVariadic* v)
+void DataFlowGraphBuilder::visitTypePack(AstTypePackVariadic* v)
 {
-    visitType(scope, v->variadicType);
+    visitType(v->variadicType);
 }
 
-void DataFlowGraphBuilder::visitTypeList(DfgScope* scope, AstTypeList l)
+void DataFlowGraphBuilder::visitTypeList(AstTypeList l)
 {
     for (AstType* t : l.types)
-        visitType(scope, t);
+        visitType(t);
 
     if (l.tailType)
-        visitTypePack(scope, l.tailType);
+        visitTypePack(l.tailType);
 }
 
-void DataFlowGraphBuilder::visitGenerics(DfgScope* scope, AstArray<AstGenericType> g)
+void DataFlowGraphBuilder::visitGenerics(AstArray<AstGenericType> g)
 {
     for (AstGenericType generic : g)
     {
         if (generic.defaultValue)
-            visitType(scope, generic.defaultValue);
+            visitType(generic.defaultValue);
     }
 }
 
-void DataFlowGraphBuilder::visitGenericPacks(DfgScope* scope, AstArray<AstGenericTypePack> g)
+void DataFlowGraphBuilder::visitGenericPacks(AstArray<AstGenericTypePack> g)
 {
     for (AstGenericTypePack generic : g)
     {
         if (generic.defaultValue)
-            visitTypePack(scope, generic.defaultValue);
+            visitTypePack(generic.defaultValue);
     }
 }
 

@@ -7,27 +7,106 @@
 
 #include "doctest.h"
 
+LUAU_FASTFLAG(LuauSolverV2);
+LUAU_FASTFLAG(DebugLuauMagicTypes);
+
 using namespace Luau;
 
 TEST_SUITE_BEGIN("AnnotationTests");
 
-TEST_CASE_FIXTURE(Fixture, "check_against_annotations")
+TEST_CASE_FIXTURE(Fixture, "initializers_are_checked_against_annotations")
 {
     CheckResult result = check("local a: number = \"Hello Types!\"");
     LUAU_REQUIRE_ERROR_COUNT(1, result);
 }
 
-TEST_CASE_FIXTURE(Fixture, "check_multi_assign")
+TEST_CASE_FIXTURE(Fixture, "check_multi_initialize")
 {
-    CheckResult result = check("local a: number, b: string = \"994\", 888");
-    CHECK_EQ(2, result.errors.size());
+    CheckResult result = check(R"(
+        local a: number, b: string = "one", 2
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
+
+    CHECK(get<TypeMismatch>(result.errors[0]));
+    CHECK(get<TypeMismatch>(result.errors[1]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "successful_check")
 {
-    CheckResult result = check("local a: number, b: string = 994, \"eight eighty eight\"");
+    CheckResult result = check(R"(
+        local a: number, b: string = 1, "two"
+    )");
+
     LUAU_REQUIRE_NO_ERRORS(result);
-    dumpErrors(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "assignments_are_checked_against_annotations")
+{
+    CheckResult result = check(R"(
+        local x: number = 1
+        x = "two"
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "multi_assign_checks_against_annotations")
+{
+    CheckResult result = check(R"(
+        local a: number, b: string = 1, "two"
+        a, b = "one", 2
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(2, result);
+
+    CHECK(Location{{2, 15}, {2, 20}} == result.errors[0].location);
+    CHECK(Location{{2, 22}, {2, 23}} == result.errors[1].location);
+}
+
+TEST_CASE_FIXTURE(Fixture, "assignment_cannot_transform_a_table_property_type")
+{
+    CheckResult result = check(R"(
+        local a = {x=0}
+        a.x = "one"
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    CHECK(Location{{2, 14}, {2, 19}} == result.errors[0].location);
+}
+
+TEST_CASE_FIXTURE(Fixture, "assignments_to_unannotated_parameters_can_transform_the_type")
+{
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+
+    CheckResult result = check(R"(
+        function f(x)
+            x = 0
+            return x
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+
+    CHECK("(unknown) -> number" == toString(requireType("f")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "assignments_to_annotated_parameters_are_checked")
+{
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+
+    CheckResult result = check(R"(
+        function f(x: string)
+            x = 0
+            return x
+        end
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(Location{{2, 16}, {2, 17}} == result.errors[0].location);
+
+    CHECK("(string) -> number" == toString(requireType("f")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "variable_type_is_supertype")
@@ -38,6 +117,22 @@ TEST_CASE_FIXTURE(Fixture, "variable_type_is_supertype")
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "assignment_also_checks_subtyping")
+{
+    CheckResult result = check(R"(
+        function f(): number?
+            return nil
+        end
+        local x: number = 1
+        local y: number? = f()
+        x = y
+        y = x
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK(Location{{6, 12}, {6, 13}} == result.errors[0].location);
 }
 
 TEST_CASE_FIXTURE(Fixture, "function_parameters_can_have_annotations")
@@ -86,7 +181,7 @@ TEST_CASE_FIXTURE(Fixture, "function_return_annotations_are_checked")
 
     REQUIRE_EQ(1, tp->head.size());
 
-    REQUIRE_EQ(typeChecker.anyType, follow(tp->head[0]));
+    REQUIRE_EQ(builtinTypes->anyType, follow(tp->head[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "function_return_multret_annotations_are_checked")
@@ -133,14 +228,17 @@ TEST_CASE_FIXTURE(Fixture, "unknown_type_reference_generates_error")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK(result.errors[0] == TypeError{
-                                  Location{{1, 17}, {1, 28}},
-                                  getMainSourceModule()->name,
-                                  UnknownSymbol{
-                                      "IDoNotExist",
-                                      UnknownSymbol::Context::Type,
-                                  },
-                              });
+    CHECK(
+        result.errors[0] ==
+        TypeError{
+            Location{{1, 17}, {1, 28}},
+            getMainSourceModule()->name,
+            UnknownSymbol{
+                "IDoNotExist",
+                UnknownSymbol::Context::Type,
+            },
+        }
+    );
 }
 
 TEST_CASE_FIXTURE(Fixture, "typeof_variable_type_annotation_should_return_its_type")
@@ -166,17 +264,33 @@ TEST_CASE_FIXTURE(Fixture, "infer_type_of_value_a_via_typeof_with_assignment")
         a = "foo"
     )");
 
-    CHECK_EQ(*typeChecker.numberType, *requireType("a"));
-    CHECK_EQ(*typeChecker.numberType, *requireType("b"));
+    if (FFlag::LuauSolverV2)
+    {
+        CHECK("string?" == toString(requireType("a")));
+        CHECK("nil" == toString(requireType("b")));
 
-    LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK_EQ(result.errors[0], (TypeError{Location{Position{4, 12}, Position{4, 17}}, TypeMismatch{typeChecker.numberType, typeChecker.stringType}}));
+        LUAU_REQUIRE_ERROR_COUNT(1, result);
+        CHECK(
+            result.errors[0] == (TypeError{Location{Position{2, 29}, Position{2, 30}}, TypeMismatch{builtinTypes->nilType, builtinTypes->numberType}})
+        );
+    }
+    else
+    {
+        CHECK_EQ(*builtinTypes->numberType, *requireType("a"));
+        CHECK_EQ(*builtinTypes->numberType, *requireType("b"));
+
+        LUAU_REQUIRE_ERROR_COUNT(1, result);
+        CHECK_EQ(
+            result.errors[0],
+            (TypeError{Location{Position{4, 12}, Position{4, 17}}, TypeMismatch{builtinTypes->numberType, builtinTypes->stringType}})
+        );
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "table_annotation")
 {
     CheckResult result = check(R"(
-        local x: {a: number, b: string}
+        local x: {a: number, b: string} = {a=2, b="three"}
         local y = x.a
         local z = x.b
     )");
@@ -329,7 +443,7 @@ TEST_CASE_FIXTURE(Fixture, "self_referential_type_alias")
     std::optional<Property> incr = get(oTable->props, "incr");
     REQUIRE(incr);
 
-    const FunctionType* incrFunc = get<FunctionType>(incr->type);
+    const FunctionType* incrFunc = get<FunctionType>(incr->type());
     REQUIRE(incrFunc);
 
     std::optional<TypeId> firstArg = first(incrFunc->argTypes);
@@ -376,7 +490,7 @@ TEST_CASE_FIXTURE(Fixture, "two_type_params")
 {
     CheckResult result = check(R"(
         type Map<K, V> = {[K]: V}
-        local m: Map<string, number> = {};
+        local m: Map<string, number> = {}
         local a = m['foo']
         local b = m[9]                  -- error here
     )");
@@ -442,10 +556,10 @@ TEST_CASE_FIXTURE(Fixture, "corecursive_types_error_on_tight_loop")
         local bb:B
     )");
 
-    TypeId fType = requireType("aa");
-    const AnyType* ftv = get<AnyType>(follow(fType));
-    REQUIRE(ftv != nullptr);
-    REQUIRE(!result.errors.empty());
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    OccursCheckFailed* ocf = get<OccursCheckFailed>(result.errors[0]);
+    REQUIRE(ocf);
 }
 
 TEST_CASE_FIXTURE(Fixture, "type_alias_always_resolve_to_a_real_type")
@@ -459,7 +573,7 @@ TEST_CASE_FIXTURE(Fixture, "type_alias_always_resolve_to_a_real_type")
     )");
 
     TypeId fType = requireType("aa");
-    REQUIRE(follow(fType) == typeChecker.numberType);
+    REQUIRE(follow(fType) == builtinTypes->numberType);
     LUAU_REQUIRE_NO_ERRORS(result);
 }
 
@@ -480,7 +594,7 @@ TEST_CASE_FIXTURE(Fixture, "interface_types_belong_to_interface_arena")
     const TypeFun& a = mod.exportedTypeBindings["A"];
 
     CHECK(isInArena(a.type, mod.interfaceTypes));
-    CHECK(!isInArena(a.type, typeChecker.globalTypes));
+    CHECK(!isInArena(a.type, frontend.globals.globalTypes));
 
     std::optional<TypeId> exportsType = first(mod.returnType);
     REQUIRE(exportsType);
@@ -488,7 +602,7 @@ TEST_CASE_FIXTURE(Fixture, "interface_types_belong_to_interface_arena")
     TableType* exportsTable = getMutable<TableType>(*exportsType);
     REQUIRE(exportsTable != nullptr);
 
-    TypeId n = exportsTable->props["n"].type;
+    TypeId n = exportsTable->props["n"].type();
     REQUIRE(n != nullptr);
 
     CHECK(isInArena(n, mod.interfaceTypes));
@@ -543,23 +657,23 @@ TEST_CASE_FIXTURE(Fixture, "cloned_interface_maintains_pointers_between_definiti
     TableType* exportsTable = getMutable<TableType>(*exportsType);
     REQUIRE(exportsTable != nullptr);
 
-    TypeId aType = exportsTable->props["a"].type;
+    TypeId aType = exportsTable->props["a"].type();
     REQUIRE(aType);
 
-    TypeId bType = exportsTable->props["b"].type;
+    TypeId bType = exportsTable->props["b"].type();
     REQUIRE(bType);
 
     CHECK(isInArena(recordType, mod.interfaceTypes));
     CHECK(isInArena(aType, mod.interfaceTypes));
     CHECK(isInArena(bType, mod.interfaceTypes));
 
-    CHECK_EQ(recordType, aType);
-    CHECK_EQ(recordType, bType);
+    CHECK(toString(recordType, {true}) == toString(aType, {true}));
+    CHECK(toString(recordType, {true}) == toString(bType, {true}));
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "use_type_required_from_another_file")
 {
-    addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
+    addGlobalBinding(frontend.globals, "script", builtinTypes->anyType, "@test");
 
     fileResolver.source["Modules/Main"] = R"(
         --!strict
@@ -585,7 +699,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "use_type_required_from_another_file")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "cannot_use_nonexported_type")
 {
-    addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
+    addGlobalBinding(frontend.globals, "script", builtinTypes->anyType, "@test");
 
     fileResolver.source["Modules/Main"] = R"(
         --!strict
@@ -611,7 +725,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "cannot_use_nonexported_type")
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "builtin_types_are_not_exported")
 {
-    addGlobalBinding(frontend, "script", frontend.typeChecker.anyType, "@test");
+    addGlobalBinding(frontend.globals, "script", builtinTypes->anyType, "@test");
 
     fileResolver.source["Modules/Main"] = R"(
         --!strict
@@ -641,7 +755,8 @@ struct AssertionCatcher
     {
         tripped = 0;
         oldhook = Luau::assertHandler();
-        Luau::assertHandler() = [](const char* expr, const char* file, int line, const char* function) -> int {
+        Luau::assertHandler() = [](const char* expr, const char* file, int line, const char* function) -> int
+        {
             ++tripped;
             return 0;
         };
@@ -661,39 +776,44 @@ int AssertionCatcher::tripped;
 
 TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_exception_with_flag")
 {
-    ScopedFastFlag sffs{"DebugLuauMagicTypes", true};
+    ScopedFastFlag sffs{FFlag::DebugLuauMagicTypes, true};
 
     AssertionCatcher ac;
 
-    CHECK_THROWS_AS(check(R"(
+    CHECK_THROWS_AS(
+        check(R"(
         local a: _luau_ice = 55
     )"),
-        InternalCompilerError);
+        InternalCompilerError
+    );
 
     LUAU_ASSERT(1 == AssertionCatcher::tripped);
 }
 
 TEST_CASE_FIXTURE(Fixture, "luau_ice_triggers_an_ice_exception_with_flag_handler")
 {
-    ScopedFastFlag sffs{"DebugLuauMagicTypes", true};
+    ScopedFastFlag sffs{FFlag::DebugLuauMagicTypes, true};
 
     bool caught = false;
 
-    frontend.iceHandler.onInternalError = [&](const char*) {
+    frontend.iceHandler.onInternalError = [&](const char*)
+    {
         caught = true;
     };
 
-    CHECK_THROWS_AS(check(R"(
+    CHECK_THROWS_AS(
+        check(R"(
         local a: _luau_ice = 55
     )"),
-        InternalCompilerError);
+        InternalCompilerError
+    );
 
     CHECK_EQ(true, caught);
 }
 
 TEST_CASE_FIXTURE(Fixture, "luau_ice_is_not_special_without_the_flag")
 {
-    ScopedFastFlag sffs{"DebugLuauMagicTypes", false};
+    ScopedFastFlag sffs{FFlag::DebugLuauMagicTypes, false};
 
     // We only care that this does not throw
     check(R"(
@@ -705,11 +825,14 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "luau_print_is_magic_if_the_flag_is_set")
 {
     static std::vector<std::string> output;
     output.clear();
-    Luau::setPrintLine([](const std::string& s) {
-        output.push_back(s);
-    });
+    Luau::setPrintLine(
+        [](const std::string& s)
+        {
+            output.push_back(s);
+        }
+    );
 
-    ScopedFastFlag sffs{"DebugLuauMagicTypes", true};
+    ScopedFastFlag sffs{FFlag::DebugLuauMagicTypes, true};
 
     CheckResult result = check(R"(
         local a: _luau_print<typeof(math.abs)>
@@ -722,13 +845,25 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "luau_print_is_magic_if_the_flag_is_set")
 
 TEST_CASE_FIXTURE(Fixture, "luau_print_is_not_special_without_the_flag")
 {
-    ScopedFastFlag sffs{"DebugLuauMagicTypes", false};
+    ScopedFastFlag sffs{FFlag::DebugLuauMagicTypes, false};
 
     CheckResult result = check(R"(
         local a: _luau_print<number>
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "luau_print_incomplete")
+{
+    ScopedFastFlag sffs{FFlag::DebugLuauMagicTypes, true};
+
+    CheckResult result = check(R"(
+        local a: _luau_print
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    CHECK_EQ("_luau_print requires one generic parameter", toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "instantiate_type_fun_should_not_trip_rbxassert")
@@ -761,6 +896,7 @@ TEST_CASE_FIXTURE(Fixture, "occurs_check_on_cyclic_union_type")
 {
     CheckResult result = check(R"(
         type T = T | T
+        local x : T
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);

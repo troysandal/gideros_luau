@@ -1,30 +1,33 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/CodeGen.h"
 
-#include "Luau/AssemblyBuilderX64.h"
+#include "CodeGenLower.h"
+
 #include "Luau/Common.h"
 #include "Luau/CodeAllocator.h"
 #include "Luau/CodeBlockUnwind.h"
-#include "Luau/IrAnalysis.h"
 #include "Luau/IrBuilder.h"
-#include "Luau/OptimizeConstProp.h"
-#include "Luau/OptimizeFinalX64.h"
+
 #include "Luau/UnwindBuilder.h"
 #include "Luau/UnwindBuilderDwarf2.h"
 #include "Luau/UnwindBuilderWin.h"
 
-#include "CustomExecUtils.h"
-#include "CodeGenX64.h"
-#include "EmitCommonX64.h"
-#include "EmitInstructionX64.h"
-#include "IrLoweringX64.h"
+#include "Luau/AssemblyBuilderA64.h"
+#include "Luau/AssemblyBuilderX64.h"
+
+#include "CodeGenContext.h"
 #include "NativeState.h"
 
+#include "CodeGenA64.h"
+#include "CodeGenX64.h"
+
 #include "lapi.h"
+#include "lmem.h"
 
 #include <memory>
+#include <optional>
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(CODEGEN_TARGET_X64)
 #ifdef _MSC_VER
 #include <intrin.h> // __cpuid
 #else
@@ -32,140 +35,128 @@
 #endif
 #endif
 
+#if defined(CODEGEN_TARGET_A64)
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+#endif
+
 LUAU_FASTFLAGVARIABLE(DebugCodegenNoOpt, false)
+LUAU_FASTFLAGVARIABLE(DebugCodegenOptSize, false)
+LUAU_FASTFLAGVARIABLE(DebugCodegenSkipNumbering, false)
+
+// Per-module IR instruction count limit
+LUAU_FASTINTVARIABLE(CodegenHeuristicsInstructionLimit, 1'048'576) // 1 M
+
+// Per-function IR block limit
+// Current value is based on some member variables being limited to 16 bits
+// Because block check is made before optimization passes and optimization can generate new blocks, limit is lowered 2x
+// The limit will probably be adjusted in the future to avoid performance issues with analysis that's more complex than O(n)
+LUAU_FASTINTVARIABLE(CodegenHeuristicsBlockLimit, 32'768) // 32 K
+
+// Per-function IR instruction limit
+// Current value is based on some member variables being limited to 16 bits
+LUAU_FASTINTVARIABLE(CodegenHeuristicsBlockInstructionLimit, 65'536) // 64 K
 
 namespace Luau
 {
 namespace CodeGen
 {
 
-constexpr uint32_t kFunctionAlignment = 32;
-
-static void assembleHelpers(X64::AssemblyBuilderX64& build, ModuleHelpers& helpers)
+std::string toString(const CodeGenCompilationResult& result)
 {
-    if (build.logText)
-        build.logAppend("; exitContinueVm\n");
-    helpers.exitContinueVm = build.setLabel();
-    emitExit(build, /* continueInVm */ true);
+    switch (result)
+    {
+    case CodeGenCompilationResult::Success:
+        return "Success";
+    case CodeGenCompilationResult::NothingToCompile:
+        return "NothingToCompile";
+    case CodeGenCompilationResult::NotNativeModule:
+        return "NotNativeModule";
+    case CodeGenCompilationResult::CodeGenNotInitialized:
+        return "CodeGenNotInitialized";
+    case CodeGenCompilationResult::CodeGenOverflowInstructionLimit:
+        return "CodeGenOverflowInstructionLimit";
+    case CodeGenCompilationResult::CodeGenOverflowBlockLimit:
+        return "CodeGenOverflowBlockLimit";
+    case CodeGenCompilationResult::CodeGenOverflowBlockInstructionLimit:
+        return "CodeGenOverflowBlockInstructionLimit";
+    case CodeGenCompilationResult::CodeGenAssemblerFinalizationFailure:
+        return "CodeGenAssemblerFinalizationFailure";
+    case CodeGenCompilationResult::CodeGenLoweringFailure:
+        return "CodeGenLoweringFailure";
+    case CodeGenCompilationResult::AllocationFailed:
+        return "AllocationFailed";
+    case CodeGenCompilationResult::Count:
+        return "Count";
+    }
 
-    if (build.logText)
-        build.logAppend("; exitNoContinueVm\n");
-    helpers.exitNoContinueVm = build.setLabel();
-    emitExit(build, /* continueInVm */ false);
-
-    if (build.logText)
-        build.logAppend("; continueCallInVm\n");
-    helpers.continueCallInVm = build.setLabel();
-    emitContinueCallInVm(build);
+    CODEGEN_ASSERT(false);
+    return "";
 }
 
-static NativeProto* assembleFunction(X64::AssemblyBuilderX64& build, NativeState& data, ModuleHelpers& helpers, Proto* proto, AssemblyOptions options)
+void onDisable(lua_State* L, Proto* proto)
 {
-    NativeProto* result = new NativeProto();
+    // do nothing if proto already uses bytecode
+    if (proto->codeentry == proto->code)
+        return;
 
-    result->proto = proto;
+    // ensure that VM does not call native code for this proto
+    proto->codeentry = proto->code;
 
-    if (options.includeAssembly || options.includeIr)
-    {
-        if (proto->debugname)
-            build.logAppend("; function %s()", getstr(proto->debugname));
-        else
-            build.logAppend("; function()");
+    // prevent native code from entering proto with breakpoints
+    proto->exectarget = 0;
 
-        if (proto->linedefined >= 0)
-            build.logAppend(" line %d\n", proto->linedefined);
-        else
-            build.logAppend("\n");
-    }
+    // walk all thread call stacks and clear the LUA_CALLINFO_NATIVE flag from any
+    // entries pointing to the current proto that has native code enabled.
+    luaM_visitgco(
+        L,
+        proto,
+        [](void* context, lua_Page* page, GCObject* gco)
+        {
+            Proto* proto = (Proto*)context;
 
-    build.align(kFunctionAlignment, X64::AlignmentDataX64::Ud2);
+            if (gco->gch.tt != LUA_TTHREAD)
+                return false;
 
-    Label start = build.setLabel();
+            lua_State* th = gco2th(gco);
 
-    IrBuilder builder;
-    builder.buildFunctionIr(proto);
+            for (CallInfo* ci = th->ci; ci > th->base_ci; ci--)
+            {
+                if (isLua(ci))
+                {
+                    Proto* p = clvalue(ci->func)->l.p;
 
-    if (!FFlag::DebugCodegenNoOpt)
-    {
-        constPropInBlockChains(builder);
-    }
+                    if (p == proto)
+                    {
+                        ci->flags &= ~LUA_CALLINFO_NATIVE;
+                    }
+                }
+            }
 
-    optimizeMemoryOperandsX64(builder.function);
+            return false;
+        }
+    );
+}
 
-    X64::IrLoweringX64 lowering(build, helpers, data, proto, builder.function);
+#if defined(CODEGEN_TARGET_A64)
+unsigned int getCpuFeaturesA64()
+{
+    unsigned int result = 0;
 
-    lowering.lower(options);
-
-    result->instTargets = new uintptr_t[proto->sizecode];
-
-    for (int i = 0; i < proto->sizecode; i++)
-    {
-        auto [irLocation, asmLocation] = builder.function.bcMapping[i];
-
-        result->instTargets[i] = irLocation == ~0u ? 0 : asmLocation - start.location;
-    }
-
-    result->location = start.location;
-
-    if (build.logText)
-        build.logAppend("\n");
+#ifdef __APPLE__
+    int jscvt = 0;
+    size_t jscvtLen = sizeof(jscvt);
+    if (sysctlbyname("hw.optional.arm.FEAT_JSCVT", &jscvt, &jscvtLen, nullptr, 0) == 0 && jscvt == 1)
+        result |= A64::Feature_JSCVT;
+#endif
 
     return result;
 }
-
-static void destroyNativeProto(NativeProto* nativeProto)
-{
-    delete[] nativeProto->instTargets;
-    delete nativeProto;
-}
-
-static void onCloseState(lua_State* L)
-{
-    destroyNativeState(L);
-}
-
-static void onDestroyFunction(lua_State* L, Proto* proto)
-{
-    NativeProto* nativeProto = getProtoExecData(proto);
-    LUAU_ASSERT(nativeProto->proto == proto);
-
-    setProtoExecData(proto, nullptr);
-    destroyNativeProto(nativeProto);
-}
-
-static int onEnter(lua_State* L, Proto* proto)
-{
-    if (L->singlestep)
-        return 1;
-
-    NativeState* data = getNativeState(L);
-
-    if (!L->ci->savedpc)
-        L->ci->savedpc = proto->code;
-
-    // We will jump into native code through a gateway
-    bool (*gate)(lua_State*, Proto*, uintptr_t, NativeContext*) = (bool (*)(lua_State*, Proto*, uintptr_t, NativeContext*))data->context.gateEntry;
-
-    NativeProto* nativeProto = getProtoExecData(proto);
-    uintptr_t target = nativeProto->instTargets[L->ci->savedpc - proto->code];
-
-    // Returns 1 to finish the function in the VM
-    return gate(L, proto, target, &data->context);
-}
-
-static void onSetBreakpoint(lua_State* L, Proto* proto, int instruction)
-{
-    if (!getProtoExecData(proto))
-        return;
-
-    LUAU_ASSERT(!"native breakpoints are not implemented");
-}
+#endif
 
 bool isSupported()
 {
-#if !LUA_CUSTOM_EXECUTION
-    return false;
-#elif defined(__x86_64__) || defined(_M_X64)
     if (LUA_EXTRA_SIZE != 1)
         return false;
 
@@ -175,6 +166,16 @@ bool isSupported()
     if (sizeof(LuaNode) != 32)
         return false;
 
+        // Windows CRT uses stack unwinding in longjmp so we have to use unwind data; on other platforms, it's only necessary for C++ EH.
+#if defined(_WIN32)
+    if (!isUnwindSupported())
+        return false;
+#else
+    if (!LUA_USE_LONGJMP && !isUnwindSupported())
+        return false;
+#endif
+
+#if defined(CODEGEN_TARGET_X64)
     int cpuinfo[4] = {};
 #ifdef _MSC_VER
     __cpuid(cpuinfo, 1);
@@ -189,143 +190,11 @@ bool isSupported()
         return false;
 
     return true;
+#elif defined(CODEGEN_TARGET_A64)
+    return true;
 #else
     return false;
 #endif
-}
-
-void create(lua_State* L)
-{
-    LUAU_ASSERT(isSupported());
-
-    NativeState& data = *createNativeState(L);
-
-#if defined(_WIN32)
-    data.unwindBuilder = std::make_unique<UnwindBuilderWin>();
-#else
-    data.unwindBuilder = std::make_unique<UnwindBuilderDwarf2>();
-#endif
-
-    data.codeAllocator.context = data.unwindBuilder.get();
-    data.codeAllocator.createBlockUnwindInfo = createBlockUnwindInfo;
-    data.codeAllocator.destroyBlockUnwindInfo = destroyBlockUnwindInfo;
-
-    initFallbackTable(data);
-    initHelperFunctions(data);
-
-    if (!X64::initEntryFunction(data))
-    {
-        destroyNativeState(L);
-        return;
-    }
-
-    lua_ExecutionCallbacks* ecb = getExecutionCallbacks(L);
-
-    ecb->close = onCloseState;
-    ecb->destroy = onDestroyFunction;
-    ecb->enter = onEnter;
-    ecb->setbreakpoint = onSetBreakpoint;
-}
-
-static void gatherFunctions(std::vector<Proto*>& results, Proto* proto)
-{
-    if (results.size() <= size_t(proto->bytecodeid))
-        results.resize(proto->bytecodeid + 1);
-
-    // Skip protos that we've already compiled in this run: this happens because at -O2, inlined functions get their protos reused
-    if (results[proto->bytecodeid])
-        return;
-
-    results[proto->bytecodeid] = proto;
-
-    for (int i = 0; i < proto->sizep; i++)
-        gatherFunctions(results, proto->p[i]);
-}
-
-void compile(lua_State* L, int idx)
-{
-    LUAU_ASSERT(lua_isLfunction(L, idx));
-    const TValue* func = luaA_toobject(L, idx);
-
-    // If initialization has failed, do not compile any functions
-    if (!getNativeState(L))
-        return;
-
-    X64::AssemblyBuilderX64 build(/* logText= */ false);
-    NativeState* data = getNativeState(L);
-
-    std::vector<Proto*> protos;
-    gatherFunctions(protos, clvalue(func)->l.p);
-
-    ModuleHelpers helpers;
-    assembleHelpers(build, helpers);
-
-    std::vector<NativeProto*> results;
-    results.reserve(protos.size());
-
-    // Skip protos that have been compiled during previous invocations of CodeGen::compile
-    for (Proto* p : protos)
-        if (p && getProtoExecData(p) == nullptr)
-            results.push_back(assembleFunction(build, *data, helpers, p, {}));
-
-    build.finalize();
-
-    uint8_t* nativeData = nullptr;
-    size_t sizeNativeData = 0;
-    uint8_t* codeStart = nullptr;
-    if (!data->codeAllocator.allocate(
-            build.data.data(), int(build.data.size()), build.code.data(), int(build.code.size()), nativeData, sizeNativeData, codeStart))
-    {
-        for (NativeProto* result : results)
-            destroyNativeProto(result);
-
-        return;
-    }
-
-    // Relocate instruction offsets
-    for (NativeProto* result : results)
-    {
-        for (int i = 0; i < result->proto->sizecode; i++)
-            result->instTargets[i] += uintptr_t(codeStart + result->location);
-
-        LUAU_ASSERT(result->proto->sizecode);
-        result->entryTarget = result->instTargets[0];
-    }
-
-    // Link native proto objects to Proto; the memory is now managed by VM and will be freed via onDestroyFunction
-    for (NativeProto* result : results)
-        setProtoExecData(result->proto, result);
-}
-
-std::string getAssembly(lua_State* L, int idx, AssemblyOptions options)
-{
-    LUAU_ASSERT(lua_isLfunction(L, idx));
-    const TValue* func = luaA_toobject(L, idx);
-
-    X64::AssemblyBuilderX64 build(/* logText= */ options.includeAssembly);
-
-    NativeState data;
-    initFallbackTable(data);
-
-    std::vector<Proto*> protos;
-    gatherFunctions(protos, clvalue(func)->l.p);
-
-    ModuleHelpers helpers;
-    assembleHelpers(build, helpers);
-
-    for (Proto* p : protos)
-        if (p)
-        {
-            NativeProto* nativeProto = assembleFunction(build, data, helpers, p, options);
-            destroyNativeProto(nativeProto);
-        }
-
-    build.finalize();
-
-    if (options.outputBinary)
-        return std::string(build.code.begin(), build.code.end()) + std::string(build.data.begin(), build.data.end());
-    else
-        return build.text;
 }
 
 } // namespace CodeGen

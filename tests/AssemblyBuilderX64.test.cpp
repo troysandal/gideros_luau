@@ -3,6 +3,7 @@
 #include "Luau/StringUtils.h"
 
 #include "doctest.h"
+#include "ScopedFlags.h"
 
 #include <string.h>
 
@@ -50,10 +51,12 @@ TEST_SUITE_BEGIN("x64Assembly");
 
 #define SINGLE_COMPARE(inst, ...) \
     CHECK(check( \
-        [](AssemblyBuilderX64& build) { \
+        [](AssemblyBuilderX64& build) \
+        { \
             build.inst; \
         }, \
-        {__VA_ARGS__}))
+        {__VA_ARGS__} \
+    ))
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "BaseBinaryInstructionForms")
 {
@@ -67,6 +70,9 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "BaseBinaryInstructionForms")
     SINGLE_COMPARE(add(rax, 0x7f), 0x48, 0x83, 0xc0, 0x7f);
     SINGLE_COMPARE(add(rax, 0x80), 0x48, 0x81, 0xc0, 0x80, 0x00, 0x00, 0x00);
     SINGLE_COMPARE(add(r10, 0x7fffffff), 0x49, 0x81, 0xc2, 0xff, 0xff, 0xff, 0x7f);
+    SINGLE_COMPARE(add(al, 3), 0x80, 0xc0, 0x03);
+    SINGLE_COMPARE(add(sil, 3), 0x48, 0x80, 0xc6, 0x03);
+    SINGLE_COMPARE(add(r11b, 3), 0x49, 0x80, 0xc3, 0x03);
 
     // reg, [reg]
     SINGLE_COMPARE(add(rax, qword[rax]), 0x48, 0x03, 0x00);
@@ -191,6 +197,8 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfMov")
     SINGLE_COMPARE(mov64(rcx, 0x1234567812345678ll), 0x48, 0xb9, 0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
     SINGLE_COMPARE(mov(ecx, 2), 0xb9, 0x02, 0x00, 0x00, 0x00);
     SINGLE_COMPARE(mov(cl, 2), 0xb1, 0x02);
+    SINGLE_COMPARE(mov(sil, 2), 0x48, 0xb6, 0x02);
+    SINGLE_COMPARE(mov(r9b, 2), 0x49, 0xb1, 0x02);
     SINGLE_COMPARE(mov(rcx, qword[rdi]), 0x48, 0x8b, 0x0f);
     SINGLE_COMPARE(mov(dword[rax], 0xabcd), 0xc7, 0x00, 0xcd, 0xab, 0x00, 0x00);
     SINGLE_COMPARE(mov(r13, 1), 0x49, 0xbd, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
@@ -201,6 +209,13 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfMov")
     SINGLE_COMPARE(mov(qword[rdx], r9), 0x4c, 0x89, 0x0a);
     SINGLE_COMPARE(mov(byte[rsi], 0x3), 0xc6, 0x06, 0x03);
     SINGLE_COMPARE(mov(byte[rsi], al), 0x88, 0x06);
+    SINGLE_COMPARE(mov(byte[rsi], dil), 0x48, 0x88, 0x3e);
+    SINGLE_COMPARE(mov(byte[rsi], r10b), 0x4c, 0x88, 0x16);
+    SINGLE_COMPARE(mov(wordReg(ebx), 0x3a3d), 0x66, 0xbb, 0x3d, 0x3a);
+    SINGLE_COMPARE(mov(word[rsi], 0x3a3d), 0x66, 0xc7, 0x06, 0x3d, 0x3a);
+    SINGLE_COMPARE(mov(word[rsi], wordReg(eax)), 0x66, 0x89, 0x06);
+    SINGLE_COMPARE(mov(word[rsi], wordReg(edi)), 0x66, 0x89, 0x3e);
+    SINGLE_COMPARE(mov(word[rsi], wordReg(r10)), 0x66, 0x44, 0x89, 0x16);
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfMovExtended")
@@ -229,12 +244,18 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfShift")
 {
     SINGLE_COMPARE(shl(al, 1), 0xd0, 0xe0);
     SINGLE_COMPARE(shl(al, cl), 0xd2, 0xe0);
+    SINGLE_COMPARE(shl(sil, cl), 0x48, 0xd2, 0xe6);
+    SINGLE_COMPARE(shl(r10b, cl), 0x49, 0xd2, 0xe2);
     SINGLE_COMPARE(shr(al, 4), 0xc0, 0xe8, 0x04);
     SINGLE_COMPARE(shr(eax, 1), 0xd1, 0xe8);
     SINGLE_COMPARE(sal(eax, cl), 0xd3, 0xe0);
     SINGLE_COMPARE(sal(eax, 4), 0xc1, 0xe0, 0x04);
     SINGLE_COMPARE(sar(rax, 4), 0x48, 0xc1, 0xf8, 0x04);
     SINGLE_COMPARE(sar(r11, 1), 0x49, 0xd1, 0xfb);
+    SINGLE_COMPARE(rol(eax, 1), 0xd1, 0xc0);
+    SINGLE_COMPARE(rol(eax, cl), 0xd3, 0xc0);
+    SINGLE_COMPARE(ror(eax, 1), 0xd1, 0xc8);
+    SINGLE_COMPARE(ror(eax, cl), 0xd3, 0xc8);
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfLea")
@@ -247,7 +268,16 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfLea")
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfSetcc")
 {
     SINGLE_COMPARE(setcc(ConditionX64::NotEqual, bl), 0x0f, 0x95, 0xc3);
+    SINGLE_COMPARE(setcc(ConditionX64::NotEqual, dil), 0x48, 0x0f, 0x95, 0xc7);
     SINGLE_COMPARE(setcc(ConditionX64::BelowEqual, byte[rcx]), 0x0f, 0x96, 0x01);
+}
+
+TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfCmov")
+{
+    SINGLE_COMPARE(cmov(ConditionX64::LessEqual, ebx, eax), 0x0f, 0x4e, 0xd8);
+    SINGLE_COMPARE(cmov(ConditionX64::NotZero, rbx, qword[rax]), 0x48, 0x0f, 0x45, 0x18);
+    SINGLE_COMPARE(cmov(ConditionX64::Zero, rbx, qword[rax + rcx]), 0x48, 0x0f, 0x44, 0x1c, 0x08);
+    SINGLE_COMPARE(cmov(ConditionX64::BelowEqual, r14d, r15d), 0x45, 0x0f, 0x46, 0xf7);
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "FormsOfAbsoluteJumps")
@@ -290,33 +320,41 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "NopForms")
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AlignmentForms")
 {
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             build.ret();
             build.align(8, AlignmentDataX64::Nop);
         },
-        {0xc3, 0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00}));
+        {0xc3, 0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00}
+    ));
 
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             build.ret();
             build.align(32, AlignmentDataX64::Nop);
         },
-        {0xc3, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x0f, 0x1f, 0x84,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x1f, 0x40, 0x00}));
+        {0xc3, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x1f, 0x40, 0x00}
+    ));
 
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             build.ret();
             build.align(8, AlignmentDataX64::Int3);
         },
-        {0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}));
+        {0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}
+    ));
 
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             build.ret();
             build.align(8, AlignmentDataX64::Ud2);
         },
-        {0xc3, 0x0f, 0x0b, 0x0f, 0x0b, 0x0f, 0x0b, 0xcc}));
+        {0xc3, 0x0f, 0x0b, 0x0f, 0x0b, 0x0f, 0x0b, 0xcc}
+    ));
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AlignmentOverflow")
@@ -359,28 +397,33 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "ControlFlow")
 {
     // Jump back
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             Label start = build.setLabel();
             build.add(rsi, 1);
             build.cmp(rsi, rdi);
             build.jcc(ConditionX64::Equal, start);
         },
-        {0x48, 0x83, 0xc6, 0x01, 0x48, 0x3b, 0xf7, 0x0f, 0x84, 0xf3, 0xff, 0xff, 0xff}));
+        {0x48, 0x83, 0xc6, 0x01, 0x48, 0x3b, 0xf7, 0x0f, 0x84, 0xf3, 0xff, 0xff, 0xff}
+    ));
 
     // Jump back, but the label is set before use
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             Label start;
             build.add(rsi, 1);
             build.setLabel(start);
             build.cmp(rsi, rdi);
             build.jcc(ConditionX64::Equal, start);
         },
-        {0x48, 0x83, 0xc6, 0x01, 0x48, 0x3b, 0xf7, 0x0f, 0x84, 0xf7, 0xff, 0xff, 0xff}));
+        {0x48, 0x83, 0xc6, 0x01, 0x48, 0x3b, 0xf7, 0x0f, 0x84, 0xf7, 0xff, 0xff, 0xff}
+    ));
 
     // Jump forward
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             Label skip;
 
             build.cmp(rsi, rdi);
@@ -388,24 +431,28 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "ControlFlow")
             build.or_(rdi, 0x3e);
             build.setLabel(skip);
         },
-        {0x48, 0x3b, 0xf7, 0x0f, 0x8f, 0x04, 0x00, 0x00, 0x00, 0x48, 0x83, 0xcf, 0x3e}));
+        {0x48, 0x3b, 0xf7, 0x0f, 0x8f, 0x04, 0x00, 0x00, 0x00, 0x48, 0x83, 0xcf, 0x3e}
+    ));
 
     // Regular jump
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             Label skip;
 
             build.jmp(skip);
             build.and_(rdi, 0x3e);
             build.setLabel(skip);
         },
-        {0xe9, 0x04, 0x00, 0x00, 0x00, 0x48, 0x83, 0xe7, 0x3e}));
+        {0xe9, 0x04, 0x00, 0x00, 0x00, 0x48, 0x83, 0xe7, 0x3e}
+    ));
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "LabelCall")
 {
     CHECK(check(
-        [](AssemblyBuilderX64& build) {
+        [](AssemblyBuilderX64& build)
+        {
             Label fnB;
 
             build.and_(rcx, 0x3e);
@@ -416,7 +463,8 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "LabelCall")
             build.lea(rax, addr[rcx + 0x1f]);
             build.ret();
         },
-        {0x48, 0x83, 0xe1, 0x3e, 0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x48, 0x8d, 0x41, 0x1f, 0xc3}));
+        {0x48, 0x83, 0xe1, 0x3e, 0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x48, 0x8d, 0x41, 0x1f, 0xc3}
+    ));
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXBinaryInstructionForms")
@@ -442,8 +490,13 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXBinaryInstructionForms")
     SINGLE_COMPARE(vmulsd(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x2b, 0x59, 0xc6);
     SINGLE_COMPARE(vdivsd(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x2b, 0x5e, 0xc6);
 
+    SINGLE_COMPARE(vsubps(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x28, 0x5c, 0xc6);
+    SINGLE_COMPARE(vmulps(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x28, 0x59, 0xc6);
+    SINGLE_COMPARE(vdivps(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x28, 0x5e, 0xc6);
+
     SINGLE_COMPARE(vorpd(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x29, 0x56, 0xc6);
     SINGLE_COMPARE(vxorpd(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x29, 0x57, 0xc6);
+    SINGLE_COMPARE(vorps(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x28, 0x56, 0xc6);
 
     SINGLE_COMPARE(vandpd(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x29, 0x54, 0xc6);
     SINGLE_COMPARE(vandnpd(xmm8, xmm10, xmm14), 0xc4, 0x41, 0x29, 0x55, 0xc6);
@@ -507,20 +560,51 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXConversionInstructionForms")
     SINGLE_COMPARE(vcvtsi2sd(xmm6, xmm11, dword[rcx + rdx]), 0xc4, 0xe1, 0x23, 0x2a, 0x34, 0x11);
     SINGLE_COMPARE(vcvtsi2sd(xmm5, xmm10, r13), 0xc4, 0xc1, 0xab, 0x2a, 0xed);
     SINGLE_COMPARE(vcvtsi2sd(xmm6, xmm11, qword[rcx + rdx]), 0xc4, 0xe1, 0xa3, 0x2a, 0x34, 0x11);
+    SINGLE_COMPARE(vcvtsd2ss(xmm5, xmm10, xmm11), 0xc4, 0xc1, 0x2b, 0x5a, 0xeb);
+    SINGLE_COMPARE(vcvtsd2ss(xmm6, xmm11, qword[rcx + rdx]), 0xc4, 0xe1, 0xa3, 0x5a, 0x34, 0x11);
+    SINGLE_COMPARE(vcvtss2sd(xmm3, xmm8, xmm12), 0xc4, 0xc1, 0x3a, 0x5a, 0xdc);
+    SINGLE_COMPARE(vcvtss2sd(xmm4, xmm9, dword[rcx + rsi]), 0xc4, 0xe1, 0x32, 0x5a, 0x24, 0x31);
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXTernaryInstructionForms")
 {
     SINGLE_COMPARE(vroundsd(xmm7, xmm12, xmm3, RoundingModeX64::RoundToNegativeInfinity), 0xc4, 0xe3, 0x19, 0x0b, 0xfb, 0x09);
     SINGLE_COMPARE(
-        vroundsd(xmm8, xmm13, xmmword[r13 + rdx], RoundingModeX64::RoundToPositiveInfinity), 0xc4, 0x43, 0x11, 0x0b, 0x44, 0x15, 0x00, 0x0a);
+        vroundsd(xmm8, xmm13, xmmword[r13 + rdx], RoundingModeX64::RoundToPositiveInfinity), 0xc4, 0x43, 0x11, 0x0b, 0x44, 0x15, 0x00, 0x0a
+    );
     SINGLE_COMPARE(vroundsd(xmm9, xmm14, xmmword[rcx + r10], RoundingModeX64::RoundToZero), 0xc4, 0x23, 0x09, 0x0b, 0x0c, 0x11, 0x0b);
     SINGLE_COMPARE(vblendvpd(xmm7, xmm12, xmmword[rcx + r10], xmm5), 0xc4, 0xa3, 0x19, 0x4b, 0x3c, 0x11, 0x50);
+
+    SINGLE_COMPARE(vpshufps(xmm7, xmm12, xmmword[rcx + r10], 0b11010100), 0xc4, 0xa1, 0x18, 0xc6, 0x3c, 0x11, 0xd4);
+    SINGLE_COMPARE(vpinsrd(xmm7, xmm12, xmmword[rcx + r10], 2), 0xc4, 0xa3, 0x19, 0x22, 0x3c, 0x11, 0x02);
 }
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "MiscInstructions")
 {
     SINGLE_COMPARE(int3(), 0xcc);
+    SINGLE_COMPARE(ud2(), 0x0f, 0x0b);
+    SINGLE_COMPARE(bsr(eax, edx), 0x0f, 0xbd, 0xc2);
+    SINGLE_COMPARE(bsf(eax, edx), 0x0f, 0xbc, 0xc2);
+    SINGLE_COMPARE(bswap(eax), 0x0f, 0xc8);
+    SINGLE_COMPARE(bswap(r12d), 0x41, 0x0f, 0xcc);
+    SINGLE_COMPARE(bswap(rax), 0x48, 0x0f, 0xc8);
+    SINGLE_COMPARE(bswap(r12), 0x49, 0x0f, 0xcc);
+}
+
+TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "LabelLea")
+{
+    CHECK(check(
+        [](AssemblyBuilderX64& build)
+        {
+            Label fn;
+            build.lea(rax, fn);
+            build.ret();
+
+            build.setLabel(fn);
+            build.ret();
+        },
+        {0x48, 0x8d, 0x05, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3}
+    ));
 }
 
 TEST_CASE("LogTest")
@@ -542,6 +626,8 @@ TEST_CASE("LogTest")
     Label start = build.setLabel();
     build.cmp(rsi, rdi);
     build.jcc(ConditionX64::Equal, start);
+    build.lea(rcx, start);
+    build.lea(rcx, addr[rdx]);
 
     build.jmp(qword[rdx]);
     build.vaddps(ymm9, ymm12, ymmword[rbp + 0xc]);
@@ -556,6 +642,7 @@ TEST_CASE("LogTest")
     build.vroundsd(xmm1, xmm2, xmm3, RoundingModeX64::RoundToNearestEven);
     build.add(rdx, qword[rcx - 12]);
     build.pop(r12);
+    build.cmov(ConditionX64::AboveEqual, rax, rbx);
     build.ret();
     build.int3();
 
@@ -586,6 +673,8 @@ TEST_CASE("LogTest")
 .L1:
  cmp         rsi,rdi
  je          .L1
+ lea         rcx,.L1
+ lea         rcx,[rdx]
  jmp         qword ptr [rdx]
  vaddps      ymm9,ymm12,ymmword ptr [rbp+0Ch]
  vaddpd      ymm2,ymm7,qword ptr [.start-8]
@@ -599,6 +688,7 @@ TEST_CASE("LogTest")
  vroundsd    xmm1,xmm2,xmm3,8
  add         rdx,qword ptr [rcx-0Ch]
  pop         r12
+ cmovae      rax,rbx
  ret
  int3
  nop
@@ -662,19 +752,51 @@ TEST_CASE("ConstantStorage")
     AssemblyBuilderX64 build(/* logText= */ false);
 
     for (int i = 0; i <= 3000; i++)
+        build.vaddss(xmm0, xmm0, build.i32(i));
+
+    build.finalize();
+
+    CHECK(build.data.size() == 12004);
+
+    for (int i = 0; i <= 3000; i++)
+    {
+        CHECK(build.data[i * 4 + 0] == ((3000 - i) & 0xff));
+        CHECK(build.data[i * 4 + 1] == ((3000 - i) >> 8));
+        CHECK(build.data[i * 4 + 2] == 0x00);
+        CHECK(build.data[i * 4 + 3] == 0x00);
+    }
+}
+
+TEST_CASE("ConstantStorageDedup")
+{
+    AssemblyBuilderX64 build(/* logText= */ false);
+
+    for (int i = 0; i <= 3000; i++)
         build.vaddss(xmm0, xmm0, build.f32(1.0f));
 
     build.finalize();
 
-    LUAU_ASSERT(build.data.size() == 12004);
+    CHECK(build.data.size() == 4);
 
-    for (int i = 0; i <= 3000; i++)
-    {
-        LUAU_ASSERT(build.data[i * 4 + 0] == 0x00);
-        LUAU_ASSERT(build.data[i * 4 + 1] == 0x00);
-        LUAU_ASSERT(build.data[i * 4 + 2] == 0x80);
-        LUAU_ASSERT(build.data[i * 4 + 3] == 0x3f);
-    }
+    CHECK(build.data[0] == 0x00);
+    CHECK(build.data[1] == 0x00);
+    CHECK(build.data[2] == 0x80);
+    CHECK(build.data[3] == 0x3f);
+}
+
+TEST_CASE("ConstantCaching")
+{
+    AssemblyBuilderX64 build(/* logText= */ false);
+
+    OperandX64 two = build.f64(2);
+
+    // Force data relocation
+    for (int i = 0; i < 4096; i++)
+        build.f64(i);
+
+    CHECK(build.f64(2).imm == two.imm);
+
+    build.finalize();
 }
 
 TEST_SUITE_END();

@@ -10,8 +10,11 @@
 #include "ldo.h"
 #include "lmem.h"
 #include "ludata.h"
+#include "lbuffer.h"
 
 #include <string.h>
+
+LUAU_DYNAMIC_FASTFLAG(LuauCoroCheckStack)
 
 /*
  * Luau uses an incremental non-generational non-moving mark&sweep garbage collector.
@@ -275,6 +278,11 @@ static void reallymarkobject(global_State* g, GCObject* o)
         g->gray = o;
         break;
     }
+    case LUA_TBUFFER:
+    {
+        gray2black(o); // buffers are never gray
+        return;
+    }
     case LUA_TPROTO:
     {
         gco2p(o)->gclist = g->gray;
@@ -432,12 +440,27 @@ static void shrinkstack(lua_State* L)
     int s_used = cast_int(lim - L->stack);      // part of stack in use
     if (L->size_ci > LUAI_MAXCALLS)             // handling overflow?
         return;                                 // do not touch the stacks
-    if (3 * ci_used < L->size_ci && 2 * BASIC_CI_SIZE < L->size_ci)
-        luaD_reallocCI(L, L->size_ci / 2); // still big enough...
-    condhardstacktests(luaD_reallocCI(L, ci_used + 1));
-    if (3 * s_used < L->stacksize && 2 * (BASIC_STACK_SIZE + EXTRA_STACK) < L->stacksize)
-        luaD_reallocstack(L, L->stacksize / 2); // still big enough...
-    condhardstacktests(luaD_reallocstack(L, s_used));
+
+    if (DFFlag::LuauCoroCheckStack)
+    {
+        if (3 * size_t(ci_used) < size_t(L->size_ci) && 2 * BASIC_CI_SIZE < L->size_ci)
+            luaD_reallocCI(L, L->size_ci / 2); // still big enough...
+        condhardstacktests(luaD_reallocCI(L, ci_used + 1));
+
+        if (3 * size_t(s_used) < size_t(L->stacksize) && 2 * (BASIC_STACK_SIZE + EXTRA_STACK) < L->stacksize)
+            luaD_reallocstack(L, L->stacksize / 2); // still big enough...
+        condhardstacktests(luaD_reallocstack(L, s_used));
+    }
+    else
+    {
+        if (3 * ci_used < L->size_ci && 2 * BASIC_CI_SIZE < L->size_ci)
+            luaD_reallocCI(L, L->size_ci / 2); // still big enough...
+        condhardstacktests(luaD_reallocCI(L, ci_used + 1));
+
+        if (3 * s_used < L->stacksize && 2 * (BASIC_STACK_SIZE + EXTRA_STACK) < L->stacksize)
+            luaD_reallocstack(L, L->stacksize / 2); // still big enough...
+        condhardstacktests(luaD_reallocstack(L, s_used));
+    }
 }
 
 /*
@@ -500,8 +523,9 @@ static size_t propagatemark(global_State* g)
         Proto* p = gco2p(o);
         g->gray = p->gclist;
         traverseproto(g, p);
+
         return sizeof(Proto) + sizeof(Instruction) * p->sizecode + sizeof(Proto*) * p->sizep + sizeof(TValue) * p->sizek + p->sizelineinfo +
-               sizeof(LocVar) * p->sizelocvars + sizeof(TString*) * p->sizeupvalues;
+               sizeof(LocVar) * p->sizelocvars + sizeof(TString*) * p->sizeupvalues + p->sizetypeinfo;
     }
     default:
         LUAU_ASSERT(0);
@@ -619,6 +643,9 @@ static void freeobj(lua_State* L, GCObject* o, lua_Page* page)
         break;
     case LUA_TUSERDATA:
         luaU_freeudata(L, gco2u(o), page);
+        break;
+    case LUA_TBUFFER:
+        luaB_freebuffer(L, gco2buf(o), page);
         break;
     default:
         LUAU_ASSERT(0);
@@ -924,7 +951,7 @@ static size_t gcstep(lua_State* L, size_t limit)
     {
         while (g->sweepgcopage && cost < limit)
         {
-            lua_Page* next = luaM_getnextgcopage(g->sweepgcopage); // page sweep might destroy the page
+            lua_Page* next = luaM_getnextpage(g->sweepgcopage); // page sweep might destroy the page
 
             int steps = sweepgcopage(L, g->sweepgcopage);
 

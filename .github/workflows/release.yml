@@ -13,7 +13,7 @@ on:
 jobs:
   build:
     strategy:
-      matrix:
+      matrix: # using ubuntu-20.04 to build a Linux binary targeting older glibc to improve compatibility
         os: [{name: ubuntu, version: ubuntu-20.04}, {name: macos, version: macos-latest}, {name: windows, version: windows-latest}]
     name: ${{matrix.os.name}}
     runs-on: ${{matrix.os.version}}
@@ -22,20 +22,21 @@ jobs:
     - name: configure
       run: cmake . -DCMAKE_BUILD_TYPE=Release
     - name: build
-      run: cmake --build . --target Luau.Repl.CLI Luau.Analyze.CLI --config Release -j 2
-    - uses: actions/upload-artifact@v2
+      run: cmake --build . --target Luau.Repl.CLI Luau.Analyze.CLI Luau.Compile.CLI --config Release -j 2
+    - uses: actions/upload-artifact@v4
       if: matrix.os.name != 'windows'
       with:
         name: luau-${{matrix.os.name}}
         path: luau*
-    - uses: actions/upload-artifact@v2
+        overwrite: true
+    - uses: actions/upload-artifact@v4
       if: matrix.os.name == 'windows'
       with:
         name: luau-${{matrix.os.name}}
         path: Release\luau*.exe
-
+        overwrite: true
   web:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
     - uses: actions/checkout@v2
@@ -52,7 +53,8 @@ jobs:
         source emsdk/emsdk_env.sh
         emcmake cmake . -DLUAU_BUILD_WEB=ON -DCMAKE_BUILD_TYPE=Release
         make -j2 Luau.Web
-    - uses: actions/upload-artifact@v2
+    - uses: actions/upload-artifact@v4
       with:
         name: Luau.Web.js
         path: Luau.Web.js
+        overwrite: true

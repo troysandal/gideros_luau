@@ -10,7 +10,6 @@
 #define LUA_IS_LUAU
 
 
-
 // option for multiple returns in `lua_pcall' and `lua_call'
 #define LUA_MULTRET (-1)
 
@@ -29,7 +28,7 @@ enum lua_Status
     LUA_OK = 0,
     LUA_YIELD,
     LUA_ERRRUN,
-    LUA_ERRSYNTAX,
+    LUA_ERRSYNTAX, // legacy error code, preserved for compatibility
     LUA_ERRMEM,
     LUA_ERRERR,
     LUA_BREAK, // yielded for a debug breakpoint
@@ -85,6 +84,7 @@ enum lua_Type
     LUA_TFUNCTION,
     LUA_TUSERDATA,
     LUA_TTHREAD,
+    LUA_TBUFFER,
 
     // values below this line are used in GCObject tags but may never show up in TValue type tags
     LUA_TPROTO,
@@ -159,10 +159,13 @@ LUA_API const char* lua_namecallatom(lua_State* L, int* atom);
 LUA_API int lua_objlen(lua_State* L, int idx);
 LUA_API lua_CFunction lua_tocfunction(lua_State* L, int idx);
 LUA_API void* lua_tolightuserdata(lua_State* L, int idx);
+LUA_API void* lua_tolightuserdatatagged(lua_State* L, int idx, int tag);
 LUA_API void* lua_touserdata(lua_State* L, int idx);
 LUA_API void* lua_touserdatatagged(lua_State* L, int idx, int tag);
 LUA_API int lua_userdatatag(lua_State* L, int idx);
+LUA_API int lua_lightuserdatatag(lua_State* L, int idx);
 LUA_API lua_State* lua_tothread(lua_State* L, int idx);
+LUA_API void* lua_tobuffer(lua_State* L, int idx, size_t* len);
 LUA_API const void* lua_topointer(lua_State* L, int idx);
 
 /*
@@ -185,9 +188,11 @@ LUA_API void lua_pushcclosurek(lua_State* L, lua_CFunction fn, const char* debug
 LUA_API void lua_pushboolean(lua_State* L, int b);
 LUA_API int lua_pushthread(lua_State* L);
 
-LUA_API void lua_pushlightuserdata(lua_State* L, void* p);
+LUA_API void lua_pushlightuserdatatagged(lua_State* L, void* p, int tag);
 LUA_API void* lua_newuserdatatagged(lua_State* L, size_t sz, int tag);
 LUA_API void* lua_newuserdatadtor(lua_State* L, size_t sz, void (*dtor)(void*));
+
+LUA_API void* lua_newbuffer(lua_State* L, size_t sz);
 
 /*
 ** get functions (Lua -> stack)
@@ -315,11 +320,24 @@ LUA_API uintptr_t lua_encodepointer(lua_State* L, uintptr_t p);
 LUA_API double lua_clock();
 
 LUA_API void lua_setuserdatatag(lua_State* L, int idx, int tag);
-LUA_API void lua_setuserdatadtor(lua_State* L, int tag, void (*dtor)(lua_State*, void*));
+
+typedef void (*lua_Destructor)(lua_State* L, void* userdata);
+
+LUA_API void lua_setuserdatadtor(lua_State* L, int tag, lua_Destructor dtor);
+LUA_API lua_Destructor lua_getuserdatadtor(lua_State* L, int tag);
+
+// alternative access for metatables already registered with luaL_newmetatable
+LUA_API void lua_setuserdatametatable(lua_State* L, int tag, int idx);
+LUA_API void lua_getuserdatametatable(lua_State* L, int tag);
+
+LUA_API void lua_setlightuserdataname(lua_State* L, int tag, const char* name);
+LUA_API const char* lua_getlightuserdataname(lua_State* L, int tag);
 
 LUA_API void lua_clonefunction(lua_State* L, int idx);
 
 LUA_API void lua_cleartable(lua_State* L, int idx);
+
+LUA_API lua_Alloc lua_getallocf(lua_State* L, void** ud);
 
 /*
 ** reference system, can be used to pin objects
@@ -355,12 +373,14 @@ LUA_API void lua_unref(lua_State* L, int ref);
 #define lua_isboolean(L, n) (lua_type(L, (n)) == LUA_TBOOLEAN)
 #define lua_isvector(L, n) (lua_type(L, (n)) == LUA_TVECTOR)
 #define lua_isthread(L, n) (lua_type(L, (n)) == LUA_TTHREAD)
+#define lua_isbuffer(L, n) (lua_type(L, (n)) == LUA_TBUFFER)
 #define lua_isnone(L, n) (lua_type(L, (n)) == LUA_TNONE)
 #define lua_isnoneornil(L, n) (lua_type(L, (n)) <= LUA_TNIL)
 
 #define lua_pushliteral(L, s) lua_pushlstring(L, "" s, (sizeof(s) / sizeof(char)) - 1)
 #define lua_pushcfunction(L, fn, debugname) lua_pushcclosurek(L, fn, debugname, 0, NULL)
 #define lua_pushcclosure(L, fn, debugname, nup) lua_pushcclosurek(L, fn, debugname, nup, NULL)
+#define lua_pushlightuserdata(L, p) lua_pushlightuserdatatagged(L, p, 0)
 
 #define lua_setglobal(L, s) lua_setfield(L, LUA_GLOBALSINDEX, (s))
 #define lua_getglobal(L, s) lua_getfield(L, LUA_GLOBALSINDEX, (s))
@@ -435,6 +455,8 @@ struct lua_Callbacks
     void (*debugstep)(lua_State* L, lua_Debug* ar);      // gets called after each instruction in single step mode
     void (*debuginterrupt)(lua_State* L, lua_Debug* ar); // gets called when thread execution is interrupted by break in another thread
     void (*debugprotectederror)(lua_State* L);           // gets called when protected call results in an error
+
+    void (*onallocate)(lua_State* L, size_t osize, size_t nsize); // gets called when memory is allocated
 };
 typedef struct lua_Callbacks lua_Callbacks;
 
@@ -479,7 +501,7 @@ LUA_API int lua_gettablesize(lua_State* L, int idx);
 
 
 /******************************************************************************
- * Copyright (c) 2019-2022 Roblox Corporation
+ * Copyright (c) 2019-2023 Roblox Corporation
  * Copyright (C) 1994-2008 Lua.org, PUC-Rio.  All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining

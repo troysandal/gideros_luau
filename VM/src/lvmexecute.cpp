@@ -24,7 +24,6 @@
 #endif
 #endif
 
-#define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
 // When working with VM code, pay attention to these rules for correctness:
 // 1. Many external Lua functions can fail; for them to fail and be able to generate a proper stack, we need to copy pc to L->ci->savedpc before the
 // call
@@ -82,9 +81,7 @@
         } \
     }
 
-
 #define VM_DISPATCH_OP(op) &&CASE_##op
-
 
 #define VM_DISPATCH_TABLE() \
     VM_DISPATCH_OP(LOP_NOP), VM_DISPATCH_OP(LOP_BREAK), VM_DISPATCH_OP(LOP_LOADNIL), VM_DISPATCH_OP(LOP_LOADB), VM_DISPATCH_OP(LOP_LOADN), \
@@ -100,15 +97,15 @@
         VM_DISPATCH_OP(LOP_POWK), VM_DISPATCH_OP(LOP_AND), VM_DISPATCH_OP(LOP_OR), VM_DISPATCH_OP(LOP_ANDK), VM_DISPATCH_OP(LOP_ORK), \
         VM_DISPATCH_OP(LOP_CONCAT), VM_DISPATCH_OP(LOP_NOT), VM_DISPATCH_OP(LOP_MINUS), VM_DISPATCH_OP(LOP_LENGTH), VM_DISPATCH_OP(LOP_NEWTABLE), \
         VM_DISPATCH_OP(LOP_DUPTABLE), VM_DISPATCH_OP(LOP_SETLIST), VM_DISPATCH_OP(LOP_FORNPREP), VM_DISPATCH_OP(LOP_FORNLOOP), \
-        VM_DISPATCH_OP(LOP_FORGLOOP), VM_DISPATCH_OP(LOP_FORGPREP_INEXT), VM_DISPATCH_OP(LOP_DEP_FORGLOOP_INEXT), VM_DISPATCH_OP(LOP_FORGPREP_NEXT), \
-        VM_DISPATCH_OP(LOP_DEP_FORGLOOP_NEXT), VM_DISPATCH_OP(LOP_GETVARARGS), VM_DISPATCH_OP(LOP_DUPCLOSURE), VM_DISPATCH_OP(LOP_PREPVARARGS), \
+        VM_DISPATCH_OP(LOP_FORGLOOP), VM_DISPATCH_OP(LOP_FORGPREP_INEXT), VM_DISPATCH_OP(LOP_FASTCALL3), VM_DISPATCH_OP(LOP_FORGPREP_NEXT), \
+        VM_DISPATCH_OP(LOP_NATIVECALL), VM_DISPATCH_OP(LOP_GETVARARGS), VM_DISPATCH_OP(LOP_DUPCLOSURE), VM_DISPATCH_OP(LOP_PREPVARARGS), \
         VM_DISPATCH_OP(LOP_LOADKX), VM_DISPATCH_OP(LOP_JUMPX), VM_DISPATCH_OP(LOP_FASTCALL), VM_DISPATCH_OP(LOP_COVERAGE), \
-        VM_DISPATCH_OP(LOP_CAPTURE), VM_DISPATCH_OP(LOP_DEP_JUMPIFEQK), VM_DISPATCH_OP(LOP_DEP_JUMPIFNOTEQK), VM_DISPATCH_OP(LOP_FASTCALL1), \
+        VM_DISPATCH_OP(LOP_CAPTURE), VM_DISPATCH_OP(LOP_SUBRK), VM_DISPATCH_OP(LOP_DIVRK), VM_DISPATCH_OP(LOP_FASTCALL1), \
         VM_DISPATCH_OP(LOP_FASTCALL2), VM_DISPATCH_OP(LOP_FASTCALL2K), VM_DISPATCH_OP(LOP_FORGPREP), VM_DISPATCH_OP(LOP_JUMPXEQKNIL), \
-		VM_DISPATCH_OP(LOP_JUMPXEQKB), VM_DISPATCH_OP(LOP_JUMPXEQKN), VM_DISPATCH_OP(LOP_JUMPXEQKS), \
-        VM_DISPATCH_OP(LOP_DIVINT), VM_DISPATCH_OP(LOP_MINOF), VM_DISPATCH_OP(LOP_MAXOF), \
+		VM_DISPATCH_OP(LOP_JUMPXEQKB), VM_DISPATCH_OP(LOP_JUMPXEQKN), VM_DISPATCH_OP(LOP_JUMPXEQKS), VM_DISPATCH_OP(LOP_IDIV), \
+        VM_DISPATCH_OP(LOP_IDIVK), VM_DISPATCH_OP(LOP_MINOF), VM_DISPATCH_OP(LOP_MAXOF), \
         VM_DISPATCH_OP(LOP_BINAND), VM_DISPATCH_OP(LOP_BINOR), VM_DISPATCH_OP(LOP_BINXOR), VM_DISPATCH_OP(LOP_SHIFTR), VM_DISPATCH_OP(LOP_SHIFTL), \
-        VM_DISPATCH_OP(LOP_DIVINTK), VM_DISPATCH_OP(LOP_MINOFK), VM_DISPATCH_OP(LOP_MAXOFK), \
+        VM_DISPATCH_OP(LOP_MINOFK), VM_DISPATCH_OP(LOP_MAXOFK), \
         VM_DISPATCH_OP(LOP_BINANDK), VM_DISPATCH_OP(LOP_BINORK), VM_DISPATCH_OP(LOP_BINXORK), VM_DISPATCH_OP(LOP_SHIFTRK), VM_DISPATCH_OP(LOP_SHIFTLK), \
         VM_DISPATCH_OP(LOP_BINNOT)
 
@@ -138,6 +135,9 @@
     goto dispatchContinue
 #endif
 
+// Does VM support native execution via ExecutionCallbacks? We mostly assume it does but keep the define to make it easy to quantify the cost.
+#define VM_HAS_NATIVE 1
+
 LUAU_NOINLINE void luau_callhook(lua_State* L, lua_Hook hook, void* userdata)
 {
     ptrdiff_t base = savestack(L, L->base);
@@ -152,14 +152,15 @@ LUAU_NOINLINE void luau_callhook(lua_State* L, lua_Hook hook, void* userdata)
         L->base = L->ci->base;
     }
 
+    // note: the pc expectations of the hook are matching the general "pc points to next instruction"
+    // however, for the hook to be able to continue execution from the same point, this is called with savedpc at the *current* instruction
+    // this needs to be called before luaD_checkstack in case it fails to reallocate stack
+    if (L->ci->savedpc)
+        L->ci->savedpc++;
+
     luaD_checkstack(L, LUA_MINSTACK); // ensure minimum stack size
     L->ci->top = L->top + LUA_MINSTACK;
     LUAU_ASSERT(L->ci->top <= L->stack_last);
-
-    // note: the pc expectations of the hook are matching the general "pc points to next instruction"
-    // however, for the hook to be able to continue execution from the same point, this is called with savedpc at the *current* instruction
-    if (L->ci->savedpc)
-        L->ci->savedpc++;
 
     Closure* cl = clvalue(L->ci->func);
 
@@ -216,11 +217,12 @@ static void luau_execute(lua_State* L)
     LUAU_ASSERT(L->isactive);
     LUAU_ASSERT(!isblack(obj2gco(L))); // we don't use luaC_threadbarrier because active threads never turn black
 
-#if LUA_CUSTOM_EXECUTION
-    Proto* p = clvalue(L->ci->func)->l.p;
-
-    if (p->execdata)
+#if VM_HAS_NATIVE
+    if ((L->ci->flags & LUA_CALLINFO_NATIVE) && !SingleStep)
     {
+        Proto* p = clvalue(L->ci->func)->l.p;
+        LUAU_ASSERT(p->execdata);
+
         if (L->global->ecb.enter(L, p) == 0)
             return;
     }
@@ -438,11 +440,7 @@ reentry:
                 {
                     uint32_t aux = *pc++;
 
-                    VM_PROTECT(luaV_getimport(L, cl->env, k, aux, /* propagatenil= */ false));
-                    ra = VM_REG(LUAU_INSN_A(insn)); // previous call may change the stack
-
-                    setobj2s(L, ra, L->top - 1);
-                    L->top--;
+                    VM_PROTECT(luaV_getimport(L, cl->env, k, ra, aux, /* propagatenil= */ false));
                     VM_NEXT();
                 }
             }
@@ -457,7 +455,7 @@ reentry:
                 LUAU_ASSERT(ttisstring(kv));
 
                 // fast-path: built-in table
-                if (ttistable(rb))
+                if (LUAU_LIKELY(ttistable(rb)))
                 {
                     Table* h = hvalue(rb);
                     lualock_table(h);
@@ -576,7 +574,7 @@ reentry:
                 LUAU_ASSERT(ttisstring(kv));
 
                 // fast-path: built-in table
-                if (ttistable(rb))
+                if (LUAU_LIKELY(ttistable(rb)))
                 {
                     Table* h = hvalue(rb);
                     lualock_table(h);
@@ -855,7 +853,7 @@ reentry:
                 TValue* kv = VM_KV(aux);
                 LUAU_ASSERT(ttisstring(kv));
 
-                if (ttistable(rb))
+                if (LUAU_LIKELY(ttistable(rb)))
                 {
                     Table* h = hvalue(rb);
                     // note: we can't use nodemask8 here because we need to query the main position of the table, and 8-bit nodemask8 only works
@@ -967,7 +965,9 @@ reentry:
                 // slow-path: not a function call
                 if (LUAU_UNLIKELY(!ttisfunction(ra)))
                 {
-                    VM_PROTECT(luaV_tryfuncTM(L, ra));
+                    VM_PROTECT_PC(); // luaV_tryfuncTM may fail
+
+                    luaV_tryfuncTM(L, ra);
                     argtop++; // __call adds an extra self
                 }
 
@@ -1006,20 +1006,11 @@ reentry:
                         setnilvalue(argi++); // complete missing arguments
                     L->top = p->is_vararg ? argi : ci->top;
 
-#if LUA_CUSTOM_EXECUTION
-                    if (p->execdata)
-                    {
-                        LUAU_ASSERT(L->global->ecb.enter);
-
-                        if (L->global->ecb.enter(L, p) == 1)
-                            goto reentry;
-                        else
-                            goto exit;
-                    }
-#endif
-
                     // reentry
-                    pc = p->code;
+                    // codeentry may point to NATIVECALL instruction when proto is compiled to native code
+                    // this will result in execution continuing in native code, and is equivalent to if (p->execdata) but has no additional overhead
+                    // note that p->codeentry may point *outside* of p->code..p->code+p->sizecode, but that pointer never gets saved to savedpc.
+                    pc = SingleStep ? p->code : p->codeentry;
                     cl = ccl;
                     base = L->base;
                     k = p->k;
@@ -1101,7 +1092,6 @@ reentry:
                 // we're done!
                 if (LUAU_UNLIKELY(ci->flags & LUA_CALLINFO_RETURN))
                 {
-                    L->top = res;
                     goto exit;
                 }
 
@@ -1110,11 +1100,9 @@ reentry:
                 Closure* nextcl = clvalue(cip->func);
                 Proto* nextproto = nextcl->l.p;
 
-#if LUA_CUSTOM_EXECUTION
-                if (nextproto->execdata)
+#if VM_HAS_NATIVE
+                if (LUAU_UNLIKELY((cip->flags & LUA_CALLINFO_NATIVE) && !SingleStep))
                 {
-                    LUAU_ASSERT(L->global->ecb.enter);
-
                     if (L->global->ecb.enter(L, nextproto) == 1)
                         goto reentry;
                     else
@@ -1182,7 +1170,7 @@ reentry:
                         VM_NEXT();
 
                     case LUA_TLIGHTUSERDATA:
-                        pc += pvalue(ra) == pvalue(rb) ? LUAU_INSN_D(insn) : 1;
+                        pc += (pvalue(ra) == pvalue(rb) && lightuserdatatag(ra) == lightuserdatatag(rb)) ? LUAU_INSN_D(insn) : 1;
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                         VM_NEXT();
 
@@ -1199,6 +1187,7 @@ reentry:
                     case LUA_TSTRING:
                     case LUA_TFUNCTION:
                     case LUA_TTHREAD:
+                    case LUA_TBUFFER:
                         pc += gcvalue(ra) == gcvalue(rb) ? LUAU_INSN_D(insn) : 1;
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                         VM_NEXT();
@@ -1296,7 +1285,7 @@ reentry:
                         VM_NEXT();
 
                     case LUA_TLIGHTUSERDATA:
-                        pc += pvalue(ra) != pvalue(rb) ? LUAU_INSN_D(insn) : 1;
+                        pc += (pvalue(ra) != pvalue(rb) || lightuserdatatag(ra) != lightuserdatatag(rb)) ? LUAU_INSN_D(insn) : 1;
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                         VM_NEXT();
 
@@ -1313,6 +1302,7 @@ reentry:
                     case LUA_TSTRING:
                     case LUA_TFUNCTION:
                     case LUA_TTHREAD:
+                    case LUA_TBUFFER:
                         pc += gcvalue(ra) != gcvalue(rb) ? LUAU_INSN_D(insn) : 1;
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                         VM_NEXT();
@@ -1396,7 +1386,7 @@ reentry:
 
                 // fast-path: number
                 // Note that all jumps below jump by 1 in the "false" case to skip over aux
-                if (ttisnumber(ra) && ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(ra) && ttisnumber(rb)))
                 {
                     pc += nvalue(ra) <= nvalue(rb) ? LUAU_INSN_D(insn) : 1;
                     LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -1429,7 +1419,7 @@ reentry:
 
                 // fast-path: number
                 // Note that all jumps below jump by 1 in the "true" case to skip over aux
-                if (ttisnumber(ra) && ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(ra) && ttisnumber(rb)))
                 {
                     pc += !(nvalue(ra) <= nvalue(rb)) ? LUAU_INSN_D(insn) : 1;
                     LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -1462,7 +1452,7 @@ reentry:
 
                 // fast-path: number
                 // Note that all jumps below jump by 1 in the "false" case to skip over aux
-                if (ttisnumber(ra) && ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(ra) && ttisnumber(rb)))
                 {
                     pc += nvalue(ra) < nvalue(rb) ? LUAU_INSN_D(insn) : 1;
                     LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -1495,7 +1485,7 @@ reentry:
 
                 // fast-path: number
                 // Note that all jumps below jump by 1 in the "true" case to skip over aux
-                if (ttisnumber(ra) && ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(ra) && ttisnumber(rb)))
                 {
                     pc += !(nvalue(ra) < nvalue(rb)) ? LUAU_INSN_D(insn) : 1;
                     LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
@@ -1527,15 +1517,15 @@ reentry:
                 StkId rc = VM_REG(LUAU_INSN_C(insn));
 
                 // fast-path
-                if (ttisnumber(rb) && ttisnumber(rc))
+                if (LUAU_LIKELY(ttisnumber(rb) && ttisnumber(rc)))
                 {
                     setnvalue(ra, nvalue(rb) + nvalue(rc));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisvector(rc))
                 {
-                    const float* vb = rb->value.v;
-                    const float* vc = rc->value.v;
+                    const float* vb = vvalue(rb);
+                    const float* vc = vvalue(rc);
                     setvvalue(ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3]);
                     VM_NEXT();
                 }
@@ -1559,7 +1549,7 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_ADD));
+                        VM_PROTECT(luaV_doarithimpl<TM_ADD>(L, ra, rb, rc));
                         VM_NEXT();
                     }
                 }
@@ -1573,15 +1563,15 @@ reentry:
                 StkId rc = VM_REG(LUAU_INSN_C(insn));
 
                 // fast-path
-                if (ttisnumber(rb) && ttisnumber(rc))
+                if (LUAU_LIKELY(ttisnumber(rb) && ttisnumber(rc)))
                 {
                     setnvalue(ra, nvalue(rb) - nvalue(rc));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisvector(rc))
                 {
-                    const float* vb = rb->value.v;
-                    const float* vc = rc->value.v;
+                    const float* vb = vvalue(rb);
+                    const float* vc = vvalue(rc);
                     setvvalue(ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3]);
                     VM_NEXT();
                 }
@@ -1605,7 +1595,7 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_SUB));
+                        VM_PROTECT(luaV_doarithimpl<TM_SUB>(L, ra, rb, rc));
                         VM_NEXT();
                     }
                 }
@@ -1619,29 +1609,29 @@ reentry:
                 StkId rc = VM_REG(LUAU_INSN_C(insn));
 
                 // fast-path
-                if (ttisnumber(rb) && ttisnumber(rc))
+                if (LUAU_LIKELY(ttisnumber(rb) && ttisnumber(rc)))
                 {
                     setnvalue(ra, nvalue(rb) * nvalue(rc));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisnumber(rc))
                 {
-                    const float* vb = rb->value.v;
+                    const float* vb = vvalue(rb);
                     float vc = cast_to(float, nvalue(rc));
                     setvvalue(ra, vb[0] * vc, vb[1] * vc, vb[2] * vc, vb[3] * vc);
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisvector(rc))
                 {
-                    const float* vb = rb->value.v;
-                    const float* vc = rc->value.v;
+                    const float* vb = vvalue(rb);
+                    const float* vc = vvalue(rc);
                     setvvalue(ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3]);
                     VM_NEXT();
                 }
                 else if (ttisnumber(rb) && ttisvector(rc))
                 {
                     float vb = cast_to(float, nvalue(rb));
-                    const float* vc = rc->value.v;
+                    const float* vc = vvalue(rc);
                     setvvalue(ra, vb * vc[0], vb * vc[1], vb * vc[2], vb * vc[3]);
                     VM_NEXT();
                 }
@@ -1666,7 +1656,7 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_MUL));
+                        VM_PROTECT(luaV_doarithimpl<TM_MUL>(L, ra, rb, rc));
                         VM_NEXT();
                     }
                 }
@@ -1680,29 +1670,29 @@ reentry:
                 StkId rc = VM_REG(LUAU_INSN_C(insn));
 
                 // fast-path
-                if (ttisnumber(rb) && ttisnumber(rc))
+                if (LUAU_LIKELY(ttisnumber(rb) && ttisnumber(rc)))
                 {
                     setnvalue(ra, nvalue(rb) / nvalue(rc));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisnumber(rc))
                 {
-                    const float* vb = rb->value.v;
+                    const float* vb = vvalue(rb);
                     float vc = cast_to(float, nvalue(rc));
                     setvvalue(ra, vb[0] / vc, vb[1] / vc, vb[2] / vc, vb[3] / vc);
                     VM_NEXT();
                 }
                 else if (ttisvector(rb) && ttisvector(rc))
                 {
-                    const float* vb = rb->value.v;
-                    const float* vc = rc->value.v;
+                    const float* vb = vvalue(rb);
+                    const float* vc = vvalue(rc);
                     setvvalue(ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3]);
                     VM_NEXT();
                 }
                 else if (ttisnumber(rb) && ttisvector(rc))
                 {
                     float vb = cast_to(float, nvalue(rb));
-                    const float* vc = rc->value.v;
+                    const float* vc = vvalue(rc);
                     setvvalue(ra, vb / vc[0], vb / vc[1], vb / vc[2], vb / vc[3]);
                     VM_NEXT();
                 }
@@ -1727,7 +1717,60 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_DIV));
+                        VM_PROTECT(luaV_doarithimpl<TM_DIV>(L, ra, rb, rc));
+                        VM_NEXT();
+                    }
+                }
+            }
+
+            VM_CASE(LOP_IDIV)
+            {
+                Instruction insn = *pc++;
+                StkId ra = VM_REG(LUAU_INSN_A(insn));
+                StkId rb = VM_REG(LUAU_INSN_B(insn));
+                StkId rc = VM_REG(LUAU_INSN_C(insn));
+
+                // fast-path
+                if (LUAU_LIKELY(ttisnumber(rb) && ttisnumber(rc)))
+                {
+                    setnvalue(ra, luai_numidiv(nvalue(rb), nvalue(rc)));
+                    VM_NEXT();
+                }
+                else if (ttisvector(rb) && ttisnumber(rc))
+                {
+                    const float* vb = vvalue(rb);
+                    float vc = cast_to(float, nvalue(rc));
+                    setvvalue(
+                        ra,
+                        float(luai_numidiv(vb[0], vc)),
+                        float(luai_numidiv(vb[1], vc)),
+                        float(luai_numidiv(vb[2], vc)),
+                        float(luai_numidiv(vb[3], vc))
+                    );
+                    VM_NEXT();
+                }
+                else
+                {
+                    // fast-path for userdata with C functions
+                    StkId rbc = ttisnumber(rb) ? rc : rb;
+                    const TValue* fn = 0;
+                    if (ttisuserdata(rbc) && (fn = luaT_gettmbyobj(L, rbc, TM_IDIV)) && ttisfunction(fn) && clvalue(fn)->isC)
+                    {
+                        // note: it's safe to push arguments past top for complicated reasons (see top of the file)
+                        LUAU_ASSERT(L->top + 3 < L->stack + L->stacksize);
+                        StkId top = L->top;
+                        setobj2s(L, top + 0, fn);
+                        setobj2s(L, top + 1, rb);
+                        setobj2s(L, top + 2, rc);
+                        L->top = top + 3;
+
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_NEXT();
+                    }
+                    else
+                    {
+                        // slow-path, may invoke C/Lua via metamethods
+                        VM_PROTECT(luaV_doarithimpl<TM_IDIV>(L, ra, rb, rc));
                         VM_NEXT();
                     }
                 }
@@ -1751,7 +1794,7 @@ reentry:
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_MOD));
+                    VM_PROTECT(luaV_doarithimpl<TM_MOD>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -1772,7 +1815,7 @@ reentry:
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_POW));
+                    VM_PROTECT(luaV_doarithimpl<TM_POW>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -1793,7 +1836,7 @@ reentry:
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_ADD));
+                    VM_PROTECT(luaV_doarithimpl<TM_ADD>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -1814,7 +1857,7 @@ reentry:
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_SUB));
+                    VM_PROTECT(luaV_doarithimpl<TM_SUB>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -1827,14 +1870,14 @@ reentry:
                 TValue* kv = VM_KV(LUAU_INSN_C(insn));
 
                 // fast-path
-                if (ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(rb)))
                 {
                     setnvalue(ra, nvalue(rb) * nvalue(kv));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb))
                 {
-                    const float* vb = rb->value.v;
+                    const float* vb = vvalue(rb);
                     float vc = cast_to(float, nvalue(kv));
                     setvvalue(ra, vb[0] * vc, vb[1] * vc, vb[2] * vc, vb[3] * vc);
                     VM_NEXT();
@@ -1859,7 +1902,7 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_MUL));
+                        VM_PROTECT(luaV_doarithimpl<TM_MUL>(L, ra, rb, kv));
                         VM_NEXT();
                     }
                 }
@@ -1873,16 +1916,16 @@ reentry:
                 TValue* kv = VM_KV(LUAU_INSN_C(insn));
 
                 // fast-path
-                if (ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(rb)))
                 {
                     setnvalue(ra, nvalue(rb) / nvalue(kv));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb))
                 {
-                    const float* vb = rb->value.v;
-                    float vc = cast_to(float, nvalue(kv));
-                    setvvalue(ra, vb[0] / vc, vb[1] / vc, vb[2] / vc, vb[3] / vc);
+                    const float* vb = vvalue(rb);
+                    float nc = cast_to(float, nvalue(kv));
+                    setvvalue(ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc);
                     VM_NEXT();
                 }
                 else
@@ -1905,7 +1948,59 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_DIV));
+                        VM_PROTECT(luaV_doarithimpl<TM_DIV>(L, ra, rb, kv));
+                        VM_NEXT();
+                    }
+                }
+            }
+
+            VM_CASE(LOP_IDIVK)
+            {
+                Instruction insn = *pc++;
+                StkId ra = VM_REG(LUAU_INSN_A(insn));
+                StkId rb = VM_REG(LUAU_INSN_B(insn));
+                TValue* kv = VM_KV(LUAU_INSN_C(insn));
+
+                // fast-path
+                if (LUAU_LIKELY(ttisnumber(rb)))
+                {
+                    setnvalue(ra, luai_numidiv(nvalue(rb), nvalue(kv)));
+                    VM_NEXT();
+                }
+                else if (ttisvector(rb))
+                {
+                    const float* vb = vvalue(rb);
+                    float vc = cast_to(float, nvalue(kv));
+                    setvvalue(
+                        ra,
+                        float(luai_numidiv(vb[0], vc)),
+                        float(luai_numidiv(vb[1], vc)),
+                        float(luai_numidiv(vb[2], vc)),
+                        float(luai_numidiv(vb[3], vc))
+                    );
+                    VM_NEXT();
+                }
+                else
+                {
+                    // fast-path for userdata with C functions
+                    const TValue* fn = 0;
+                    if (ttisuserdata(rb) && (fn = luaT_gettmbyobj(L, rb, TM_IDIV)) && ttisfunction(fn) && clvalue(fn)->isC)
+                    {
+                        // note: it's safe to push arguments past top for complicated reasons (see top of the file)
+                        LUAU_ASSERT(L->top + 3 < L->stack + L->stacksize);
+                        StkId top = L->top;
+                        setobj2s(L, top + 0, fn);
+                        setobj2s(L, top + 1, rb);
+                        setobj2s(L, top + 2, kv);
+                        L->top = top + 3;
+
+                        VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
+                        VM_NEXT();
+                    }
+                    else
+                    {
+                        // slow-path, may invoke C/Lua via metamethods
+                        VM_PROTECT(luaV_doarithimpl<TM_IDIV>(L, ra, rb, kv));
                         VM_NEXT();
                     }
                 }
@@ -1929,7 +2024,7 @@ reentry:
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_MOD));
+                    VM_PROTECT(luaV_doarithimpl<TM_MOD>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -1956,7 +2051,7 @@ reentry:
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_POW));
+                    VM_PROTECT(luaV_doarithimpl<TM_POW>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -2039,14 +2134,14 @@ reentry:
                 StkId rb = VM_REG(LUAU_INSN_B(insn));
 
                 // fast-path
-                if (ttisnumber(rb))
+                if (LUAU_LIKELY(ttisnumber(rb)))
                 {
                     setnvalue(ra, -nvalue(rb));
                     VM_NEXT();
                 }
                 else if (ttisvector(rb))
                 {
-                    const float* vb = rb->value.v;
+                    const float* vb = vvalue(rb);
                     setvvalue(ra, -vb[0], -vb[1], -vb[2], -vb[3]);
                     VM_NEXT();
                 }
@@ -2069,7 +2164,7 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
-                        VM_PROTECT(luaV_doarith(L, ra, rb, rb, TM_UNM));
+                        VM_PROTECT(luaV_doarithimpl<TM_UNM>(L, ra, rb, rb));
                         VM_NEXT();
                     }
                 }
@@ -2082,7 +2177,7 @@ reentry:
                 StkId rb = VM_REG(LUAU_INSN_B(insn));
 
                 // fast-path #1: tables
-                if (ttistable(rb))
+                if (LUAU_LIKELY(ttistable(rb)))
                 {
                     Table* h = hvalue(rb);
                     lualock_table(h);
@@ -2283,7 +2378,7 @@ reentry:
                     {
                         // set up registers for builtin iteration
                         setobj2s(L, ra + 1, ra);
-                        setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(0)));
+                        setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(0)), LU_TAG_ITERATOR);
                         setnilvalue(ra);
                     }
                     else
@@ -2335,7 +2430,7 @@ reentry:
 
                         if (!ttisnil(e))
                         {
-                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)));
+                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)), LU_TAG_ITERATOR);
                             setnvalue(ra + 3, double(index + 1));
                             setobj2s(L, ra + 4, e);
 
@@ -2356,7 +2451,7 @@ reentry:
 
                         if (!ttisnil(gval(n)))
                         {
-                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)));
+                            setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(index + 1)), LU_TAG_ITERATOR);
                             getnodekey(L, ra + 3, n);
                             setobj2s(L, ra + 4, gval(n));
 
@@ -2408,7 +2503,7 @@ reentry:
                 {
                     setnilvalue(ra);
                     // ra+1 is already the table
-                    setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(0)));
+                    setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(0)), LU_TAG_ITERATOR);
                 }
                 else if (!ttisfunction(ra))
                 {
@@ -2419,12 +2514,6 @@ reentry:
                 pc += LUAU_INSN_D(insn);
                 LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                 VM_NEXT();
-            }
-
-            VM_CASE(LOP_DEP_FORGLOOP_INEXT)
-            {
-                LUAU_ASSERT(!"Unsupported deprecated opcode");
-                LUAU_UNREACHABLE();
             }
 
             VM_CASE(LOP_FORGPREP_NEXT)
@@ -2437,7 +2526,7 @@ reentry:
                 {
                     setnilvalue(ra);
                     // ra+1 is already the table
-                    setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(0)));
+                    setpvalue(ra + 2, reinterpret_cast<void*>(uintptr_t(0)), LU_TAG_ITERATOR);
                 }
                 else if (!ttisfunction(ra))
                 {
@@ -2450,10 +2539,24 @@ reentry:
                 VM_NEXT();
             }
 
-            VM_CASE(LOP_DEP_FORGLOOP_NEXT)
+            VM_CASE(LOP_NATIVECALL)
             {
-                LUAU_ASSERT(!"Unsupported deprecated opcode");
+                Proto* p = cl->l.p;
+                LUAU_ASSERT(p->execdata);
+
+                CallInfo* ci = L->ci;
+                ci->flags = LUA_CALLINFO_NATIVE;
+                ci->savedpc = p->code;
+
+#if VM_HAS_NATIVE
+                if (L->global->ecb.enter(L, p) == 1)
+                    goto reentry;
+                else
+                    goto exit;
+#else
+                LUAU_ASSERT(!"Opcode is only valid when VM_HAS_NATIVE is defined");
                 LUAU_UNREACHABLE();
+#endif
             }
 
             VM_CASE(LOP_GETVARARGS)
@@ -2670,16 +2773,53 @@ reentry:
                 LUAU_UNREACHABLE();
             }
 
-            VM_CASE(LOP_DEP_JUMPIFEQK)
+            VM_CASE(LOP_SUBRK)
             {
-                LUAU_ASSERT(!"Unsupported deprecated opcode");
-                LUAU_UNREACHABLE();
+                Instruction insn = *pc++;
+                StkId ra = VM_REG(LUAU_INSN_A(insn));
+                TValue* kv = VM_KV(LUAU_INSN_B(insn));
+                StkId rc = VM_REG(LUAU_INSN_C(insn));
+
+                // fast-path
+                if (ttisnumber(rc))
+                {
+                    setnvalue(ra, nvalue(kv) - nvalue(rc));
+                    VM_NEXT();
+                }
+                else
+                {
+                    // slow-path, may invoke C/Lua via metamethods
+                    VM_PROTECT(luaV_doarithimpl<TM_SUB>(L, ra, kv, rc));
+                    VM_NEXT();
+                }
             }
 
-            VM_CASE(LOP_DEP_JUMPIFNOTEQK)
+            VM_CASE(LOP_DIVRK)
             {
-                LUAU_ASSERT(!"Unsupported deprecated opcode");
-                LUAU_UNREACHABLE();
+                Instruction insn = *pc++;
+                StkId ra = VM_REG(LUAU_INSN_A(insn));
+                TValue* kv = VM_KV(LUAU_INSN_B(insn));
+                StkId rc = VM_REG(LUAU_INSN_C(insn));
+
+                // fast-path
+                if (LUAU_LIKELY(ttisnumber(rc)))
+                {
+                    setnvalue(ra, nvalue(kv) / nvalue(rc));
+                    VM_NEXT();
+                }
+                else if (ttisvector(rc))
+                {
+                    float nb = cast_to(float, nvalue(kv));
+                    const float* vc = vvalue(rc);
+                    setvvalue(ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3]);
+                    VM_NEXT();
+                }
+                else
+                {
+                    // slow-path, may invoke C/Lua via metamethods
+                    VM_PROTECT(luaV_doarithimpl<TM_DIV>(L, ra, kv, rc));
+                    VM_NEXT();
+                }
             }
 
             VM_CASE(LOP_FASTCALL1)
@@ -2830,6 +2970,60 @@ reentry:
                 }
             }
 
+            VM_CASE(LOP_FASTCALL3)
+            {
+                Instruction insn = *pc++;
+                int bfid = LUAU_INSN_A(insn);
+                int skip = LUAU_INSN_C(insn) - 1;
+                uint32_t aux = *pc++;
+                TValue* arg1 = VM_REG(LUAU_INSN_B(insn));
+                TValue* arg2 = VM_REG(aux & 0xff);
+                TValue* arg3 = VM_REG((aux >> 8) & 0xff);
+
+                LUAU_ASSERT(unsigned(pc - cl->l.p->code + skip) < unsigned(cl->l.p->sizecode));
+
+                Instruction call = pc[skip];
+                LUAU_ASSERT(LUAU_INSN_OP(call) == LOP_CALL);
+
+                StkId ra = VM_REG(LUAU_INSN_A(call));
+
+                int nparams = 3;
+                int nresults = LUAU_INSN_C(call) - 1;
+
+                luau_FastFunction f = luauF_table[bfid];
+                LUAU_ASSERT(f);
+
+                if (cl->env->safeenv)
+                {
+                    VM_PROTECT_PC(); // f may fail due to OOM
+
+                    setobj2s(L, L->top, arg2);
+                    setobj2s(L, L->top + 1, arg3);
+
+                    int n = f(L, ra, arg1, nresults, L->top, nparams);
+
+                    if (n >= 0)
+                    {
+                        if (nresults == LUA_MULTRET)
+                            L->top = ra + n;
+
+                        pc += skip + 1; // skip instructions that compute function as well as CALL
+                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
+                        VM_NEXT();
+                    }
+                    else
+                    {
+                        // continue execution through the fallback code
+                        VM_NEXT();
+                    }
+                }
+                else
+                {
+                    // continue execution through the fallback code
+                    VM_NEXT();
+                }
+            }
+
             VM_CASE(LOP_BREAK)
             {
                 LUAU_ASSERT(cl->l.p->debuginsn);
@@ -2849,29 +3043,6 @@ reentry:
                 VM_CONTINUE(op);
             }
 //GIDEROS
-            VM_CASE(LOP_DIVINT)
-            {
-                Instruction insn = *pc++;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-                StkId rb = VM_REG(LUAU_INSN_B(insn));
-                StkId rc = VM_REG(LUAU_INSN_C(insn));
-
-                // fast-path
-                if (ttisnumber(rb) && ttisnumber(rc))
-                {
-                    double nb = nvalue(rb);
-                    double nc = nvalue(rc);
-                    setnvalue(ra, trunc(nb/nc));
-                    VM_NEXT();
-                }
-                else
-                {
-                    // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_IDIV));
-                    VM_NEXT();
-                }
-            }
-
             VM_CASE(LOP_MAXOF)
             {
                 Instruction insn = *pc++;
@@ -2884,13 +3055,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, fmax(nb,nc));
+                    setnvalue(ra, luai_nummax(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_MAXOF));
+                    VM_PROTECT(luaV_doarithimpl<TM_MAXOF>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -2907,36 +3078,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, fmin(nb,nc));
+                    setnvalue(ra, luai_nummin(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_MINOF));
-                    VM_NEXT();
-                }
-            }
-
-            VM_CASE(LOP_DIVINTK)
-            {
-                Instruction insn = *pc++;
-                StkId ra = VM_REG(LUAU_INSN_A(insn));
-                StkId rb = VM_REG(LUAU_INSN_B(insn));
-                TValue* kv = VM_KV(LUAU_INSN_C(insn));
-
-                // fast-path
-                if (ttisnumber(rb))
-                {
-                    double nb = nvalue(rb);
-                    double nk = nvalue(kv);
-                    setnvalue(ra, trunc(nb/nk));
-                    VM_NEXT();
-                }
-                else
-                {
-                    // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_IDIV));
+                    VM_PROTECT(luaV_doarithimpl<TM_MINOF>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -2953,13 +3101,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, fmax(nb, nk));
+                    setnvalue(ra, luai_nummax(nb, nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_MAXOF));
+                    VM_PROTECT(luaV_doarithimpl<TM_MAXOF>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -2976,13 +3124,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, fmin(nb, nk));
+                    setnvalue(ra, luai_nummin(nb, nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_MINOF));
+                    VM_PROTECT(luaV_doarithimpl<TM_MINOF>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -2999,13 +3147,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, BINOP(nb)&BINOP(nc));
+                    setnvalue(ra, luai_numband(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_BAND));
+                    VM_PROTECT(luaV_doarithimpl<TM_BAND>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -3022,13 +3170,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, BINOP(nb)|BINOP(nc));
+                    setnvalue(ra, luai_numbor(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_BOR));
+                    VM_PROTECT(luaV_doarithimpl<TM_BOR>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -3045,13 +3193,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, BINOP(nb)^BINOP(nc));
+                    setnvalue(ra, luai_numbxor(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_BXOR));
+                    VM_PROTECT(luaV_doarithimpl<TM_BXOR>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -3068,13 +3216,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, BINOP(nb)>>BINOP(nc));
+                    setnvalue(ra, luai_numbsr(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_SHR));
+                    VM_PROTECT(luaV_doarithimpl<TM_SHR>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -3091,13 +3239,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
-                    setnvalue(ra, BINOP(nb)<<BINOP(nc));
+                    setnvalue(ra, luai_numbsl(nb,nc));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rc, TM_SHL));
+                    VM_PROTECT(luaV_doarithimpl<TM_SHL>(L, ra, rb, rc));
                     VM_NEXT();
                 }
             }
@@ -3114,13 +3262,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, BINOP(nb)&BINOP(nk));
+                    setnvalue(ra, luai_numband(nb,nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_BAND));
+                    VM_PROTECT(luaV_doarithimpl<TM_BAND>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -3137,13 +3285,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, BINOP(nb)|BINOP(nk));
+                    setnvalue(ra, luai_numbor(nb,nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_BOR));
+                    VM_PROTECT(luaV_doarithimpl<TM_BOR>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -3160,13 +3308,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, BINOP(nb)^BINOP(nk));
+                    setnvalue(ra, luai_numbxor(nb,nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_BXOR));
+                    VM_PROTECT(luaV_doarithimpl<TM_BXOR>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -3183,13 +3331,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, BINOP(nb)>>BINOP(nk));
+                    setnvalue(ra, luai_numbsr(nb,nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_SHR));
+                    VM_PROTECT(luaV_doarithimpl<TM_SHR>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -3206,13 +3354,13 @@ reentry:
                 {
                     double nb = nvalue(rb);
                     double nk = nvalue(kv);
-                    setnvalue(ra, BINOP(nb)<<BINOP(nk));
+                    setnvalue(ra, luai_numbsl(nb,nk));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, kv, TM_SHL));
+                    VM_PROTECT(luaV_doarithimpl<TM_SHL>(L, ra, rb, kv));
                     VM_NEXT();
                 }
             }
@@ -3226,13 +3374,13 @@ reentry:
                 // fast-path
                 if (ttisnumber(rb))
                 {
-                    setnvalue(ra, ~BINOP(nvalue(rb)));
+                    setnvalue(ra, luai_numbnot(nvalue(rb)));
                     VM_NEXT();
                 }
                 else
                 {
                     // slow-path, may invoke C/Lua via metamethods
-                    VM_PROTECT(luaV_doarith(L, ra, rb, rb, TM_BNOT));
+                    VM_PROTECT(luaV_doarithimpl<TM_BNOT>(L, ra, rb, rb));
                     VM_NEXT();
                 }
             }
@@ -3341,14 +3489,21 @@ int luau_precall(lua_State* L, StkId func, int nresults)
 
     if (!ccl->isC)
     {
+        Proto* p = ccl->l.p;
+
         // fill unused parameters with nil
         StkId argi = L->top;
-        StkId argend = L->base + ccl->l.p->numparams;
+        StkId argend = L->base + p->numparams;
         while (argi < argend)
             setnilvalue(argi++); // complete missing arguments
-        L->top = ccl->l.p->is_vararg ? argi : ci->top;
+        L->top = p->is_vararg ? argi : ci->top;
 
-        L->ci->savedpc = ccl->l.p->code;
+        ci->savedpc = p->code;
+
+#if VM_HAS_NATIVE
+        if (p->exectarget != 0 && p->execdata)
+            ci->flags = LUA_CALLINFO_NATIVE;
+#endif
 
         if (L->profilerHook)
             L->profilerHook(L,1);

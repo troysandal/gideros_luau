@@ -8,13 +8,22 @@
 #define luai_numsub(a, b) ((a) - (b))
 #define luai_nummul(a, b) ((a) * (b))
 #define luai_numdiv(a, b) ((a) / (b))
-#define luai_numidiv(a, b) (trunc((a) / (b)))
 #define luai_numpow(a, b) (pow(a, b))
 #define luai_numunm(a) (-(a))
 #define luai_numisnan(a) ((a) != (a))
 #define luai_numeq(a, b) ((a) == (b))
 #define luai_numlt(a, b) ((a) < (b))
 #define luai_numle(a, b) ((a) <= (b))
+//GIDEROS
+#define BINOP(v) ((uint32_t)(((int64_t)(v))&0xFFFFFFFF))
+#define luai_nummax(a, b) (fmax(a,b))
+#define luai_nummin(a, b) (fmin(a,b))
+#define luai_numband(a, b) (BINOP(a)&BINOP(b))
+#define luai_numbor(a, b) (BINOP(a)|BINOP(b))
+#define luai_numbxor(a, b) (BINOP(a)^BINOP(b))
+#define luai_numbsr(a, b) (BINOP(a)>>BINOP(b))
+#define luai_numbsl(a, b) (BINOP(a)<<BINOP(b))
+#define luai_numbnot(a) (~BINOP(a))
 
 inline bool luai_veceq(const float* a, const float* b)
 {
@@ -38,6 +47,13 @@ LUAU_FASTMATH_BEGIN
 inline double luai_nummod(double a, double b)
 {
     return a - floor(a / b) * b;
+}
+LUAU_FASTMATH_END
+
+LUAU_FASTMATH_BEGIN
+inline double luai_numidiv(double a, double b)
+{
+    return trunc(a / b);
 }
 LUAU_FASTMATH_END
 

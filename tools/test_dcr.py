@@ -6,9 +6,17 @@ import os.path
 import subprocess as sp
 import sys
 import xml.sax as x
-import colorama as c
 
-c.init()
+try:
+    import colorama as c
+except ImportError:
+    class c:
+        class Fore:
+            RED=''
+            RESET=''
+            GREEN=''
+else:
+    c.init()
 
 SCRIPT_PATH = os.path.split(sys.argv[0])[0]
 FAIL_LIST_PATH = os.path.join(SCRIPT_PATH, "faillist.txt")
@@ -107,6 +115,12 @@ def main():
         action="store_true",
         help="Write a new faillist.txt after running tests.",
     )
+    parser.add_argument(
+        "--ts",
+        dest="suite",
+        action="store",
+        help="Only run a specific suite."
+    )
 
     parser.add_argument("--randomize", action="store_true", help="Pick a random seed")
 
@@ -122,16 +136,17 @@ def main():
 
     failList = loadFailList()
 
-    commandLine = [
-        args.path,
-        "--reporters=xml",
-        "--fflags=true,DebugLuauDeferredConstraintResolution=true",
-    ]
+    flags = ["true", "LuauSolverV2"]
+
+    commandLine = [args.path, "--reporters=xml", "--fflags=" + ",".join(flags)]
 
     if args.random_seed:
         commandLine.append("--random-seed=" + str(args.random_seed))
     elif args.randomize:
         commandLine.append("--randomize")
+
+    if args.suite:
+        commandLine.append(f'--ts={args.suite}')
 
     print_stderr(">", " ".join(commandLine))
 
@@ -139,6 +154,8 @@ def main():
         commandLine,
         stdout=sp.PIPE,
     )
+
+    assert p.stdout
 
     handler = Handler(failList)
 

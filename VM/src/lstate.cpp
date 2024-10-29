@@ -110,10 +110,8 @@ static void close_state(lua_State* L)
     g->destructors.~vector<global_State::gc_Destructor>();
     g->ttoken.~vector<TString *>();
 
-#if LUA_CUSTOM_EXECUTION
     if (L->global->ecb.close)
         L->global->ecb.close(L);
-#endif
 
     (*g->frealloc)(g->ud, L, sizeof(LG), 0);
 }
@@ -215,12 +213,18 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
         g->freepages[i] = NULL;
         g->freegcopages[i] = NULL;
     }
+    g->allpages = NULL;
     g->allgcopages = NULL;
     g->sweepgcopage = NULL;
     for (i = 0; i < LUA_T_COUNT; i++)
         g->mt[i] = NULL;
     for (i = 0; i < LUA_UTAG_LIMIT; i++)
+    {
         g->udatagc[i] = NULL;
+        g->udatamt[i] = NULL;
+    }
+    for (i = 0; i < LUA_LUTAG_LIMIT; i++)
+        g->lightuserdataname[i] = NULL;
     for (i = 0; i < LUA_MEMORY_CATEGORIES; i++)
         g->memcatbytes[i] = 0;
 
@@ -228,9 +232,7 @@ lua_State* lua_newstate(lua_Alloc f, void* ud)
 
     g->cb = lua_Callbacks();
 
-#if LUA_CUSTOM_EXECUTION
     g->ecb = lua_ExecutionCallbacks();
-#endif
 
     g->gcstats = GCStats();
     g->printfunc = NULL;

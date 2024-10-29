@@ -27,6 +27,7 @@ typedef enum
     TM_SUB,
     TM_MUL,
     TM_DIV,
+    TM_IDIV,
     TM_MOD,
     TM_POW,
     TM_UNM,
@@ -39,7 +40,6 @@ typedef enum
     TM_METATABLE,
 
 //GIDEROS
-    TM_IDIV,
     TM_MAXOF,
     TM_MINOF,
     TM_BOR,

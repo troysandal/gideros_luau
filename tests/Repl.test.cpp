@@ -3,6 +3,7 @@
 #include "lualib.h"
 
 #include "Repl.h"
+#include "ScopedFlags.h"
 
 #include "doctest.h"
 
@@ -11,6 +12,8 @@
 #include <set>
 #include <string>
 #include <vector>
+
+LUAU_FASTFLAG(LuauMathMap)
 
 struct Completion
 {
@@ -52,9 +55,14 @@ public:
     {
         CompletionSet result;
         int top = lua_gettop(L);
-        getCompletions(L, inputPrefix, [&result](const std::string& completion, const std::string& display) {
-            result.insert(Completion{completion, display});
-        });
+        getCompletions(
+            L,
+            inputPrefix,
+            [&result](const std::string& completion, const std::string& display)
+            {
+                result.insert(Completion{completion, display});
+            }
+        );
         // Ensure that generating completions doesn't change the position of luau's stack top.
         CHECK(top == lua_gettop(L));
 
@@ -167,15 +175,17 @@ TEST_CASE_FIXTURE(ReplFixture, "CompleteGlobalVariables")
         CHECK(checkCompletion(completions, prefix, "myvariable1"));
         CHECK(checkCompletion(completions, prefix, "myvariable2"));
     }
+    if (FFlag::LuauMathMap)
     {
         // Try completing some builtin functions
         CompletionSet completions = getCompletionSet("math.m");
 
         std::string prefix = "math.";
-        CHECK(completions.size() == 3);
+        CHECK(completions.size() == 4);
         CHECK(checkCompletion(completions, prefix, "max("));
         CHECK(checkCompletion(completions, prefix, "min("));
         CHECK(checkCompletion(completions, prefix, "modf("));
+        CHECK(checkCompletion(completions, prefix, "map("));
     }
 }
 
@@ -418,6 +428,24 @@ MetaTableOne.__index = function()
 end
 print(NewProxyOne.HelloICauseACrash)
 )");
+}
+
+TEST_CASE_FIXTURE(ReplFixture, "InteractiveStackReserve1")
+{
+    // Reset stack reservation
+    lua_resume(L, nullptr, 0);
+
+    runCode(L, R"(
+local t = {}
+)");
+}
+
+TEST_CASE_FIXTURE(ReplFixture, "InteractiveStackReserve2")
+{
+    // Reset stack reservation
+    lua_resume(L, nullptr, 0);
+
+    getCompletionSet("a");
 }
 
 TEST_SUITE_END();

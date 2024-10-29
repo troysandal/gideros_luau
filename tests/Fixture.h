@@ -2,6 +2,8 @@
 #pragma once
 
 #include "Luau/Config.h"
+#include "Luau/Differ.h"
+#include "Luau/Error.h"
 #include "Luau/FileResolver.h"
 #include "Luau/Frontend.h"
 #include "Luau/IostreamHelpers.h"
@@ -11,13 +13,19 @@
 #include "Luau/Scope.h"
 #include "Luau/ToString.h"
 #include "Luau/Type.h"
+#include "Luau/TypeFunction.h"
 
 #include "IostreamOptional.h"
 #include "ScopedFlags.h"
 
+#include "doctest.h"
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <optional>
+#include <vector>
+
+LUAU_FASTFLAG(DebugLuauFreezeArena)
 
 namespace Luau
 {
@@ -57,16 +65,16 @@ struct TestConfigResolver : ConfigResolver
 
 struct Fixture
 {
-    explicit Fixture(bool freeze = true, bool prepareAutocomplete = false);
+    explicit Fixture(bool prepareAutocomplete = false);
     ~Fixture();
 
     // Throws Luau::ParseErrors if the parse fails.
     AstStatBlock* parse(const std::string& source, const ParseOptions& parseOptions = {});
-    CheckResult check(Mode mode, std::string source);
+    CheckResult check(Mode mode, const std::string& source);
     CheckResult check(const std::string& source);
 
     LintResult lint(const std::string& source, const std::optional<LintOptions>& lintOptions = {});
-    LintResult lintTyped(const std::string& source, const std::optional<LintOptions>& lintOptions = {});
+    LintResult lintModule(const ModuleName& moduleName, const std::optional<LintOptions>& lintOptions = {});
 
     /// Parse with all language extensions enabled
     ParseResult parseEx(const std::string& source, const ParseOptions& parseOptions = {});
@@ -92,8 +100,16 @@ struct Fixture
     std::optional<TypeId> lookupType(const std::string& name);
     std::optional<TypeId> lookupImportedType(const std::string& moduleAlias, const std::string& name);
     TypeId requireTypeAlias(const std::string& name);
+    TypeId requireExportedType(const ModuleName& moduleName, const std::string& name);
 
-    ScopedFastFlag sff_DebugLuauFreezeArena;
+    // While most flags can be flipped inside the unit test, some code changes affect the state that is part of Fixture initialization
+    // Most often those are changes related to builtin type definitions.
+    // In that case, flag can be forced to 'true' using the example below:
+    // ScopedFastFlag sff_LuauExampleFlagDefinition{FFlag::LuauExampleFlagDefinition, true};
+
+    // Arena freezing marks the `TypeArena`'s underlying memory as read-only, raising an access violation whenever you mutate it.
+    // This is useful for tracking down violations of Luau's memory model.
+    ScopedFastFlag sff_DebugLuauFreezeArena{FFlag::DebugLuauFreezeArena, true};
 
     TestFileResolver fileResolver;
     TestConfigResolver configResolver;
@@ -101,7 +117,6 @@ struct Fixture
     std::unique_ptr<SourceModule> sourceModule;
     Frontend frontend;
     InternalErrorReporter ice;
-    TypeChecker& typeChecker;
     NotNull<BuiltinTypes> builtinTypes;
 
     std::string decorateWithTypes(const std::string& code);
@@ -123,8 +138,11 @@ struct Fixture
 
 struct BuiltinsFixture : Fixture
 {
-    BuiltinsFixture(bool freeze = true, bool prepareAutocomplete = false);
+    BuiltinsFixture(bool prepareAutocomplete = false);
 };
+
+std::optional<std::string> pathExprToModuleName(const ModuleName& currentModuleName, const std::vector<std::string_view>& segments);
+std::optional<std::string> pathExprToModuleName(const ModuleName& currentModuleName, const AstExpr& pathExpr);
 
 ModuleName fromString(std::string_view name);
 
@@ -154,6 +172,84 @@ std::optional<TypeId> linearSearchForBinding(Scope* scope, const char* name);
 void registerHiddenTypes(Frontend* frontend);
 void createSomeClasses(Frontend* frontend);
 
+template<typename BaseFixture>
+struct DifferFixtureGeneric : BaseFixture
+{
+    std::string normalizeWhitespace(std::string msg)
+    {
+        std::string normalizedMsg = "";
+        bool wasWhitespace = true;
+        for (char c : msg)
+        {
+            bool isWhitespace = c == ' ' || c == '\n';
+            if (wasWhitespace && isWhitespace)
+                continue;
+            normalizedMsg += isWhitespace ? ' ' : c;
+            wasWhitespace = isWhitespace;
+        }
+        if (wasWhitespace)
+            normalizedMsg.pop_back();
+        return normalizedMsg;
+    }
+
+    void compareNe(TypeId left, TypeId right, const std::string& expectedMessage, bool multiLine)
+    {
+        compareNe(left, std::nullopt, right, std::nullopt, expectedMessage, multiLine);
+    }
+
+    void compareNe(
+        TypeId left,
+        std::optional<std::string> symbolLeft,
+        TypeId right,
+        std::optional<std::string> symbolRight,
+        const std::string& expectedMessage,
+        bool multiLine
+    )
+    {
+        DifferResult diffRes = diffWithSymbols(left, right, symbolLeft, symbolRight);
+        REQUIRE_MESSAGE(diffRes.diffError.has_value(), "Differ did not report type error, even though types are unequal");
+        std::string diffMessage = diffRes.diffError->toString(multiLine);
+        CHECK_EQ(expectedMessage, diffMessage);
+    }
+
+    void compareTypesNe(
+        const std::string& leftSymbol,
+        const std::string& rightSymbol,
+        const std::string& expectedMessage,
+        bool forwardSymbol = false,
+        bool multiLine = false
+    )
+    {
+        if (forwardSymbol)
+        {
+            compareNe(
+                BaseFixture::requireType(leftSymbol), leftSymbol, BaseFixture::requireType(rightSymbol), rightSymbol, expectedMessage, multiLine
+            );
+        }
+        else
+        {
+            compareNe(
+                BaseFixture::requireType(leftSymbol), std::nullopt, BaseFixture::requireType(rightSymbol), std::nullopt, expectedMessage, multiLine
+            );
+        }
+    }
+
+    void compareEq(TypeId left, TypeId right)
+    {
+        DifferResult diffRes = diff(left, right);
+        CHECK(!diffRes.diffError);
+        if (diffRes.diffError)
+            INFO(diffRes.diffError->toString());
+    }
+
+    void compareTypesEq(const std::string& leftSymbol, const std::string& rightSymbol)
+    {
+        compareEq(BaseFixture::requireType(leftSymbol), BaseFixture::requireType(rightSymbol));
+    }
+};
+using DifferFixture = DifferFixtureGeneric<Fixture>;
+using DifferFixtureWithBuiltins = DifferFixtureGeneric<BuiltinsFixture>;
+
 } // namespace Luau
 
 #define LUAU_REQUIRE_ERRORS(result) \
@@ -173,3 +269,21 @@ void createSomeClasses(Frontend* frontend);
     } while (false)
 
 #define LUAU_REQUIRE_NO_ERRORS(result) LUAU_REQUIRE_ERROR_COUNT(0, result)
+
+#define LUAU_CHECK_ERRORS(result) \
+    do \
+    { \
+        auto&& r = (result); \
+        validateErrors(r.errors); \
+        CHECK(!r.errors.empty()); \
+    } while (false)
+
+#define LUAU_CHECK_ERROR_COUNT(count, result) \
+    do \
+    { \
+        auto&& r = (result); \
+        validateErrors(r.errors); \
+        CHECK_MESSAGE(count == r.errors.size(), getErrors(r)); \
+    } while (false)
+
+#define LUAU_CHECK_NO_ERRORS(result) LUAU_CHECK_ERROR_COUNT(0, result)

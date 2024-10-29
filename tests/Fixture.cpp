@@ -3,24 +3,30 @@
 
 #include "Luau/AstQuery.h"
 #include "Luau/BuiltinDefinitions.h"
+#include "Luau/Common.h"
 #include "Luau/Constraint.h"
 #include "Luau/ModuleResolver.h"
 #include "Luau/NotNull.h"
 #include "Luau/Parser.h"
 #include "Luau/Type.h"
 #include "Luau/TypeAttach.h"
+#include "Luau/TypeInfer.h"
 #include "Luau/Transpiler.h"
 
 #include "doctest.h"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <iostream>
+#include <fstream>
 
 static const char* mainModuleName = "MainModule";
 
-LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution);
+LUAU_FASTFLAG(LuauSolverV2);
+LUAU_FASTFLAG(DebugLuauLogSolverToJsonFile)
+LUAU_DYNAMIC_FASTINT(LuauTypeSolverRelease)
 
 extern std::optional<unsigned> randomSeed; // tests/main.cpp
 
@@ -113,7 +119,17 @@ std::optional<ModuleInfo> TestFileResolver::resolveModule(const ModuleInfo* cont
 
 std::string TestFileResolver::getHumanReadableModuleName(const ModuleName& name) const
 {
-    return name;
+    // We have a handful of tests that need to distinguish between a canonical
+    // ModuleName and the human-readable version so we apply a simple transform
+    // here:  We replace all slashes with dots.
+    std::string result = name;
+    for (size_t i = 0; i < result.size(); ++i)
+    {
+        if (result[i] == '/')
+            result[i] = '.';
+    }
+
+    return result;
 }
 
 std::optional<std::string> TestFileResolver::getEnvironmentForModule(const ModuleName& name) const
@@ -134,23 +150,38 @@ const Config& TestConfigResolver::getConfig(const ModuleName& name) const
     return defaultConfig;
 }
 
-Fixture::Fixture(bool freeze, bool prepareAutocomplete)
-    : sff_DebugLuauFreezeArena("DebugLuauFreezeArena", freeze)
-    , frontend(&fileResolver, &configResolver,
-          {/* retainFullTypeGraphs= */ true, /* forAutocomplete */ false, /* randomConstraintResolutionSeed */ randomSeed})
-    , typeChecker(frontend.typeChecker)
+Fixture::Fixture(bool prepareAutocomplete)
+    : frontend(
+          &fileResolver,
+          &configResolver,
+          {/* retainFullTypeGraphs= */ true, /* forAutocomplete */ false, /* runLintChecks */ false, /* randomConstraintResolutionSeed */ randomSeed}
+      )
     , builtinTypes(frontend.builtinTypes)
 {
     configResolver.defaultConfig.mode = Mode::Strict;
     configResolver.defaultConfig.enabledLint.warningMask = ~0ull;
     configResolver.defaultConfig.parseOptions.captureComments = true;
 
-    registerBuiltinTypes(frontend);
-
-    Luau::freeze(frontend.typeChecker.globalTypes);
-    Luau::freeze(frontend.typeCheckerForAutocomplete.globalTypes);
+    Luau::freeze(frontend.globals.globalTypes);
+    Luau::freeze(frontend.globalsForAutocomplete.globalTypes);
 
     Luau::setPrintLine([](auto s) {});
+
+    if (FFlag::DebugLuauLogSolverToJsonFile)
+    {
+        frontend.writeJsonLog = [&](const Luau::ModuleName& moduleName, std::string log)
+        {
+            std::string path = moduleName + ".log.json";
+            size_t pos = moduleName.find_last_of('/');
+            if (pos != std::string::npos)
+                path = moduleName.substr(pos + 1);
+
+            std::ofstream os(path);
+
+            os << log << std::endl;
+            MESSAGE("Wrote JSON log to ", path);
+        };
+    }
 }
 
 Fixture::~Fixture()
@@ -174,15 +205,34 @@ AstStatBlock* Fixture::parse(const std::string& source, const ParseOptions& pars
         // if AST is available, check how lint and typecheck handle error nodes
         if (result.root)
         {
-            frontend.lint(*sourceModule);
-
-            if (FFlag::DebugLuauDeferredConstraintResolution)
+            if (FFlag::LuauSolverV2)
             {
-                Luau::check(*sourceModule, {}, frontend.builtinTypes, NotNull{&ice}, NotNull{&moduleResolver}, NotNull{&fileResolver},
-                    typeChecker.globalScope, frontend.options);
+                Mode mode = sourceModule->mode ? *sourceModule->mode : Mode::Strict;
+                ModulePtr module = Luau::check(
+                    *sourceModule,
+                    mode,
+                    {},
+                    builtinTypes,
+                    NotNull{&ice},
+                    NotNull{&moduleResolver},
+                    NotNull{&fileResolver},
+                    frontend.globals.globalScope,
+                    /*prepareModuleScope*/ nullptr,
+                    frontend.options,
+                    {},
+                    false,
+                    {}
+                );
+
+                Luau::lint(sourceModule->root, *sourceModule->names, frontend.globals.globalScope, module.get(), sourceModule->hotcomments, {});
             }
             else
-                typeChecker.check(*sourceModule, sourceModule->mode.value_or(Luau::Mode::Nonstrict));
+            {
+                TypeChecker typeChecker(frontend.globals.globalScope, &moduleResolver, builtinTypes, &frontend.iceHandler);
+                ModulePtr module = typeChecker.check(*sourceModule, sourceModule->mode.value_or(Luau::Mode::Nonstrict), std::nullopt);
+
+                Luau::lint(sourceModule->root, *sourceModule->names, frontend.globals.globalScope, module.get(), sourceModule->hotcomments, {});
+            }
         }
 
         throw ParseErrors(result.errors);
@@ -191,7 +241,7 @@ AstStatBlock* Fixture::parse(const std::string& source, const ParseOptions& pars
     return result.root;
 }
 
-CheckResult Fixture::check(Mode mode, std::string source)
+CheckResult Fixture::check(Mode mode, const std::string& source)
 {
     ModuleName mm = fromString(mainModuleName);
     configResolver.defaultConfig.mode = mode;
@@ -210,20 +260,23 @@ CheckResult Fixture::check(const std::string& source)
 
 LintResult Fixture::lint(const std::string& source, const std::optional<LintOptions>& lintOptions)
 {
-    ParseOptions parseOptions;
-    parseOptions.captureComments = true;
-    configResolver.defaultConfig.mode = Mode::Nonstrict;
-    parse(source, parseOptions);
+    ModuleName mm = fromString(mainModuleName);
+    configResolver.defaultConfig.mode = Mode::Strict;
+    fileResolver.source[mm] = std::move(source);
+    frontend.markDirty(mm);
 
-    return frontend.lint(*sourceModule, lintOptions);
+    return lintModule(mm);
 }
 
-LintResult Fixture::lintTyped(const std::string& source, const std::optional<LintOptions>& lintOptions)
+LintResult Fixture::lintModule(const ModuleName& moduleName, const std::optional<LintOptions>& lintOptions)
 {
-    check(source);
-    ModuleName mm = fromString(mainModuleName);
+    FrontendOptions options = frontend.options;
+    options.runLintChecks = true;
+    options.enabledLintWarnings = lintOptions;
 
-    return frontend.lint(mm, lintOptions);
+    CheckResult result = frontend.check(moduleName, options);
+
+    return result.lintResult;
 }
 
 ParseResult Fixture::parseEx(const std::string& source, const ParseOptions& options)
@@ -319,7 +372,7 @@ std::optional<TypeId> Fixture::getType(const std::string& name)
     if (!module->hasModuleScope())
         return std::nullopt;
 
-    if (FFlag::DebugLuauDeferredConstraintResolution)
+    if (FFlag::LuauSolverV2)
         return linearSearchForBinding(module->getModuleScope().get(), name.c_str());
     else
         return lookupName(module->getModuleScope(), name);
@@ -405,7 +458,18 @@ TypeId Fixture::requireTypeAlias(const std::string& name)
 {
     std::optional<TypeId> ty = lookupType(name);
     REQUIRE(ty);
-    return *ty;
+    return follow(*ty);
+}
+
+TypeId Fixture::requireExportedType(const ModuleName& moduleName, const std::string& name)
+{
+    ModulePtr module = frontend.moduleResolver.getModule(moduleName);
+    REQUIRE(module);
+
+    auto it = module->exportedTypeBindings.find(name);
+    REQUIRE(it != module->exportedTypeBindings.end());
+
+    return it->second.type;
 }
 
 std::string Fixture::decorateWithTypes(const std::string& code)
@@ -447,9 +511,9 @@ void Fixture::dumpErrors(std::ostream& os, const std::vector<TypeError>& errors)
 
 void Fixture::registerTestTypes()
 {
-    addGlobalBinding(frontend, "game", typeChecker.anyType, "@luau");
-    addGlobalBinding(frontend, "workspace", typeChecker.anyType, "@luau");
-    addGlobalBinding(frontend, "script", typeChecker.anyType, "@luau");
+    addGlobalBinding(frontend.globals, "game", builtinTypes->anyType, "@luau");
+    addGlobalBinding(frontend.globals, "workspace", builtinTypes->anyType, "@luau");
+    addGlobalBinding(frontend.globals, "script", builtinTypes->anyType, "@luau");
 }
 
 void Fixture::dumpErrors(const CheckResult& cr)
@@ -499,9 +563,10 @@ void Fixture::validateErrors(const std::vector<Luau::TypeError>& errors)
 
 LoadDefinitionFileResult Fixture::loadDefinition(const std::string& source)
 {
-    unfreeze(typeChecker.globalTypes);
-    LoadDefinitionFileResult result = frontend.loadDefinitionFile(source, "@test");
-    freeze(typeChecker.globalTypes);
+    unfreeze(frontend.globals.globalTypes);
+    LoadDefinitionFileResult result =
+        frontend.loadDefinitionFile(frontend.globals, frontend.globals.globalScope, source, "@test", /* captureComments */ false);
+    freeze(frontend.globals.globalTypes);
 
     if (result.module)
         dumpErrors(result.module);
@@ -509,19 +574,85 @@ LoadDefinitionFileResult Fixture::loadDefinition(const std::string& source)
     return result;
 }
 
-BuiltinsFixture::BuiltinsFixture(bool freeze, bool prepareAutocomplete)
-    : Fixture(freeze, prepareAutocomplete)
+BuiltinsFixture::BuiltinsFixture(bool prepareAutocomplete)
+    : Fixture(prepareAutocomplete)
 {
-    Luau::unfreeze(frontend.typeChecker.globalTypes);
-    Luau::unfreeze(frontend.typeCheckerForAutocomplete.globalTypes);
+    Luau::unfreeze(frontend.globals.globalTypes);
+    Luau::unfreeze(frontend.globalsForAutocomplete.globalTypes);
 
-    registerBuiltinGlobals(frontend);
+    registerBuiltinGlobals(frontend, frontend.globals);
     if (prepareAutocomplete)
-        registerBuiltinGlobals(frontend.typeCheckerForAutocomplete);
+        registerBuiltinGlobals(frontend, frontend.globalsForAutocomplete, /*typeCheckForAutocomplete*/ true);
     registerTestTypes();
 
-    Luau::freeze(frontend.typeChecker.globalTypes);
-    Luau::freeze(frontend.typeCheckerForAutocomplete.globalTypes);
+    Luau::freeze(frontend.globals.globalTypes);
+    Luau::freeze(frontend.globalsForAutocomplete.globalTypes);
+}
+
+static std::vector<std::string_view> parsePathExpr(const AstExpr& pathExpr)
+{
+    const AstExprIndexName* indexName = pathExpr.as<AstExprIndexName>();
+    if (!indexName)
+        return {};
+
+    std::vector<std::string_view> segments{indexName->index.value};
+
+    while (true)
+    {
+        if (AstExprIndexName* in = indexName->expr->as<AstExprIndexName>())
+        {
+            segments.push_back(in->index.value);
+            indexName = in;
+            continue;
+        }
+        else if (AstExprGlobal* indexNameAsGlobal = indexName->expr->as<AstExprGlobal>())
+        {
+            segments.push_back(indexNameAsGlobal->name.value);
+            break;
+        }
+        else if (AstExprLocal* indexNameAsLocal = indexName->expr->as<AstExprLocal>())
+        {
+            segments.push_back(indexNameAsLocal->local->name.value);
+            break;
+        }
+        else
+            return {};
+    }
+
+    std::reverse(segments.begin(), segments.end());
+    return segments;
+}
+
+std::optional<std::string> pathExprToModuleName(const ModuleName& currentModuleName, const std::vector<std::string_view>& segments)
+{
+    if (segments.empty())
+        return std::nullopt;
+
+    std::vector<std::string_view> result;
+
+    auto it = segments.begin();
+
+    if (*it == "script" && !currentModuleName.empty())
+    {
+        result = split(currentModuleName, '/');
+        ++it;
+    }
+
+    for (; it != segments.end(); ++it)
+    {
+        if (result.size() > 1 && *it == "Parent")
+            result.pop_back();
+        else
+            result.push_back(*it);
+    }
+
+    return join(result, "/");
+}
+
+std::optional<std::string> pathExprToModuleName(const ModuleName& currentModuleName, const AstExpr& pathExpr)
+{
+    std::vector<std::string_view> segments = parsePathExpr(pathExpr);
+    return pathExprToModuleName(currentModuleName, segments);
 }
 
 ModuleName fromString(std::string_view name)
@@ -581,47 +712,59 @@ std::optional<TypeId> linearSearchForBinding(Scope* scope, const char* name)
 
 void registerHiddenTypes(Frontend* frontend)
 {
-    TypeId t = frontend->globalTypes.addType(GenericType{"T"});
+    GlobalTypes& globals = frontend->globals;
+
+    unfreeze(globals.globalTypes);
+
+    TypeId t = globals.globalTypes.addType(GenericType{"T"});
     GenericTypeDefinition genericT{t};
 
-    ScopePtr globalScope = frontend->getGlobalScope();
-    globalScope->exportedTypeBindings["Not"] = TypeFun{{genericT}, frontend->globalTypes.addType(NegationType{t})};
+    TypeId u = globals.globalTypes.addType(GenericType{"U"});
+    GenericTypeDefinition genericU{u};
+
+    ScopePtr globalScope = globals.globalScope;
+    globalScope->exportedTypeBindings["Not"] = TypeFun{{genericT}, globals.globalTypes.addType(NegationType{t})};
+    globalScope->exportedTypeBindings["Mt"] = TypeFun{{genericT, genericU}, globals.globalTypes.addType(MetatableType{t, u})};
     globalScope->exportedTypeBindings["fun"] = TypeFun{{}, frontend->builtinTypes->functionType};
     globalScope->exportedTypeBindings["cls"] = TypeFun{{}, frontend->builtinTypes->classType};
     globalScope->exportedTypeBindings["err"] = TypeFun{{}, frontend->builtinTypes->errorType};
     globalScope->exportedTypeBindings["tbl"] = TypeFun{{}, frontend->builtinTypes->tableType};
+
+    freeze(globals.globalTypes);
 }
 
 void createSomeClasses(Frontend* frontend)
 {
-    TypeArena& arena = frontend->globalTypes;
+    GlobalTypes& globals = frontend->globals;
+
+    TypeArena& arena = globals.globalTypes;
     unfreeze(arena);
 
-    ScopePtr moduleScope = frontend->getGlobalScope();
+    ScopePtr moduleScope = globals.globalScope;
 
-    TypeId parentType = arena.addType(ClassType{"Parent", {}, frontend->builtinTypes->classType, std::nullopt, {}, nullptr, "Test"});
+    TypeId parentType = arena.addType(ClassType{"Parent", {}, frontend->builtinTypes->classType, std::nullopt, {}, nullptr, "Test", {}});
 
     ClassType* parentClass = getMutable<ClassType>(parentType);
     parentClass->props["method"] = {makeFunction(arena, parentType, {}, {})};
 
     parentClass->props["virtual_method"] = {makeFunction(arena, parentType, {}, {})};
 
-    addGlobalBinding(*frontend, "Parent", {parentType});
+    addGlobalBinding(globals, "Parent", {parentType});
     moduleScope->exportedTypeBindings["Parent"] = TypeFun{{}, parentType};
 
-    TypeId childType = arena.addType(ClassType{"Child", {}, parentType, std::nullopt, {}, nullptr, "Test"});
+    TypeId childType = arena.addType(ClassType{"Child", {}, parentType, std::nullopt, {}, nullptr, "Test", {}});
 
-    addGlobalBinding(*frontend, "Child", {childType});
+    addGlobalBinding(globals, "Child", {childType});
     moduleScope->exportedTypeBindings["Child"] = TypeFun{{}, childType};
 
-    TypeId anotherChildType = arena.addType(ClassType{"AnotherChild", {}, parentType, std::nullopt, {}, nullptr, "Test"});
+    TypeId anotherChildType = arena.addType(ClassType{"AnotherChild", {}, parentType, std::nullopt, {}, nullptr, "Test", {}});
 
-    addGlobalBinding(*frontend, "AnotherChild", {anotherChildType});
+    addGlobalBinding(globals, "AnotherChild", {anotherChildType});
     moduleScope->exportedTypeBindings["AnotherChild"] = TypeFun{{}, anotherChildType};
 
-    TypeId unrelatedType = arena.addType(ClassType{"Unrelated", {}, frontend->builtinTypes->classType, std::nullopt, {}, nullptr, "Test"});
+    TypeId unrelatedType = arena.addType(ClassType{"Unrelated", {}, frontend->builtinTypes->classType, std::nullopt, {}, nullptr, "Test", {}});
 
-    addGlobalBinding(*frontend, "Unrelated", {unrelatedType});
+    addGlobalBinding(globals, "Unrelated", {unrelatedType});
     moduleScope->exportedTypeBindings["Unrelated"] = TypeFun{{}, unrelatedType};
 
     for (const auto& [name, ty] : moduleScope->exportedTypeBindings)

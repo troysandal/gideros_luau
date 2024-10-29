@@ -334,7 +334,7 @@ static int read_line (lua_State *L, FILE *f) {
   luaL_buffinit(L, &b);
   for (;;) {
     size_t l;
-    luaL_reservebuffer(&b,LUA_BUFFERSIZE,-1);
+    luaL_prepbuffsize(&b,LUA_BUFFERSIZE);
     char *p = b.p;
     if (fgets(p, LUA_BUFFERSIZE, f) == NULL) {  /* eof? */
       luaL_pushresult(&b);  /* close buffer */
@@ -359,7 +359,7 @@ static int read_chars (lua_State *L, FILE *f, size_t n) {
   luaL_buffinit(L, &b);
   rlen = LUA_BUFFERSIZE;  /* try to read that much each time */
   do {
-    luaL_reservebuffer(&b,LUA_BUFFERSIZE,-1);
+    luaL_prepbuffsize(&b,LUA_BUFFERSIZE);
     char *p = b.p;
     if (rlen > n) rlen = n;  /* cannot read more than asked */
     nr = fread(p, sizeof(char), rlen, f);

@@ -16,17 +16,23 @@ using SeenTypePacks = std::unordered_map<TypePackId, TypePackId>;
 
 struct CloneState
 {
+    NotNull<BuiltinTypes> builtinTypes;
+
     SeenTypes seenTypes;
     SeenTypePacks seenTypePacks;
-
-    int recursionCount = 0;
 };
+
+/** `shallowClone` will make a copy of only the _top level_ constructor of the type,
+ * while `clone` will make a deep copy of the entire type and its every component.
+ *
+ * Be mindful about which behavior you actually _want_.
+ */
+
+TypePackId shallowClone(TypePackId tp, TypeArena& dest, CloneState& cloneState);
+TypeId shallowClone(TypeId typeId, TypeArena& dest, CloneState& cloneState);
 
 TypePackId clone(TypePackId tp, TypeArena& dest, CloneState& cloneState);
 TypeId clone(TypeId tp, TypeArena& dest, CloneState& cloneState);
 TypeFun clone(const TypeFun& typeFun, TypeArena& dest, CloneState& cloneState);
-
-TypeId shallowClone(TypeId ty, TypeArena& dest, const TxnLog* log, bool alwaysClone = false);
-TypeId shallowClone(TypeId ty, NotNull<TypeArena> dest);
 
 } // namespace Luau

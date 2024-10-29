@@ -46,6 +46,8 @@ static const char* utf8_decode(const char* o, int* val)
         res |= ((c & 0x7F) << (count * 5)); // add first byte
         if (count > 3 || res > MAXUNICODE || res <= limits[count])
             return NULL; // invalid byte sequence
+        if (unsigned(res - 0xD800) < 0x800)
+            return NULL; // surrogate
         s += count;      // skip continuation bytes read
     }
     if (val)
@@ -171,12 +173,12 @@ static int utfchar(lua_State* L)
     }
     else
     {
-        luaL_Buffer b;
+        luaL_Strbuf b;
         luaL_buffinit(L, &b);
         for (int i = 1; i <= n; i++)
         {
             int l = buffutfchar(L, i, buff, &charstr);
-            luaL_addlstring(&b, charstr, l, -1);
+            luaL_addlstring(&b, charstr, l);
         }
         luaL_pushresult(&b);
     }
@@ -518,7 +520,7 @@ static const char *to_utf8(lua_State *L, int idx, const char **end) {
 static void add_utf8char(luaL_Buffer *b, unsigned ch) {
   char buff[UTF8_MAX];
   size_t n = utf8_encode(buff, ch);
-  luaL_addlstring(b, buff, n, -1);
+  luaL_addlstring(b, buff, n);
 }
 
 static lua_Integer byterelat(lua_Integer pos, size_t len) {
@@ -573,7 +575,7 @@ static int Lutf8_reverse(lua_State *L) {
   luaL_buffinit(L, &b);
   while (s < e) {
     const char *prev = utf8_prev(s, e);
-    luaL_addlstring(&b, prev, e-prev, -1);
+    luaL_addlstring(&b, prev, e-prev);
     e = prev;
   }
   luaL_pushresult(&b);
@@ -746,9 +748,9 @@ static int Lutf8_insert(lua_State *L) {
   }
   subs = luaL_checklstring(L, nargs, &sublen);
   luaL_buffinit(L, &b);
-  luaL_addlstring(&b, s, first-s, -1);
-  luaL_addlstring(&b, subs, sublen, -1);
-  luaL_addlstring(&b, first, e-first, -1);
+  luaL_addlstring(&b, s, first-s);
+  luaL_addlstring(&b, subs, sublen);
+  luaL_addlstring(&b, first, e-first);
   luaL_pushresult(&b);
   return 1;
 }
@@ -762,8 +764,8 @@ static int Lutf8_remove(lua_State *L) {
   else {
     luaL_Buffer b;
     luaL_buffinit(L, &b);
-    luaL_addlstring(&b, s, start-s, -1);
-    luaL_addlstring(&b, end, e-end, -1);
+    luaL_addlstring(&b, s, start-s);
+    luaL_addlstring(&b, end, e-end);
     luaL_pushresult(&b);
   }
   return 1;
@@ -1438,7 +1440,7 @@ static void add_sUTF8 (MatchStateUTF8 *ms, luaL_Buffer *b, const char *s,
         add_utf8char(b, ch);
       }
       else if (ch == '0')
-        luaL_addlstring(b, s, e-s, -1);
+        luaL_addlstring(b, s, e-s);
       else {
         push_onecaptureUTF8(ms, ch-'1', s, e);
         luaL_addvalue(b);  /* add capture to accumulated result */
@@ -1515,7 +1517,7 @@ static int Lutf8_gsub(lua_State *L) {
     else break;
     if (anchor) break;
   }
-  luaL_addlstring(&b, s, es-s, -1);
+  luaL_addlstring(&b, s, es-s);
   luaL_pushresult(&b);
   lua_pushinteger(L, n);  /* number of substitutions */
   return 2;

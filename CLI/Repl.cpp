@@ -1,6 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Repl.h"
 
+#include "Luau/Common.h"
 #include "lua.h"
 #include "lualib.h"
 
@@ -8,13 +9,14 @@
 #include "Luau/CodeGen.h"
 #endif
 #include "Luau/Compiler.h"
-#include "Luau/BytecodeBuilder.h"
 #include "Luau/Parser.h"
+#include "Luau/TimeTrace.h"
 
 #include "Coverage.h"
 #include "FileUtils.h"
 #include "Flags.h"
 #include "Profiler.h"
+#include "Require.h"
 
 #include "isocline.h"
 
@@ -28,6 +30,10 @@
 #include <windows.h>
 #endif
 
+#ifdef __linux__
+#include <unistd.h>
+#endif
+
 #ifdef CALLGRIND
 #include <valgrind/callgrind.h>
 #endif
@@ -37,30 +43,12 @@
 
 LUAU_FASTFLAG(DebugLuauTimeTracing)
 
-enum class CliMode
-{
-    Unknown,
-    Repl,
-    Compile,
-    RunSourceFiles
-};
-
-enum class CompileFormat
-{
-    Text,
-    Binary,
-    Remarks,
-    Codegen,        // Prints annotated native code including IR and assembly
-    CodegenAsm,     // Prints annotated native code assembly
-    CodegenIr,      // Prints annotated native code IR
-    CodegenVerbose, // Prints annotated native code including IR, assembly and outlined code
-    CodegenNull,
-    Null
-};
 
 constexpr int MaxTraversalLimit = 50;
 
 static bool codegen = false;
+static int program_argc = 0;
+char** program_argv = nullptr;
 
 // Ctrl-C handling
 static void sigintCallback(lua_State* L, int gc)
@@ -102,6 +90,7 @@ static Luau::CompileOptions copts()
     Luau::CompileOptions result = {};
     result.optimizationLevel = globalOptions.optimizationLevel;
     result.debugLevel = globalOptions.debugLevel;
+    result.typeInfoLevel = 1;
     result.coverageLevel = coverageActive() ? 2 : 0;
 
     return result;
@@ -135,27 +124,15 @@ static int finishrequire(lua_State* L)
 static int lua_require(lua_State* L)
 {
     std::string name = luaL_checkstring(L, 1);
-    std::string chunkname = "=" + name;
 
-    luaL_findtable(L, LUA_REGISTRYINDEX, "_MODULES", 1);
+    RequireResolver::ResolvedRequire resolvedRequire = RequireResolver::resolveRequire(L, std::move(name));
 
-    // return the module from the cache
-    lua_getfield(L, -1, name.c_str());
-    if (!lua_isnil(L, -1))
-    {
-        // L stack: _MODULES result
+    if (resolvedRequire.status == RequireResolver::ModuleStatus::Cached)
         return finishrequire(L);
-    }
-
-    lua_pop(L, 1);
-
-    std::optional<std::string> source = readFile(name + ".luau");
-    if (!source)
-    {
-        source = readFile(name + ".lua"); // try .lua if .luau doesn't exist
-        if (!source)
-            luaL_argerrorL(L, 1, ("error loading " + name).c_str()); // if neither .luau nor .lua exist, we have an error
-    }
+    else if (resolvedRequire.status == RequireResolver::ModuleStatus::Ambiguous)
+        luaL_errorL(L, "require path could not be resolved to a unique file");
+    else if (resolvedRequire.status == RequireResolver::ModuleStatus::NotFound)
+        luaL_errorL(L, "error requiring module");
 
     // module needs to run in a new thread, isolated from the rest
     // note: we create ML on main thread so that it doesn't inherit environment of L
@@ -167,12 +144,19 @@ static int lua_require(lua_State* L)
     luaL_sandboxthread(ML);
 
     // now we can compile & run module on the new thread
+/*HEAD
     std::string bytecode = Luau::compile(*source, chunkname, copts());
     if (luau_load(ML, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
+    */
+    std::string bytecode = Luau::compile(resolvedRequire.sourceCode, resolvedRequire.chunkName, copts());
+    if (luau_load(ML, resolvedRequire.chunkName.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
     {
 #ifndef NO_CODEGEN
         if (codegen)
-            Luau::CodeGen::compile(ML, -1);
+        {
+            Luau::CodeGen::CompilationOptions nativeOptions;
+            Luau::CodeGen::compile(ML, -1, nativeOptions);
+        }
 #endif
         if (coverageActive())
             coverageTrack(ML, -1);
@@ -199,7 +183,7 @@ static int lua_require(lua_State* L)
     // there's now a return value on top of ML; L stack: _MODULES ML
     lua_xmove(ML, L, 1);
     lua_pushvalue(L, -1);
-    lua_setfield(L, -4, name.c_str());
+    lua_setfield(L, -4, resolvedRequire.absolutePath.c_str());
 
     // L stack: _MODULES ML result
     return finishrequire(L);
@@ -280,8 +264,18 @@ void setupState(lua_State* L)
     luaL_sandbox(L);
 }
 
+void setupArguments(lua_State* L, int argc, char** argv)
+{
+    lua_checkstack(L, argc);
+
+    for (int i = 0; i < argc; ++i)
+        lua_pushstring(L, argv[i]);
+}
+
 std::string runCode(lua_State* L, const std::string& source)
 {
+    lua_checkstack(L, LUA_MINSTACK);
+
     std::string bytecode = Luau::compile(source, "=stdin", copts());
 
     if (luau_load(L, "=stdin", bytecode.data(), bytecode.size(), 0) != 0)
@@ -408,8 +402,13 @@ static void safeGetTable(lua_State* L, int tableIndex)
 
 // completePartialMatches finds keys that match the specified 'prefix'
 // Note: the table/object to be searched must be on the top of the Lua stack
-static void completePartialMatches(lua_State* L, bool completeOnlyFunctions, const std::string& editBuffer, std::string_view prefix,
-    const AddCompletionCallback& addCompletionCallback)
+static void completePartialMatches(
+    lua_State* L,
+    bool completeOnlyFunctions,
+    const std::string& editBuffer,
+    std::string_view prefix,
+    const AddCompletionCallback& addCompletionCallback
+)
 {
     for (int i = 0; i < MaxTraversalLimit && lua_istable(L, -1); i++)
     {
@@ -456,6 +455,8 @@ static void completeIndexer(lua_State* L, const std::string& editBuffer, const A
     std::string_view lookup = editBuffer;
     bool completeOnlyFunctions = false;
 
+    lua_checkstack(L, LUA_MINSTACK);
+
     // Push the global variable table to begin the search
     lua_pushvalue(L, LUA_GLOBALSINDEX);
 
@@ -501,9 +502,14 @@ static void icGetCompletions(ic_completion_env_t* cenv, const char* editBuffer)
 {
     auto* L = reinterpret_cast<lua_State*>(ic_completion_arg(cenv));
 
-    getCompletions(L, std::string(editBuffer), [cenv](const std::string& completion, const std::string& display) {
-        ic_add_completion_ex(cenv, completion.data(), display.data(), nullptr);
-    });
+    getCompletions(
+        L,
+        std::string(editBuffer),
+        [cenv](const std::string& completion, const std::string& display)
+        {
+            ic_add_completion_ex(cenv, completion.data(), display.data(), nullptr);
+        }
+    );
 }
 
 static bool isMethodOrFunctionChar(const char* s, long len)
@@ -626,16 +632,21 @@ static bool runFile(const char* name, lua_State* GL, bool repl)
     std::string bytecode = Luau::compile(*source, chunkname, copts());
     int status = 0;
 
-    if (luau_load(L, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
+    if (luau_load(L, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == -1)
     {
 #ifndef NO_CODEGEN
         if (codegen)
-            Luau::CodeGen::compile(L, -1);
+        {
+            Luau::CodeGen::CompilationOptions nativeOptions;
+            Luau::CodeGen::compile(L, -1, nativeOptions);
+        }
 #endif
+
         if (coverageActive())
             coverageTrack(L, -1);
 
-        status = lua_resume(L, NULL, 0);
+        setupArguments(L, program_argc, program_argv);
+        status = lua_resume(L, NULL, program_argc);
     }
     else
     {
@@ -669,161 +680,11 @@ static bool runFile(const char* name, lua_State* GL, bool repl)
     return status == 0;
 }
 
-static void report(const char* name, const Luau::Location& location, const char* type, const char* message)
-{
-    fprintf(stderr, "%s(%d,%d): %s: %s\n", name, location.begin.line + 1, location.begin.column + 1, type, message);
-}
-
-static void reportError(const char* name, const Luau::ParseError& error)
-{
-    report(name, error.getLocation(), "SyntaxError", error.what());
-}
-
-static void reportError(const char* name, const Luau::CompileError& error)
-{
-    report(name, error.getLocation(), "CompileError", error.what());
-}
-
-#ifndef NO_CODEGEN
-static std::string getCodegenAssembly(const char* name, const std::string& bytecode, Luau::CodeGen::AssemblyOptions options)
-{
-    std::unique_ptr<lua_State, void (*)(lua_State*)> globalState(luaL_newstate(), lua_close);
-    lua_State* L = globalState.get();
-
-    if (luau_load(L, name, bytecode.data(), bytecode.size(), 0) == 0)
-        return Luau::CodeGen::getAssembly(L, -1, options);
-
-    fprintf(stderr, "Error loading bytecode %s\n", name);
-    return "";
-}
-#endif
-static void annotateInstruction(void* context, std::string& text, int fid, int instpos)
-{
-    Luau::BytecodeBuilder& bcb = *(Luau::BytecodeBuilder*)context;
-
-    bcb.annotateInstruction(text, fid, instpos);
-}
-
-struct CompileStats
-{
-    size_t lines;
-    size_t bytecode;
-    size_t codegen;
-};
-
-static bool compileFile(const char* name, CompileFormat format, CompileStats& stats)
-{
-    std::optional<std::string> source = readFile(name);
-    if (!source)
-    {
-        fprintf(stderr, "Error opening %s\n", name);
-        return false;
-    }
-
-    // NOTE: Normally, you should use Luau::compile or luau_compile (see lua_require as an example)
-    // This function is much more complicated because it supports many output human-readable formats through internal interfaces
-
-    try
-    {
-        Luau::BytecodeBuilder bcb;
-        bcb.setChunkName(name);
-
-#ifndef NO_CODEGEN
-        Luau::CodeGen::AssemblyOptions options;
-        options.outputBinary = format == CompileFormat::CodegenNull;
-
-        if (!options.outputBinary)
-        {
-            options.includeAssembly = format != CompileFormat::CodegenIr;
-            options.includeIr = format != CompileFormat::CodegenAsm;
-            options.includeOutlinedCode = format == CompileFormat::CodegenVerbose;
-        }
-
-        options.annotator = annotateInstruction;
-        options.annotatorContext = &bcb;
-#endif
-
-        if (format == CompileFormat::Text)
-        {
-            bcb.setDumpFlags(Luau::BytecodeBuilder::Dump_Code | Luau::BytecodeBuilder::Dump_Source | Luau::BytecodeBuilder::Dump_Locals |
-                             Luau::BytecodeBuilder::Dump_Remarks);
-            bcb.setDumpSource(*source);
-        }
-        else if (format == CompileFormat::Remarks)
-        {
-            bcb.setDumpFlags(Luau::BytecodeBuilder::Dump_Source | Luau::BytecodeBuilder::Dump_Remarks);
-            bcb.setDumpSource(*source);
-        }
-        else if (format == CompileFormat::Codegen || format == CompileFormat::CodegenAsm || format == CompileFormat::CodegenIr ||
-                 format == CompileFormat::CodegenVerbose)
-        {
-            bcb.setDumpFlags(Luau::BytecodeBuilder::Dump_Code | Luau::BytecodeBuilder::Dump_Source | Luau::BytecodeBuilder::Dump_Locals |
-                             Luau::BytecodeBuilder::Dump_Remarks);
-            bcb.setDumpSource(*source);
-        }
-
-        Luau::Allocator allocator;
-        Luau::AstNameTable names(allocator);
-        Luau::ParseResult result = Luau::Parser::parse(source->c_str(), source->size(), names, allocator);
-
-        if (!result.errors.empty())
-            throw Luau::ParseErrors(result.errors);
-
-        stats.lines += result.lines;
-
-        Luau::compileOrThrow(bcb, result, names, copts());
-        stats.bytecode += bcb.getBytecode().size();
-
-        switch (format)
-        {
-        case CompileFormat::Text:
-            printf("%s", bcb.dumpEverything().c_str());
-            break;
-        case CompileFormat::Remarks:
-            printf("%s", bcb.dumpSourceRemarks().c_str());
-            break;
-        case CompileFormat::Binary:
-            fwrite(bcb.getBytecode().data(), 1, bcb.getBytecode().size(), stdout);
-            break;
-#ifndef NO_CODEGEN
-        case CompileFormat::Codegen:
-        case CompileFormat::CodegenAsm:
-        case CompileFormat::CodegenIr:
-        case CompileFormat::CodegenVerbose:
-            printf("%s", getCodegenAssembly(name, bcb.getBytecode(), options).c_str());
-            break;
-        case CompileFormat::CodegenNull:
-            stats.codegen += getCodegenAssembly(name, bcb.getBytecode(), options).size();
-            break;
-#endif
-        case CompileFormat::Null:
-            break;
-        }
-
-        return true;
-    }
-    catch (Luau::ParseErrors& e)
-    {
-        for (auto& error : e.getErrors())
-            reportError(name, error);
-        return false;
-    }
-    catch (Luau::CompileError& e)
-    {
-        reportError(name, e);
-        return false;
-    }
-}
-
 static void displayHelp(const char* argv0)
 {
-    printf("Usage: %s [--mode] [options] [file list]\n", argv0);
+    printf("Usage: %s [options] [file list] [-a] [arg list]\n", argv0);
     printf("\n");
-    printf("When mode and file list are omitted, an interactive REPL is started instead.\n");
-    printf("\n");
-    printf("Available modes:\n");
-    printf("  omitted: compile and run input files one by one\n");
-    printf("  --compile[=format]: compile input files and output resulting bytecode/assembly (binary, text, remarks, codegen)\n");
+    printf("When file list is omitted, an interactive REPL is started instead.\n");
     printf("\n");
     printf("Available options:\n");
     printf("  --coverage: collect code coverage while running the code and output results to coverage.out\n");
@@ -834,6 +695,7 @@ static void displayHelp(const char* argv0)
     printf("  --profile[=N]: profile the code using N Hz sampling (default 10000) and output results to profile.out\n");
     printf("  --timetrace: record compiler time tracing information into trace.json\n");
     printf("  --codegen: execute code using native code generation\n");
+    printf("  --program-args,-a: declare start of arguments to be passed to the Luau program\n");
 }
 
 static int assertionHandler(const char* expr, const char* file, int line, const char* function)
@@ -848,66 +710,17 @@ int replMain(int argc, char** argv)
 
     setLuauFlagsDefault();
 
-    CliMode mode = CliMode::Unknown;
-    CompileFormat compileFormat{};
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
     int profile = 0;
     bool coverage = false;
     bool interactive = false;
+    bool codegenPerf = false;
+    int program_args = argc;
 
-    // Set the mode if the user has explicitly specified one.
-    int argStart = 1;
-    if (argc >= 2 && strncmp(argv[1], "--compile", strlen("--compile")) == 0)
-    {
-        argStart++;
-        mode = CliMode::Compile;
-        if (strcmp(argv[1], "--compile") == 0)
-        {
-            compileFormat = CompileFormat::Text;
-        }
-        else if (strcmp(argv[1], "--compile=binary") == 0)
-        {
-            compileFormat = CompileFormat::Binary;
-        }
-        else if (strcmp(argv[1], "--compile=text") == 0)
-        {
-            compileFormat = CompileFormat::Text;
-        }
-        else if (strcmp(argv[1], "--compile=remarks") == 0)
-        {
-            compileFormat = CompileFormat::Remarks;
-        }
-        else if (strcmp(argv[1], "--compile=codegen") == 0)
-        {
-            compileFormat = CompileFormat::Codegen;
-        }
-        else if (strcmp(argv[1], "--compile=codegenasm") == 0)
-        {
-            compileFormat = CompileFormat::CodegenAsm;
-        }
-        else if (strcmp(argv[1], "--compile=codegenir") == 0)
-        {
-            compileFormat = CompileFormat::CodegenIr;
-        }
-        else if (strcmp(argv[1], "--compile=codegenverbose") == 0)
-        {
-            compileFormat = CompileFormat::CodegenVerbose;
-        }
-        else if (strcmp(argv[1], "--compile=codegennull") == 0)
-        {
-            compileFormat = CompileFormat::CodegenNull;
-        }
-        else if (strcmp(argv[1], "--compile=null") == 0)
-        {
-            compileFormat = CompileFormat::Null;
-        }
-        else
-        {
-            fprintf(stderr, "Error: Unrecognized value for '--compile' specified.\n");
-            return 1;
-        }
-    }
-
-    for (int i = argStart; i < argc; i++)
+    for (int i = 1; i < argc; i++)
     {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
         {
@@ -950,6 +763,11 @@ int replMain(int argc, char** argv)
         {
             codegen = true;
         }
+        else if (strcmp(argv[i], "--codegen-perf") == 0)
+        {
+            codegen = true;
+            codegenPerf = true;
+        }
         else if (strcmp(argv[i], "--coverage") == 0)
         {
             coverage = true;
@@ -962,6 +780,11 @@ int replMain(int argc, char** argv)
         {
             setLuauFlags(argv[i] + 9);
         }
+        else if (strcmp(argv[i], "--program-args") == 0 || strcmp(argv[i], "-a") == 0)
+        {
+            program_args = i + 1;
+            break;
+        }
         else if (argv[i][0] == '-')
         {
             fprintf(stderr, "Error: Unrecognized option '%s'.\n\n", argv[i]);
@@ -969,6 +792,10 @@ int replMain(int argc, char** argv)
             return 1;
         }
     }
+
+    program_argc = argc - program_args;
+    program_argv = &argv[program_args];
+
 
 #if !defined(LUAU_ENABLE_TIME_TRACE)
     if (FFlag::DebugLuauTimeTracing)
@@ -978,55 +805,39 @@ int replMain(int argc, char** argv)
     }
 #endif
 
-#if !LUA_CUSTOM_EXECUTION
-    if (codegen)
+    if (codegenPerf)
     {
-        fprintf(stderr, "To run with --codegen, Luau has to be built with LUA_CUSTOM_EXECUTION enabled\n");
-        return 1;
-    }
-#endif
+#if __linux__
+        char path[128];
+        snprintf(path, sizeof(path), "/tmp/perf-%d.map", getpid());
 
+        // note, there's no need to close the log explicitly as it will be closed when the process exits
+        FILE* codegenPerfLog = fopen(path, "w");
+
+        Luau::CodeGen::setPerfLog(
+            codegenPerfLog,
+            [](void* context, uintptr_t addr, unsigned size, const char* symbol)
+            {
+                fprintf(static_cast<FILE*>(context), "%016lx %08x %s\n", long(addr), size, symbol);
+            }
+        );
+#else
+        fprintf(stderr, "--codegen-perf option is only supported on Linux\n");
+        return 1;
+#endif
+    }
+
+/*    if (codegen && !Luau::CodeGen::isSupported())
+        fprintf(stderr, "Warning: Native code generation is not supported in current configuration\n");
+*/
     const std::vector<std::string> files = getSourceFiles(argc, argv);
-    if (mode == CliMode::Unknown)
-    {
-        mode = files.empty() ? CliMode::Repl : CliMode::RunSourceFiles;
-    }
-#ifndef NO_CODEGEN
-    if (mode != CliMode::Compile && codegen && !Luau::CodeGen::isSupported())
-    {
-        fprintf(stderr, "Cannot enable --codegen, native code generation is not supported in current configuration\n");
-        return 1;
-    }
-#endif
-    switch (mode)
-    {
-    case CliMode::Compile:
-    {
-#ifdef _WIN32
-        if (compileFormat == CompileFormat::Binary)
-            _setmode(_fileno(stdout), _O_BINARY);
-#endif
 
-        CompileStats stats = {};
-        int failed = 0;
-
-        for (const std::string& path : files)
-            failed += !compileFile(path.c_str(), compileFormat, stats);
-
-        if (compileFormat == CompileFormat::Null)
-            printf("Compiled %d KLOC into %d KB bytecode\n", int(stats.lines / 1000), int(stats.bytecode / 1024));
-        else if (compileFormat == CompileFormat::CodegenNull)
-            printf("Compiled %d KLOC into %d KB bytecode => %d KB native code\n", int(stats.lines / 1000), int(stats.bytecode / 1024),
-                int(stats.codegen / 1024));
-
-        return failed ? 1 : 0;
-    }
-    case CliMode::Repl:
+    if (files.empty())
     {
         runRepl();
         return 0;
     }
-    case CliMode::RunSourceFiles:
+    else
     {
         std::unique_ptr<lua_State, void (*)(lua_State*)> globalState(luaL_newstate(), lua_close);
         lua_State* L = globalState.get();
@@ -1057,10 +868,5 @@ int replMain(int argc, char** argv)
             coverageDump("coverage.out");
 
         return failed ? 1 : 0;
-    }
-    case CliMode::Unknown:
-    default:
-        LUAU_ASSERT(!"Unhandled cli mode.");
-        return 1;
     }
 }

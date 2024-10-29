@@ -2,6 +2,8 @@
 
 #include "Luau/Scope.h"
 
+LUAU_FASTFLAG(LuauSolverV2);
+
 namespace Luau
 {
 
@@ -36,6 +38,24 @@ std::optional<TypeId> Scope::lookup(Symbol sym) const
         return std::nullopt;
 }
 
+std::optional<std::pair<TypeId, Scope*>> Scope::lookupEx(DefId def)
+{
+    Scope* s = this;
+
+    while (true)
+    {
+        if (TypeId* it = s->lvalueTypes.find(def))
+            return std::pair{*it, s};
+        else if (TypeId* it = s->rvalueRefinements.find(def))
+            return std::pair{*it, s};
+
+        if (s->parent)
+            s = s->parent.get();
+        else
+            return std::nullopt;
+    }
+}
+
 std::optional<std::pair<Binding*, Scope*>> Scope::lookupEx(Symbol sym)
 {
     Scope* s = this;
@@ -53,19 +73,31 @@ std::optional<std::pair<Binding*, Scope*>> Scope::lookupEx(Symbol sym)
     }
 }
 
-// TODO: We might kill Scope::lookup(Symbol) once data flow is fully fleshed out with type states and control flow analysis.
-std::optional<TypeId> Scope::lookup(DefId def) const
+std::optional<TypeId> Scope::lookupUnrefinedType(DefId def) const
 {
     for (const Scope* current = this; current; current = current->parent.get())
     {
-        if (auto ty = current->dcrRefinements.find(def))
+        if (auto ty = current->lvalueTypes.find(def))
             return *ty;
     }
 
     return std::nullopt;
 }
 
-std::optional<TypeFun> Scope::lookupType(const Name& name)
+std::optional<TypeId> Scope::lookup(DefId def) const
+{
+    for (const Scope* current = this; current; current = current->parent.get())
+    {
+        if (auto ty = current->rvalueRefinements.find(def))
+            return *ty;
+        if (auto ty = current->lvalueTypes.find(def))
+            return *ty;
+    }
+
+    return std::nullopt;
+}
+
+std::optional<TypeFun> Scope::lookupType(const Name& name) const
 {
     const Scope* scope = this;
     while (true)
@@ -85,7 +117,7 @@ std::optional<TypeFun> Scope::lookupType(const Name& name)
     }
 }
 
-std::optional<TypeFun> Scope::lookupImportedType(const Name& moduleAlias, const Name& name)
+std::optional<TypeFun> Scope::lookupImportedType(const Name& moduleAlias, const Name& name) const
 {
     const Scope* scope = this;
     while (scope)
@@ -110,7 +142,7 @@ std::optional<TypeFun> Scope::lookupImportedType(const Name& moduleAlias, const 
     return std::nullopt;
 }
 
-std::optional<TypePackId> Scope::lookupPack(const Name& name)
+std::optional<TypePackId> Scope::lookupPack(const Name& name) const
 {
     const Scope* scope = this;
     while (true)
@@ -147,6 +179,36 @@ std::optional<Binding> Scope::linearSearchForBinding(const std::string& name, bo
     }
 
     return std::nullopt;
+}
+
+// Updates the `this` scope with the assignments from the `childScope` including ones that doesn't exist in `this`.
+void Scope::inheritAssignments(const ScopePtr& childScope)
+{
+    if (!FFlag::LuauSolverV2)
+        return;
+
+    for (const auto& [k, a] : childScope->lvalueTypes)
+        lvalueTypes[k] = a;
+}
+
+// Updates the `this` scope with the refinements from the `childScope` excluding ones that doesn't exist in `this`.
+void Scope::inheritRefinements(const ScopePtr& childScope)
+{
+    if (FFlag::LuauSolverV2)
+    {
+        for (const auto& [k, a] : childScope->rvalueRefinements)
+        {
+            if (lookup(NotNull{k}))
+                rvalueRefinements[k] = a;
+        }
+    }
+
+    for (const auto& [k, a] : childScope->refinements)
+    {
+        Symbol symbol = getBaseSymbol(k);
+        if (lookup(symbol))
+            refinements[k] = a;
+    }
 }
 
 bool subsumesStrict(Scope* left, Scope* right)

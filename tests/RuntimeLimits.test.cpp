@@ -13,21 +13,31 @@
 
 #include "doctest.h"
 
+#include <algorithm>
+
 using namespace Luau;
+
+LUAU_FASTINT(LuauTypeInferRecursionLimit)
+LUAU_FASTFLAG(LuauSolverV2)
 
 struct LimitFixture : BuiltinsFixture
 {
 #if defined(_NOOPT) || defined(_DEBUG)
-    ScopedFastInt LuauTypeInferRecursionLimit{"LuauTypeInferRecursionLimit", 100};
+    ScopedFastInt LuauTypeInferRecursionLimit{FInt::LuauTypeInferRecursionLimit, 100};
 #endif
 };
 
 template<typename T>
 bool hasError(const CheckResult& result, T* = nullptr)
 {
-    auto it = std::find_if(result.errors.begin(), result.errors.end(), [](const TypeError& a) {
-        return nullptr != get<T>(a);
-    });
+    auto it = std::find_if(
+        result.errors.begin(),
+        result.errors.end(),
+        [](const TypeError& a)
+        {
+            return nullptr != get<T>(a);
+        }
+    );
     return it != result.errors.end();
 }
 
@@ -35,6 +45,10 @@ TEST_SUITE_BEGIN("RuntimeLimits");
 
 TEST_CASE_FIXTURE(LimitFixture, "typescript_port_of_Result_type")
 {
+    ScopedFastFlag sff[] = {
+        {FFlag::LuauSolverV2, false},
+    };
+
     constexpr const char* src = R"LUA(
         --!strict
 
@@ -263,9 +277,8 @@ TEST_CASE_FIXTURE(LimitFixture, "typescript_port_of_Result_type")
     )LUA";
 
     CheckResult result = check(src);
-    CodeTooComplex ctc;
 
-    CHECK(hasError(result, &ctc));
+    CHECK(hasError<CodeTooComplex>(result));
 }
 
 TEST_SUITE_END();

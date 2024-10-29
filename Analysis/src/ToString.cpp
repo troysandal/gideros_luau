@@ -1,27 +1,43 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/ToString.h"
 
+#include "Luau/Common.h"
 #include "Luau/Constraint.h"
+#include "Luau/DenseHash.h"
 #include "Luau/Location.h"
 #include "Luau/Scope.h"
+#include "Luau/Set.h"
 #include "Luau/TxnLog.h"
 #include "Luau/TypeInfer.h"
 #include "Luau/TypePack.h"
 #include "Luau/Type.h"
+#include "Luau/TypeFunction.h"
 #include "Luau/VisitType.h"
+#include "Luau/TypeOrPack.h"
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
-LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution)
-LUAU_FASTFLAGVARIABLE(LuauFunctionReturnStringificationFixup, false)
+LUAU_FASTFLAG(LuauSolverV2)
 
 /*
- * Prefix generic typenames with gen-
- * Additionally, free types will be prefixed with free- and suffixed with their level.  eg free-a-4
- * Fair warning: Setting this will break a lot of Luau unit tests.
+ * Enables increasing levels of verbosity for Luau type names when stringifying.
+ * After level 2, test cases will break unpredictably because a pointer to their
+ * scope will be included in the stringification of generic and free types.
+ *
+ * Supported values:
+ *
+ * 0: Disabled, no changes.
+ *
+ * 1: Prefix free/generic types with free- and gen-, respectively. Also reveal
+ * hidden variadic tails. Display block count for local types.
+ *
+ * 2: Suffix free/generic types with their scope depth.
+ *
+ * 3: Suffix free/generic types with their scope pointer, if present.
  */
-LUAU_FASTFLAGVARIABLE(DebugLuauVerboseTypeNames, false)
+LUAU_FASTINTVARIABLE(DebugLuauVerboseTypeNames, 0)
 LUAU_FASTFLAGVARIABLE(DebugLuauToStringNoLexicalSort, false)
 
 namespace Luau
@@ -37,8 +53,8 @@ struct FindCyclicTypes final : TypeVisitor
     FindCyclicTypes& operator=(const FindCyclicTypes&) = delete;
 
     bool exhaustive = false;
-    std::unordered_set<TypeId> visited;
-    std::unordered_set<TypePackId> visitedPacks;
+    Luau::Set<TypeId> visited{{}};
+    Luau::Set<TypePackId> visitedPacks{{}};
     std::set<TypeId> cycles;
     std::set<TypePackId> cycleTPs;
 
@@ -54,17 +70,39 @@ struct FindCyclicTypes final : TypeVisitor
 
     bool visit(TypeId ty) override
     {
-        return visited.insert(ty).second;
+        return visited.insert(ty);
     }
 
     bool visit(TypePackId tp) override
     {
-        return visitedPacks.insert(tp).second;
+        return visitedPacks.insert(tp);
+    }
+
+    bool visit(TypeId ty, const FreeType& ft) override
+    {
+        if (!visited.insert(ty))
+            return false;
+
+        if (FFlag::LuauSolverV2)
+        {
+            // TODO: Replace these if statements with assert()s when we
+            // delete FFlag::LuauSolverV2.
+            //
+            // When the old solver is used, these pointers are always
+            // unused. When the new solver is used, they are never null.
+
+            if (ft.lowerBound)
+                traverse(ft.lowerBound);
+            if (ft.upperBound)
+                traverse(ft.upperBound);
+        }
+
+        return false;
     }
 
     bool visit(TypeId ty, const TableType& ttv) override
     {
-        if (!visited.insert(ty).second)
+        if (!visited.insert(ty))
             return false;
 
         if (ttv.name || ttv.syntheticName)
@@ -82,6 +120,11 @@ struct FindCyclicTypes final : TypeVisitor
     }
 
     bool visit(TypeId ty, const ClassType&) override
+    {
+        return false;
+    }
+
+    bool visit(TypeId, const PendingExpansionType&) override
     {
         return false;
     }
@@ -122,10 +165,12 @@ struct StringifierState
     ToStringOptions& opts;
     ToStringResult& result;
 
-    std::unordered_map<TypeId, std::string> cycleNames;
-    std::unordered_map<TypePackId, std::string> cycleTpNames;
-    std::unordered_set<void*> seen;
-    std::unordered_set<std::string> usedNames;
+    DenseHashMap<TypeId, std::string> cycleNames{{}};
+    DenseHashMap<TypePackId, std::string> cycleTpNames{{}};
+    Set<void*> seen{{}};
+    // `$$$` was chosen as the tombstone for `usedNames` since it is not a valid name syntactically and is relatively short for string comparison
+    // reasons.
+    DenseHashSet<std::string> usedNames{"$$$"};
     size_t indentation = 0;
 
     bool exhaustive;
@@ -144,7 +189,7 @@ struct StringifierState
     bool hasSeen(const void* tv)
     {
         void* ttv = const_cast<void*>(tv);
-        if (seen.find(ttv) != seen.end())
+        if (seen.contains(ttv))
             return true;
 
         seen.insert(ttv);
@@ -154,9 +199,9 @@ struct StringifierState
     void unsee(const void* tv)
     {
         void* ttv = const_cast<void*>(tv);
-        auto iter = seen.find(ttv);
-        if (iter != seen.end())
-            seen.erase(iter);
+
+        if (seen.contains(ttv))
+            seen.erase(ttv);
     }
 
     std::string getName(TypeId ty)
@@ -169,7 +214,7 @@ struct StringifierState
         for (int count = 0; count < 256; ++count)
         {
             std::string candidate = generateName(usedNames.size() + count);
-            if (!usedNames.count(candidate))
+            if (!usedNames.contains(candidate))
             {
                 usedNames.insert(candidate);
                 n = candidate;
@@ -192,7 +237,7 @@ struct StringifierState
         for (int count = 0; count < 256; ++count)
         {
             std::string candidate = generateName(previousNameIndex + count);
-            if (!usedNames.count(candidate))
+            if (!usedNames.contains(candidate))
             {
                 previousNameIndex += count;
                 usedNames.insert(candidate);
@@ -219,11 +264,15 @@ struct StringifierState
             ++count;
 
         emit(count);
-        emit("-");
-        char buffer[16];
-        uint32_t s = uint32_t(intptr_t(scope) & 0xFFFFFF);
-        snprintf(buffer, sizeof(buffer), "0x%x", s);
-        emit(buffer);
+
+        if (FInt::DebugLuauVerboseTypeNames >= 3)
+        {
+            emit("-");
+            char buffer[16];
+            uint32_t s = uint32_t(intptr_t(scope) & 0xFFFFFF);
+            snprintf(buffer, sizeof(buffer), "0x%x", s);
+            emit(buffer);
+        }
     }
 
     void emit(TypeLevel level)
@@ -301,18 +350,72 @@ struct TypeStringifier
             return;
         }
 
-        auto it = state.cycleNames.find(tv);
-        if (it != state.cycleNames.end())
+        if (auto p = state.cycleNames.find(tv))
         {
-            state.emit(it->second);
+            state.emit(*p);
             return;
         }
 
         Luau::visit(
-            [this, tv](auto&& t) {
+            [this, tv](auto&& t)
+            {
                 return (*this)(tv, t);
             },
-            tv->ty);
+            tv->ty
+        );
+    }
+
+    void emitKey(const std::string& name)
+    {
+        if (isIdentifier(name))
+            state.emit(name);
+        else
+        {
+            state.emit("[\"");
+            state.emit(escape(name));
+            state.emit("\"]");
+        }
+        state.emit(": ");
+    }
+
+    void _newStringify(const std::string& name, const Property& prop)
+    {
+        bool comma = false;
+        if (prop.isShared())
+        {
+            emitKey(name);
+            stringify(prop.type());
+            return;
+        }
+
+        if (prop.readTy)
+        {
+            state.emit("read ");
+            emitKey(name);
+            stringify(*prop.readTy);
+            comma = true;
+        }
+        if (prop.writeTy)
+        {
+            if (comma)
+            {
+                state.emit(",");
+                state.newline();
+            }
+
+            state.emit("write ");
+            emitKey(name);
+            stringify(*prop.writeTy);
+        }
+    }
+
+    void stringify(const std::string& name, const Property& prop)
+    {
+        if (FFlag::LuauSolverV2)
+            return _newStringify(name, prop);
+
+        emitKey(name);
+        stringify(prop.type());
     }
 
     void stringify(TypePackId tp);
@@ -364,17 +467,51 @@ struct TypeStringifier
             state.emit(">");
     }
 
-    void operator()(TypeId ty, const Unifiable::Free& ftv)
+    void operator()(TypeId ty, const FreeType& ftv)
     {
         state.result.invalid = true;
-        if (FFlag::DebugLuauVerboseTypeNames)
+
+        // TODO: ftv.lowerBound and ftv.upperBound should always be non-nil when
+        // the new solver is used. This can be replaced with an assert.
+        if (FFlag::LuauSolverV2 && ftv.lowerBound && ftv.upperBound)
+        {
+            const TypeId lowerBound = follow(ftv.lowerBound);
+            const TypeId upperBound = follow(ftv.upperBound);
+            if (get<NeverType>(lowerBound) && get<UnknownType>(upperBound))
+            {
+                state.emit("'");
+                state.emit(state.getName(ty));
+            }
+            else
+            {
+                state.emit("(");
+                if (!get<NeverType>(lowerBound))
+                {
+                    stringify(lowerBound);
+                    state.emit(" <: ");
+                }
+                state.emit("'");
+                state.emit(state.getName(ty));
+
+                if (!get<UnknownType>(upperBound))
+                {
+                    state.emit(" <: ");
+                    stringify(upperBound);
+                }
+                state.emit(")");
+            }
+            return;
+        }
+
+        if (FInt::DebugLuauVerboseTypeNames >= 1)
             state.emit("free-");
+
         state.emit(state.getName(ty));
 
-        if (FFlag::DebugLuauVerboseTypeNames)
+        if (FInt::DebugLuauVerboseTypeNames >= 2)
         {
             state.emit("-");
-            if (FFlag::DebugLuauDeferredConstraintResolution)
+            if (FFlag::LuauSolverV2)
                 state.emitLevel(ftv.scope);
             else
                 state.emit(ftv.level);
@@ -388,6 +525,9 @@ struct TypeStringifier
 
     void operator()(TypeId ty, const GenericType& gtv)
     {
+        if (FInt::DebugLuauVerboseTypeNames >= 1)
+            state.emit("gen-");
+
         if (gtv.explicitName)
         {
             state.usedNames.insert(gtv.name);
@@ -397,10 +537,10 @@ struct TypeStringifier
         else
             state.emit(state.getName(ty));
 
-        if (FFlag::DebugLuauVerboseTypeNames)
+        if (FInt::DebugLuauVerboseTypeNames >= 2)
         {
             state.emit("-");
-            if (FFlag::DebugLuauDeferredConstraintResolution)
+            if (FFlag::LuauSolverV2)
                 state.emitLevel(gtv.scope);
             else
                 state.emit(gtv.level);
@@ -439,6 +579,9 @@ struct TypeStringifier
             return;
         case PrimitiveType::Thread:
             state.emit("thread");
+            return;
+        case PrimitiveType::Buffer:
+            state.emit("buffer");
             return;
         case PrimitiveType::Function:
             state.emit("function");
@@ -498,6 +641,12 @@ struct TypeStringifier
                 stringify(*it);
             }
             state.emit(">");
+        }
+
+        if (FFlag::LuauSolverV2)
+        {
+            if (ftv.isCheckedFunction)
+                state.emit("@checked ");
         }
 
         state.emit("(");
@@ -577,16 +726,33 @@ struct TypeStringifier
 
         std::string openbrace = "@@@";
         std::string closedbrace = "@@@?!";
-        switch (state.opts.hideTableKind ? TableState::Unsealed : ttv.state)
+        switch (state.opts.hideTableKind ? (FFlag::LuauSolverV2 ? TableState::Sealed : TableState::Unsealed) : ttv.state)
         {
         case TableState::Sealed:
-            state.result.invalid = true;
-            openbrace = "{|";
-            closedbrace = "|}";
+            if (FFlag::LuauSolverV2)
+            {
+                openbrace = "{";
+                closedbrace = "}";
+            }
+            else
+            {
+                state.result.invalid = true;
+                openbrace = "{|";
+                closedbrace = "|}";
+            }
             break;
         case TableState::Unsealed:
-            openbrace = "{";
-            closedbrace = "}";
+            if (FFlag::LuauSolverV2)
+            {
+                state.result.invalid = true;
+                openbrace = "{|";
+                closedbrace = "|}";
+            }
+            else
+            {
+                openbrace = "{";
+                closedbrace = "}";
+            }
             break;
         case TableState::Free:
             state.result.invalid = true;
@@ -647,16 +813,8 @@ struct TypeStringifier
                 break;
             }
 
-            if (isIdentifier(name))
-                state.emit(name);
-            else
-            {
-                state.emit("[\"");
-                state.emit(escape(name));
-                state.emit("\"]");
-            }
-            state.emit(": ");
-            stringify(prop.type);
+            stringify(name, prop);
+
             comma = true;
             ++index;
         }
@@ -698,6 +856,11 @@ struct TypeStringifier
         state.emit("any");
     }
 
+    void operator()(TypeId, const NoRefineType&)
+    {
+        state.emit("*no-refine*");
+    }
+
     void operator()(TypeId, const UnionType& uv)
     {
         if (state.hasSeen(&uv))
@@ -727,7 +890,7 @@ struct TypeStringifier
 
             std::string saved = std::move(state.result.name);
 
-            bool needParens = !state.cycleNames.count(el) && (get<IntersectionType>(el) || get<FunctionType>(el));
+            bool needParens = !state.cycleNames.contains(el) && (get<IntersectionType>(el) || get<FunctionType>(el));
 
             if (needParens)
                 state.emit("(");
@@ -750,11 +913,15 @@ struct TypeStringifier
             state.emit("(");
 
         bool first = true;
+        bool shouldPlaceOnNewlines = results.size() > state.opts.compositeTypesSingleLineLimit;
         for (std::string& ss : results)
         {
             if (!first)
             {
-                state.newline();
+                if (shouldPlaceOnNewlines)
+                    state.newline();
+                else
+                    state.emit(" ");
                 state.emit("| ");
             }
             state.emit(ss);
@@ -774,7 +941,7 @@ struct TypeStringifier
         }
     }
 
-    void operator()(TypeId, const IntersectionType& uv)
+    void operator()(TypeId ty, const IntersectionType& uv)
     {
         if (state.hasSeen(&uv))
         {
@@ -790,7 +957,7 @@ struct TypeStringifier
 
             std::string saved = std::move(state.result.name);
 
-            bool needParens = !state.cycleNames.count(el) && (get<UnionType>(el) || get<FunctionType>(el));
+            bool needParens = !state.cycleNames.contains(el) && (get<UnionType>(el) || get<FunctionType>(el));
 
             if (needParens)
                 state.emit("(");
@@ -810,11 +977,15 @@ struct TypeStringifier
             std::sort(results.begin(), results.end());
 
         bool first = true;
+        bool shouldPlaceOnNewlines = results.size() > state.opts.compositeTypesSingleLineLimit || isOverloadedFunction(ty);
         for (std::string& ss : results)
         {
             if (!first)
             {
-                state.newline();
+                if (shouldPlaceOnNewlines)
+                    state.newline();
+                else
+                    state.emit(" ");
                 state.emit("& ");
             }
             state.emit(ss);
@@ -830,8 +1001,15 @@ struct TypeStringifier
 
     void operator()(TypeId, const LazyType& ltv)
     {
-        state.result.invalid = true;
-        state.emit("lazy?");
+        if (TypeId unwrapped = ltv.unwrapped.load())
+        {
+            stringify(unwrapped);
+        }
+        else
+        {
+            state.result.invalid = true;
+            state.emit("lazy?");
+        }
     }
 
     void operator()(TypeId, const UnknownType& ttv)
@@ -859,6 +1037,37 @@ struct TypeStringifier
 
         if (parens)
             state.emit(")");
+    }
+
+    void operator()(TypeId, const TypeFunctionInstanceType& tfitv)
+    {
+        if (tfitv.userFuncName) // Special stringification for user-defined type functions
+            state.emit(tfitv.userFuncName->value);
+        else
+            state.emit(tfitv.function->name);
+
+        state.emit("<");
+
+        bool comma = false;
+        for (TypeId ty : tfitv.typeArguments)
+        {
+            if (comma)
+                state.emit(", ");
+
+            comma = true;
+            stringify(ty);
+        }
+
+        for (TypePackId tp : tfitv.packArguments)
+        {
+            if (comma)
+                state.emit(", ");
+
+            comma = true;
+            stringify(tp);
+        }
+
+        state.emit(">");
     }
 };
 
@@ -900,18 +1109,19 @@ struct TypePackStringifier
             return;
         }
 
-        auto it = state.cycleTpNames.find(tp);
-        if (it != state.cycleTpNames.end())
+        if (auto p = state.cycleTpNames.find(tp))
         {
-            state.emit(it->second);
+            state.emit(*p);
             return;
         }
 
         Luau::visit(
-            [this, tp](auto&& t) {
+            [this, tp](auto&& t)
+            {
                 return (*this)(tp, t);
             },
-            tp->ty);
+            tp->ty
+        );
     }
 
     void operator()(TypePackId, const TypePack& tp)
@@ -947,7 +1157,7 @@ struct TypePackStringifier
         if (tp.tail && !isEmpty(*tp.tail))
         {
             TypePackId tail = follow(*tp.tail);
-            if (auto vtp = get<VariadicTypePack>(tail); !vtp || (!FFlag::DebugLuauVerboseTypeNames && !vtp->hidden))
+            if (auto vtp = get<VariadicTypePack>(tail); !vtp || (FInt::DebugLuauVerboseTypeNames < 1 && !vtp->hidden))
             {
                 if (first)
                     first = false;
@@ -970,7 +1180,7 @@ struct TypePackStringifier
     void operator()(TypePackId, const VariadicTypePack& pack)
     {
         state.emit("...");
-        if (FFlag::DebugLuauVerboseTypeNames && pack.hidden)
+        if (FInt::DebugLuauVerboseTypeNames >= 1 && pack.hidden)
         {
             state.emit("*hidden*");
         }
@@ -979,6 +1189,9 @@ struct TypePackStringifier
 
     void operator()(TypePackId tp, const GenericTypePack& pack)
     {
+        if (FInt::DebugLuauVerboseTypeNames >= 1)
+            state.emit("gen-");
+
         if (pack.explicitName)
         {
             state.usedNames.insert(pack.name);
@@ -990,28 +1203,29 @@ struct TypePackStringifier
             state.emit(state.getName(tp));
         }
 
-        if (FFlag::DebugLuauVerboseTypeNames)
+        if (FInt::DebugLuauVerboseTypeNames >= 2)
         {
             state.emit("-");
-            if (FFlag::DebugLuauDeferredConstraintResolution)
+            if (FFlag::LuauSolverV2)
                 state.emitLevel(pack.scope);
             else
                 state.emit(pack.level);
         }
+
         state.emit("...");
     }
 
     void operator()(TypePackId tp, const FreeTypePack& pack)
     {
         state.result.invalid = true;
-        if (FFlag::DebugLuauVerboseTypeNames)
+        if (FInt::DebugLuauVerboseTypeNames >= 1)
             state.emit("free-");
         state.emit(state.getName(tp));
 
-        if (FFlag::DebugLuauVerboseTypeNames)
+        if (FInt::DebugLuauVerboseTypeNames >= 2)
         {
             state.emit("-");
-            if (FFlag::DebugLuauDeferredConstraintResolution)
+            if (FFlag::LuauSolverV2)
                 state.emitLevel(pack.scope);
             else
                 state.emit(pack.level);
@@ -1031,6 +1245,33 @@ struct TypePackStringifier
         state.emit(btp.index);
         state.emit("*");
     }
+
+    void operator()(TypePackId, const TypeFunctionInstanceTypePack& tfitp)
+    {
+        state.emit(tfitp.function->name);
+        state.emit("<");
+
+        bool comma = false;
+        for (TypeId p : tfitp.typeArguments)
+        {
+            if (comma)
+                state.emit(", ");
+
+            comma = true;
+            stringify(p);
+        }
+
+        for (TypePackId p : tfitp.packArguments)
+        {
+            if (comma)
+                state.emit(", ");
+
+            comma = true;
+            stringify(p);
+        }
+
+        state.emit(">");
+    }
 };
 
 void TypeStringifier::stringify(TypePackId tp)
@@ -1045,8 +1286,13 @@ void TypeStringifier::stringify(TypePackId tpid, const std::vector<std::optional
     tps.stringify(tpid);
 }
 
-static void assignCycleNames(const std::set<TypeId>& cycles, const std::set<TypePackId>& cycleTPs,
-    std::unordered_map<TypeId, std::string>& cycleNames, std::unordered_map<TypePackId, std::string>& cycleTpNames, bool exhaustive)
+static void assignCycleNames(
+    const std::set<TypeId>& cycles,
+    const std::set<TypePackId>& cycleTPs,
+    DenseHashMap<TypeId, std::string>& cycleNames,
+    DenseHashMap<TypePackId, std::string>& cycleTpNames,
+    bool exhaustive
+)
 {
     int nextIndex = 1;
 
@@ -1058,9 +1304,14 @@ static void assignCycleNames(const std::set<TypeId>& cycles, const std::set<Type
         if (auto ttv = get<TableType>(follow(cycleTy)); !exhaustive && ttv && (ttv->syntheticName || ttv->name))
         {
             // If we have a cycle type in type parameters, assign a cycle name for this named table
-            if (std::find_if(ttv->instantiatedTypeParams.begin(), ttv->instantiatedTypeParams.end(), [&](auto&& el) {
-                    return cycles.count(follow(el));
-                }) != ttv->instantiatedTypeParams.end())
+            if (std::find_if(
+                    ttv->instantiatedTypeParams.begin(),
+                    ttv->instantiatedTypeParams.end(),
+                    [&](auto&& el)
+                    {
+                        return cycles.count(follow(el));
+                    }
+                ) != ttv->instantiatedTypeParams.end())
                 cycleNames[cycleTy] = ttv->name ? *ttv->name : *ttv->syntheticName;
 
             continue;
@@ -1140,9 +1391,8 @@ ToStringResult toStringDetailed(TypeId ty, ToStringOptions& opts)
      *
      * t1 where t1 = the_whole_root_type
      */
-    auto it = state.cycleNames.find(ty);
-    if (it != state.cycleNames.end())
-        state.emit(it->second);
+    if (auto p = state.cycleNames.find(ty))
+        state.emit(*p);
     else
         tvs.stringify(ty);
 
@@ -1155,9 +1405,14 @@ ToStringResult toStringDetailed(TypeId ty, ToStringOptions& opts)
     state.exhaustive = true;
 
     std::vector<std::pair<TypeId, std::string>> sortedCycleNames{state.cycleNames.begin(), state.cycleNames.end()};
-    std::sort(sortedCycleNames.begin(), sortedCycleNames.end(), [](const auto& a, const auto& b) {
-        return a.second < b.second;
-    });
+    std::sort(
+        sortedCycleNames.begin(),
+        sortedCycleNames.end(),
+        [](const auto& a, const auto& b)
+        {
+            return a.second < b.second;
+        }
+    );
 
     bool semi = false;
     for (const auto& [cycleTy, name] : sortedCycleNames)
@@ -1168,18 +1423,25 @@ ToStringResult toStringDetailed(TypeId ty, ToStringOptions& opts)
         state.emit(name);
         state.emit(" = ");
         Luau::visit(
-            [&tvs, cycleTy = cycleTy](auto&& t) {
+            [&tvs, cycleTy = cycleTy](auto&& t)
+            {
                 return tvs(cycleTy, t);
             },
-            cycleTy->ty);
+            cycleTy->ty
+        );
 
         semi = true;
     }
 
     std::vector<std::pair<TypePackId, std::string>> sortedCycleTpNames(state.cycleTpNames.begin(), state.cycleTpNames.end());
-    std::sort(sortedCycleTpNames.begin(), sortedCycleTpNames.end(), [](const auto& a, const auto& b) {
-        return a.second < b.second;
-    });
+    std::sort(
+        sortedCycleTpNames.begin(),
+        sortedCycleTpNames.end(),
+        [](const auto& a, const auto& b)
+        {
+            return a.second < b.second;
+        }
+    );
 
     TypePackStringifier tps{state};
 
@@ -1191,10 +1453,12 @@ ToStringResult toStringDetailed(TypeId ty, ToStringOptions& opts)
         state.emit(name);
         state.emit(" = ");
         Luau::visit(
-            [&tps, cycleTy = cycleTp](auto&& t) {
+            [&tps, cycleTy = cycleTp](auto&& t)
+            {
                 return tps(cycleTy, t);
             },
-            cycleTp->ty);
+            cycleTp->ty
+        );
 
         semi = true;
     }
@@ -1234,13 +1498,12 @@ ToStringResult toStringDetailed(TypePackId tp, ToStringOptions& opts)
      *
      * t1 where t1 = the_whole_root_type
      */
-    auto it = state.cycleTpNames.find(tp);
-    if (it != state.cycleTpNames.end())
-        state.emit(it->second);
+    if (auto p = state.cycleTpNames.find(tp))
+        state.emit(*p);
     else
         tvs.stringify(tp);
 
-    if (!cycles.empty())
+    if (!cycles.empty() || !cycleTPs.empty())
     {
         result.cycle = true;
         state.emit(" where ");
@@ -1249,9 +1512,14 @@ ToStringResult toStringDetailed(TypePackId tp, ToStringOptions& opts)
     state.exhaustive = true;
 
     std::vector<std::pair<TypeId, std::string>> sortedCycleNames{state.cycleNames.begin(), state.cycleNames.end()};
-    std::sort(sortedCycleNames.begin(), sortedCycleNames.end(), [](const auto& a, const auto& b) {
-        return a.second < b.second;
-    });
+    std::sort(
+        sortedCycleNames.begin(),
+        sortedCycleNames.end(),
+        [](const auto& a, const auto& b)
+        {
+            return a.second < b.second;
+        }
+    );
 
     bool semi = false;
     for (const auto& [cycleTy, name] : sortedCycleNames)
@@ -1262,10 +1530,42 @@ ToStringResult toStringDetailed(TypePackId tp, ToStringOptions& opts)
         state.emit(name);
         state.emit(" = ");
         Luau::visit(
-            [&tvs, cycleTy = cycleTy](auto t) {
+            [&tvs, cycleTy = cycleTy](auto t)
+            {
                 return tvs(cycleTy, t);
             },
-            cycleTy->ty);
+            cycleTy->ty
+        );
+
+        semi = true;
+    }
+
+    std::vector<std::pair<TypePackId, std::string>> sortedCycleTpNames{state.cycleTpNames.begin(), state.cycleTpNames.end()};
+    std::sort(
+        sortedCycleTpNames.begin(),
+        sortedCycleTpNames.end(),
+        [](const auto& a, const auto& b)
+        {
+            return a.second < b.second;
+        }
+    );
+
+    TypePackStringifier tps{tvs.state};
+
+    for (const auto& [cycleTp, name] : sortedCycleTpNames)
+    {
+        if (semi)
+            state.emit(" ; ");
+
+        state.emit(name);
+        state.emit(" = ");
+        Luau::visit(
+            [&tps, cycleTp = cycleTp](auto t)
+            {
+                return tps(cycleTp, t);
+            },
+            cycleTp->ty
+        );
 
         semi = true;
     }
@@ -1451,12 +1751,26 @@ std::string generateName(size_t i)
     return n;
 }
 
+std::string toStringVector(const std::vector<TypeId>& types, ToStringOptions& opts)
+{
+    std::string s;
+    for (TypeId ty : types)
+    {
+        if (!s.empty())
+            s += ", ";
+        s += toString(ty, opts);
+    }
+    return s;
+}
+
 std::string toString(const Constraint& constraint, ToStringOptions& opts)
 {
-    auto go = [&opts](auto&& c) -> std::string {
+    auto go = [&opts](auto&& c) -> std::string
+    {
         using T = std::decay_t<decltype(c)>;
 
-        auto tos = [&opts](auto&& a) {
+        auto tos = [&opts](auto&& a)
+        {
             return toString(a, opts);
         };
 
@@ -1470,7 +1784,7 @@ std::string toString(const Constraint& constraint, ToStringOptions& opts)
         {
             std::string subStr = tos(c.subPack);
             std::string superStr = tos(c.superPack);
-            return subStr + " <: " + superStr;
+            return subStr + " <...: " + superStr;
         }
         else if constexpr (std::is_same_v<T, GeneralizationConstraint>)
         {
@@ -1478,33 +1792,12 @@ std::string toString(const Constraint& constraint, ToStringOptions& opts)
             std::string superStr = tos(c.sourceType);
             return subStr + " ~ gen " + superStr;
         }
-        else if constexpr (std::is_same_v<T, InstantiationConstraint>)
-        {
-            std::string subStr = tos(c.subType);
-            std::string superStr = tos(c.superType);
-            return subStr + " ~ inst " + superStr;
-        }
-        else if constexpr (std::is_same_v<T, UnaryConstraint>)
-        {
-            std::string resultStr = tos(c.resultType);
-            std::string operandStr = tos(c.operandType);
-
-            return resultStr + " ~ Unary<" + toString(c.op) + ", " + operandStr + ">";
-        }
-        else if constexpr (std::is_same_v<T, BinaryConstraint>)
-        {
-            std::string resultStr = tos(c.resultType);
-            std::string leftStr = tos(c.leftType);
-            std::string rightStr = tos(c.rightType);
-
-            return resultStr + " ~ Binary<" + toString(c.op) + ", " + leftStr + ", " + rightStr + ">";
-        }
         else if constexpr (std::is_same_v<T, IterableConstraint>)
         {
             std::string iteratorStr = tos(c.iterator);
-            std::string variableStr = tos(c.variables);
+            std::string variableStr = toStringVector(c.variables, opts);
 
-            return variableStr + " ~ Iterate<" + iteratorStr + ">";
+            return variableStr + " ~ iterate " + iteratorStr;
         }
         else if constexpr (std::is_same_v<T, NameConstraint>)
         {
@@ -1518,42 +1811,51 @@ std::string toString(const Constraint& constraint, ToStringOptions& opts)
         }
         else if constexpr (std::is_same_v<T, FunctionCallConstraint>)
         {
-            return "call " + tos(c.fn) + " with { result = " + tos(c.result) + " }";
+            return "call " + tos(c.fn) + "( " + tos(c.argsPack) + " )" + " with { result = " + tos(c.result) + " }";
+        }
+        else if constexpr (std::is_same_v<T, FunctionCheckConstraint>)
+        {
+            return "function_check " + tos(c.fn) + " " + tos(c.argsPack);
         }
         else if constexpr (std::is_same_v<T, PrimitiveTypeConstraint>)
         {
-            return tos(c.resultType) + " ~ prim " + tos(c.expectedType) + ", " + tos(c.singletonType) + ", " + tos(c.multitonType);
+            if (c.expectedType)
+                return "prim " + tos(c.freeType) + "[expected: " + tos(*c.expectedType) + "] as " + tos(c.primitiveType);
+            else
+                return "prim " + tos(c.freeType) + " as " + tos(c.primitiveType);
         }
         else if constexpr (std::is_same_v<T, HasPropConstraint>)
         {
-            return tos(c.resultType) + " ~ hasProp " + tos(c.subjectType) + ", \"" + c.prop + "\"";
+            return tos(c.resultType) + " ~ hasProp " + tos(c.subjectType) + ", \"" + c.prop + "\" ctx=" + std::to_string(int(c.context));
         }
-        else if constexpr (std::is_same_v<T, SetPropConstraint>)
+        else if constexpr (std::is_same_v<T, HasIndexerConstraint>)
         {
-            const std::string pathStr = c.path.size() == 1 ? "\"" + c.path[0] + "\"" : "[\"" + join(c.path, "\", \"") + "\"]";
-            return tos(c.resultType) + " ~ setProp " + tos(c.subjectType) + ", " + pathStr + " " + tos(c.propType);
+            return tos(c.resultType) + " ~ hasIndexer " + tos(c.subjectType) + " " + tos(c.indexType);
         }
-        else if constexpr (std::is_same_v<T, SetIndexerConstraint>)
-        {
-            return tos(c.resultType) + " ~ setIndexer " + tos(c.subjectType) + " [ " + tos(c.indexType) + " ] " + tos(c.propType);
-        }
-        else if constexpr (std::is_same_v<T, SingletonOrTopTypeConstraint>)
-        {
-            std::string result = tos(c.resultType);
-            std::string discriminant = tos(c.discriminantType);
-
-            if (c.negated)
-                return result + " ~ if isSingleton D then ~D else unknown where D = " + discriminant;
-            else
-                return result + " ~ if isSingleton D then D else unknown where D = " + discriminant;
-        }
+        else if constexpr (std::is_same_v<T, AssignPropConstraint>)
+            return "assignProp " + tos(c.lhsType) + " " + c.propName + " " + tos(c.rhsType);
+        else if constexpr (std::is_same_v<T, AssignIndexConstraint>)
+            return "assignIndex " + tos(c.lhsType) + " " + tos(c.indexType) + " " + tos(c.rhsType);
         else if constexpr (std::is_same_v<T, UnpackConstraint>)
-            return tos(c.resultPack) + " ~ unpack " + tos(c.sourcePack);
+            return toStringVector(c.resultPack, opts) + " ~ ...unpack " + tos(c.sourcePack);
+        else if constexpr (std::is_same_v<T, ReduceConstraint>)
+            return "reduce " + tos(c.ty);
+        else if constexpr (std::is_same_v<T, ReducePackConstraint>)
+        {
+            return "reduce " + tos(c.tp);
+        }
+        else if constexpr (std::is_same_v<T, EqualityConstraint>)
+            return "equality: " + tos(c.resultType) + " ~ " + tos(c.assignmentType);
         else
             static_assert(always_false_v<T>, "Non-exhaustive constraint switch");
     };
 
     return visit(go, constraint.c);
+}
+
+std::string toString(const Constraint& constraint)
+{
+    return toString(constraint, ToStringOptions{});
 }
 
 std::string dump(const Constraint& c)
@@ -1603,9 +1905,30 @@ std::string toString(const Position& position)
     return "{ line = " + std::to_string(position.line) + ", col = " + std::to_string(position.column) + " }";
 }
 
-std::string toString(const Location& location)
+std::string toString(const Location& location, int offset, bool useBegin)
 {
-    return "Location { " + toString(location.begin) + ", " + toString(location.end) + " }";
+    return "(" + std::to_string(location.begin.line + offset) + ", " + std::to_string(location.begin.column + offset) + ") - (" +
+           std::to_string(location.end.line + offset) + ", " + std::to_string(location.end.column + offset) + ")";
+}
+
+std::string toString(const TypeOrPack& tyOrTp, ToStringOptions& opts)
+{
+    if (const TypeId* ty = get<TypeId>(tyOrTp))
+        return toString(*ty, opts);
+    else if (const TypePackId* tp = get<TypePackId>(tyOrTp))
+        return toString(*tp, opts);
+    else
+        LUAU_UNREACHABLE();
+}
+
+std::string dump(const TypeOrPack& tyOrTp)
+{
+    ToStringOptions opts;
+    opts.exhaustive = true;
+    opts.functionTypeArguments = true;
+    std::string s = toString(tyOrTp, opts);
+    printf("%s\n", s.c_str());
+    return s;
 }
 
 } // namespace Luau

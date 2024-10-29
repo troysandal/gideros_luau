@@ -38,9 +38,9 @@ INCLUDEPATH += \
         ../libgvfs
 
 SOURCES += \
-         $$expand(lapi laux lbaselib lbitlib lbuiltins lcorolib ldblib ldebug ldo lfunc lgc lgcdebug linit lint64lib liolib lmathlib lmem lnumprint lobject loslib lperf lstate lstring lstrlib \
+         $$expand(lapi laux lbaselib lbitlib lbuffer lbuflib lbuiltins lcorolib ldblib ldebug ldo lfunc lgc lgcdebug linit lint64lib liolib lmathlib lmem lnumprint lobject loslib lperf lstate lstring lstrlib \
          ltable ltablib ltm ludata lutf8lib lvmexecute lvmload lvmutils,VM/src/,.cpp) \
-         $$expand(Builtins BuiltinFolding BytecodeBuilder ConstantFolding Compiler CostModel lcode PseudoCode TableShape ValueTracking,Compiler/src/,.cpp) \
+         $$expand(Builtins BuiltinFolding BytecodeBuilder ConstantFolding Compiler CostModel lcode PseudoCode TableShape Types ValueTracking,Compiler/src/,.cpp) \
          $$expand(Ast Confusables Lexer Location Parser StringUtils TimeTrace,Ast/src/,.cpp)
 
 win32 {

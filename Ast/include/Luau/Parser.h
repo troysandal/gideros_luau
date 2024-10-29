@@ -55,7 +55,12 @@ class Parser
 {
 public:
     static ParseResult parse(
-        const char* buffer, std::size_t bufferSize, AstNameTable& names, Allocator& allocator, ParseOptions options = ParseOptions());
+        const char* buffer,
+        std::size_t bufferSize,
+        AstNameTable& names,
+        Allocator& allocator,
+        ParseOptions options = ParseOptions()
+    );
 
 private:
     struct Name;
@@ -82,8 +87,8 @@ private:
     // if exp then block {elseif exp then block} [else block] end |
     // for Name `=' exp `,' exp [`,' exp] do block end |
     // for namelist in explist do block end |
-    // function funcname funcbody |
-    // local function Name funcbody |
+    // [attributes] function funcname funcbody |
+    // [attributes] local function Name funcbody |
     // local namelist [`=' explist]
     // laststat ::= return [explist] | break
     AstStat* parseStat();
@@ -114,23 +119,40 @@ private:
     AstExpr* parseFunctionName(Location start, bool& hasself, AstName& debugname);
 
     // function funcname funcbody
-    AstStat* parseFunctionStat();
+    LUAU_FORCEINLINE AstStat* parseFunctionStat(const AstArray<AstAttr*>& attributes = {nullptr, 0});
+
+    std::pair<bool, AstAttr::Type> validateAttribute(const char* attributeName, const TempVector<AstAttr*>& attributes);
+
+    // attribute ::= '@' NAME
+    void parseAttribute(TempVector<AstAttr*>& attribute);
+
+    // attributes ::= {attribute}
+    AstArray<AstAttr*> parseAttributes();
+
+    // attributes local function Name funcbody
+    // attributes function funcname funcbody
+    // attributes `declare function' Name`(' [parlist] `)' [`:` Type]
+    // declare Name '{' Name ':' attributes `(' [parlist] `)' [`:` Type] '}'
+    AstStat* parseAttributeStat();
 
     // local function Name funcbody |
     // local namelist [`=' explist]
-    AstStat* parseLocal();
+    AstStat* parseLocal(const AstArray<AstAttr*>& attributes);
 
     // return [explist]
     AstStat* parseReturn();
 
-    // type Name `=' typeannotation
+    // type Name `=' Type
     AstStat* parseTypeAlias(const Location& start, bool exported);
+
+    // type function Name ... end
+    AstStat* parseTypeFunction(const Location& start, bool exported);
 
     AstDeclaredClassProp parseDeclaredClassMethod();
 
-    // `declare global' Name: typeannotation |
-    // `declare function' Name`(' [parlist] `)' [`:` TypeAnnotation]
-    AstStat* parseDeclaration(const Location& start);
+    // `declare global' Name: Type |
+    // `declare function' Name`(' [parlist] `)' [`:` Type]
+    AstStat* parseDeclaration(const Location& start, const AstArray<AstAttr*>& attributes);
 
     // varlist `=' explist
     AstStat* parseAssignment(AstExpr* initial);
@@ -140,29 +162,34 @@ private:
 
     std::pair<AstLocal*, AstArray<AstLocal*>> prepareFunctionArguments(const Location& start, bool hasself, const TempVector<Binding>& args);
 
-    // funcbodyhead ::= `(' [namelist [`,' `...'] | `...'] `)' [`:` TypeAnnotation]
+    // funcbodyhead ::= `(' [namelist [`,' `...'] | `...'] `)' [`:` Type]
     // funcbody ::= funcbodyhead block end
     std::pair<AstExprFunction*, AstLocal*> parseFunctionBody(
-        bool hasself, const Lexeme& matchFunction, const AstName& debugname, const Name* localName);
+        bool hasself,
+        const Lexeme& matchFunction,
+        const AstName& debugname,
+        const Name* localName,
+        const AstArray<AstAttr*>& attributes
+    );
 
     // explist ::= {exp `,'} exp
     void parseExprList(TempVector<AstExpr*>& result);
 
-    // binding ::= Name [`:` TypeAnnotation]
+    // binding ::= Name [`:` Type]
     Binding parseBinding();
 
     // bindinglist ::= (binding | `...') {`,' bindinglist}
     // Returns the location of the vararg ..., or std::nullopt if the function is not vararg.
     std::tuple<bool, Location, AstTypePack*> parseBindingList(TempVector<Binding>& result, bool allowDot3 = false);
 
-    AstType* parseOptionalTypeAnnotation();
+    AstType* parseOptionalType();
 
-    // TypeList ::= TypeAnnotation [`,' TypeList]
-    // ReturnType ::= TypeAnnotation | `(' TypeList `)'
-    // TableProp ::= Name `:' TypeAnnotation
-    // TableIndexer ::= `[' TypeAnnotation `]' `:' TypeAnnotation
+    // TypeList ::= Type [`,' TypeList]
+    // ReturnType ::= Type | `(' TypeList `)'
+    // TableProp ::= Name `:' Type
+    // TableIndexer ::= `[' Type `]' `:' Type
     // PropList ::= (TableProp | TableIndexer) [`,' PropList]
-    // TypeAnnotation
+    // Type
     //      ::= Name
     //      |   `nil`
     //      |   `{' [PropList] `}'
@@ -171,24 +198,32 @@ private:
     // Returns the variadic annotation, if it exists.
     AstTypePack* parseTypeList(TempVector<AstType*>& result, TempVector<std::optional<AstArgumentName>>& resultNames);
 
-    std::optional<AstTypeList> parseOptionalReturnTypeAnnotation();
-    std::pair<Location, AstTypeList> parseReturnTypeAnnotation();
+    std::optional<AstTypeList> parseOptionalReturnType();
+    std::pair<Location, AstTypeList> parseReturnType();
 
-    AstTableIndexer* parseTableIndexerAnnotation();
+    AstTableIndexer* parseTableIndexer(AstTableAccess access, std::optional<Location> accessLocation);
 
-    AstTypeOrPack parseFunctionTypeAnnotation(bool allowPack);
-    AstType* parseFunctionTypeAnnotationTail(const Lexeme& begin, AstArray<AstGenericType> generics, AstArray<AstGenericTypePack> genericPacks,
-        AstArray<AstType*>& params, AstArray<std::optional<AstArgumentName>>& paramNames, AstTypePack* varargAnnotation);
+    AstTypeOrPack parseFunctionType(bool allowPack, const AstArray<AstAttr*>& attributes);
+    AstType* parseFunctionTypeTail(
+        const Lexeme& begin,
+        const AstArray<AstAttr*>& attributes,
+        AstArray<AstGenericType> generics,
+        AstArray<AstGenericTypePack> genericPacks,
+        AstArray<AstType*> params,
+        AstArray<std::optional<AstArgumentName>> paramNames,
+        AstTypePack* varargAnnotation
+    );
 
-    AstType* parseTableTypeAnnotation();
-    AstTypeOrPack parseSimpleTypeAnnotation(bool allowPack);
+    AstType* parseTableType(bool inDeclarationContext = false);
+    AstTypeOrPack parseSimpleType(bool allowPack, bool inDeclarationContext = false);
 
-    AstTypeOrPack parseTypeOrPackAnnotation();
-    AstType* parseTypeAnnotation(TempVector<AstType*>& parts, const Location& begin);
-    AstType* parseTypeAnnotation();
+    AstTypeOrPack parseTypeOrPack();
+    AstType* parseType(bool inDeclarationContext = false);
 
-    AstTypePack* parseTypePackAnnotation();
-    AstTypePack* parseVariadicArgumentAnnotation();
+    AstTypePack* parseTypePack();
+    AstTypePack* parseVariadicArgumentTypePack();
+
+    AstType* parseTypeSuffix(AstType* type, const Location& begin);
 
     static std::optional<AstExprUnary::Op> parseUnaryOp(const Lexeme& l);
     static std::optional<AstExprBinary::Op> parseBinaryOp(const Lexeme& l);
@@ -215,10 +250,10 @@ private:
     // primaryexp -> prefixexp { `.' NAME | `[' exp `]' | `:' NAME funcargs | funcargs }
     AstExpr* parsePrimaryExpr(bool asStatement);
 
-    // asexp -> simpleexp [`::' typeAnnotation]
+    // asexp -> simpleexp [`::' Type]
     AstExpr* parseAssertionExpr();
 
-    // simpleexp -> NUMBER | STRING | NIL | true | false | ... | constructor | FUNCTION body | primaryexp
+    // simpleexp -> NUMBER | STRING | NIL | true | false | ... | constructor | [attributes] FUNCTION body | primaryexp
     AstExpr* parseSimpleExpr();
 
     // args ::=  `(' [explist] `)' | tableconstructor | String
@@ -244,7 +279,7 @@ private:
     // `<' namelist `>'
     std::pair<AstArray<AstGenericType>, AstArray<AstGenericTypePack>> parseGenericTypeList(bool withDefaultValues);
 
-    // `<' typeAnnotation[, ...] `>'
+    // `<' Type[, ...] `>'
     AstArray<AstTypeOrPack> parseTypeParams();
 
     std::optional<AstArray<char>> parseCharArray();
@@ -299,16 +334,20 @@ private:
 
     void reportNameError(const char* context);
 
-    AstStatError* reportStatError(const Location& location, const AstArray<AstExpr*>& expressions, const AstArray<AstStat*>& statements,
-        const char* format, ...) LUAU_PRINTF_ATTR(5, 6);
+    AstStatError* reportStatError(
+        const Location& location,
+        const AstArray<AstExpr*>& expressions,
+        const AstArray<AstStat*>& statements,
+        const char* format,
+        ...
+    ) LUAU_PRINTF_ATTR(5, 6);
     AstExprError* reportExprError(const Location& location, const AstArray<AstExpr*>& expressions, const char* format, ...) LUAU_PRINTF_ATTR(4, 5);
-    AstTypeError* reportTypeAnnotationError(const Location& location, const AstArray<AstType*>& types, const char* format, ...)
-        LUAU_PRINTF_ATTR(4, 5);
+    AstTypeError* reportTypeError(const Location& location, const AstArray<AstType*>& types, const char* format, ...) LUAU_PRINTF_ATTR(4, 5);
     // `parseErrorLocation` is associated with the parser error
     // `astErrorLocation` is associated with the AstTypeError created
     // It can be useful to have different error locations so that the parse error can include the next lexeme, while the AstTypeError can precisely
     // define the location (possibly of zero size) where a type annotation is expected.
-    AstTypeError* reportMissingTypeAnnotationError(const Location& parseErrorLocation, const Location& astErrorLocation, const char* format, ...)
+    AstTypeError* reportMissingTypeError(const Location& parseErrorLocation, const Location& astErrorLocation, const char* format, ...)
         LUAU_PRINTF_ATTR(4, 5);
 
     AstExpr* reportFunctionArgsError(AstExpr* func, bool self);
@@ -384,6 +423,7 @@ private:
     MatchLexeme endMismatchSuspect;
 
     std::vector<Function> functionStack;
+    size_t typeFunctionDepth = 0;
 
     DenseHashMap<AstName, AstLocal*> localMap;
     std::vector<AstLocal*> localStack;
@@ -392,6 +432,7 @@ private:
 
     std::vector<unsigned int> matchRecoveryStopOnToken;
 
+    std::vector<AstAttr*> scratchAttr;
     std::vector<AstStat*> scratchStat;
     std::vector<AstArray<char>> scratchString;
     std::vector<AstExpr*> scratchExpr;
@@ -401,8 +442,8 @@ private:
     std::vector<Binding> scratchBinding;
     std::vector<AstLocal*> scratchLocal;
     std::vector<AstTableProp> scratchTableTypeProps;
-    std::vector<AstType*> scratchAnnotation;
-    std::vector<AstTypeOrPack> scratchTypeOrPackAnnotation;
+    std::vector<AstType*> scratchType;
+    std::vector<AstTypeOrPack> scratchTypeOrPack;
     std::vector<AstDeclaredClassProp> scratchDeclaredClassProps;
     std::vector<AstExprTable::Item> scratchItem;
     std::vector<AstArgumentName> scratchArgName;

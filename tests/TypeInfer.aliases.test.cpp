@@ -4,11 +4,13 @@
 
 #include "doctest.h"
 #include "Luau/BuiltinDefinitions.h"
+#include "Luau/AstQuery.h"
 
 using namespace Luau;
 
-LUAU_FASTFLAG(DebugLuauDeferredConstraintResolution)
-LUAU_FASTFLAG(LuauTypeMismatchInvarianceInError)
+LUAU_FASTFLAG(LuauSolverV2)
+LUAU_FASTFLAG(LuauUserDefinedTypeFunctionsSyntax2)
+LUAU_FASTFLAG(LuauUserDefinedTypeFunctions2)
 
 TEST_SUITE_BEGIN("TypeAliases");
 
@@ -71,39 +73,50 @@ TEST_CASE_FIXTURE(Fixture, "cannot_steal_hoisted_type_alias")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    if (FFlag::DebugLuauDeferredConstraintResolution)
+    if (FFlag::LuauSolverV2)
     {
-        CHECK(result.errors[0] == TypeError{
-                                      Location{{1, 21}, {1, 26}},
-                                      getMainSourceModule()->name,
-                                      TypeMismatch{
-                                          builtinTypes->numberType,
-                                          builtinTypes->stringType,
-                                      },
-                                  });
+        CHECK(
+            result.errors[0] ==
+            TypeError{
+                Location{{1, 21}, {1, 26}},
+                getMainSourceModule()->name,
+                TypeMismatch{
+                    builtinTypes->numberType,
+                    builtinTypes->stringType,
+                },
+            }
+        );
     }
     else
     {
-        CHECK(result.errors[0] == TypeError{
-                                      Location{{1, 8}, {1, 26}},
-                                      getMainSourceModule()->name,
-                                      TypeMismatch{
-                                          builtinTypes->numberType,
-                                          builtinTypes->stringType,
-                                      },
-                                  });
+        CHECK(
+            result.errors[0] ==
+            TypeError{
+                Location{{1, 8}, {1, 26}},
+                getMainSourceModule()->name,
+                TypeMismatch{
+                    builtinTypes->numberType,
+                    builtinTypes->stringType,
+                },
+            }
+        );
     }
 }
 
 TEST_CASE_FIXTURE(Fixture, "mismatched_generic_type_param")
 {
+    // We erroneously report an extra error in this case when the new solver is enabled.
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
         type T<A> = (A...) -> ()
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK(toString(result.errors[0]) ==
-          "Generic type 'A' is used as a variadic type parameter; consider changing 'A' to 'A...' in the generic argument list");
+    CHECK(
+        toString(result.errors[0]) ==
+        "Generic type 'A' is used as a variadic type parameter; consider changing 'A' to 'A...' in the generic argument list"
+    );
     CHECK(result.errors[0].location == Location{{1, 21}, {1, 25}});
 }
 
@@ -114,8 +127,10 @@ TEST_CASE_FIXTURE(Fixture, "mismatched_generic_pack_type_param")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-    CHECK(toString(result.errors[0]) ==
-          "Variadic type parameter 'A...' is used as a regular generic type; consider changing 'A...' to 'A' in the generic argument list");
+    CHECK(
+        toString(result.errors[0]) ==
+        "Variadic type parameter 'A...' is used as a regular generic type; consider changing 'A...' to 'A' in the generic argument list"
+    );
     CHECK(result.errors[0].location == Location{{1, 24}, {1, 25}});
 }
 
@@ -159,16 +174,18 @@ TEST_CASE_FIXTURE(Fixture, "cyclic_types_of_named_table_fields_do_not_expand_whe
     CheckResult result = check(R"(
         --!strict
         type Node = { Parent: Node?; }
-        local node: Node;
-        node.Parent = 1
+
+        function f(node: Node)
+            node.Parent = 1
+        end
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
 
     TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
-    REQUIRE(tm);
+    REQUIRE_MESSAGE(tm, result.errors[0]);
     CHECK_EQ("Node?", toString(tm->wantedType));
-    CHECK_EQ(typeChecker.numberType, tm->givenType);
+    CHECK_EQ(builtinTypes->numberType, tm->givenType);
 }
 
 TEST_CASE_FIXTURE(Fixture, "mutually_recursive_aliases")
@@ -188,8 +205,9 @@ TEST_CASE_FIXTURE(Fixture, "mutually_recursive_aliases")
 
 TEST_CASE_FIXTURE(Fixture, "generic_aliases")
 {
-    ScopedFastFlag sff_DebugLuauDeferredConstraintResolution{"DebugLuauDeferredConstraintResolution", true};
-
+    ScopedFastFlag sff[] = {
+        {FFlag::LuauSolverV2, true},
+    };
     CheckResult result = check(R"(
         type T<a> = { v: a }
         local x: T<number> = { v = 123 }
@@ -198,24 +216,16 @@ TEST_CASE_FIXTURE(Fixture, "generic_aliases")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-
-    const char* expectedError;
-    if (FFlag::LuauTypeMismatchInvarianceInError)
-        expectedError = "Type 'bad' could not be converted into 'T<number>'\n"
-                        "caused by:\n"
-                        "  Property 'v' is not compatible. Type 'string' could not be converted into 'number' in an invariant context";
-    else
-        expectedError = "Type 'bad' could not be converted into 'T<number>'\n"
-                        "caused by:\n"
-                        "  Property 'v' is not compatible. Type 'string' could not be converted into 'number'";
-
+    const std::string expected = R"(Type '{ v: string }' could not be converted into 'T<number>'; at [read "v"], string is not exactly number)";
     CHECK(result.errors[0].location == Location{{4, 31}, {4, 44}});
-    CHECK(toString(result.errors[0]) == expectedError);
+    CHECK_EQ(expected, toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "dependent_generic_aliases")
 {
-    ScopedFastFlag sff_DebugLuauDeferredConstraintResolution{"DebugLuauDeferredConstraintResolution", true};
+    ScopedFastFlag sff[] = {
+        {FFlag::LuauSolverV2, true},
+    };
 
     CheckResult result = check(R"(
         type T<a> = { v: a }
@@ -225,27 +235,18 @@ TEST_CASE_FIXTURE(Fixture, "dependent_generic_aliases")
     )");
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-
-    std::string expectedError;
-    if (FFlag::LuauTypeMismatchInvarianceInError)
-        expectedError = "Type 'bad' could not be converted into 'U<number>'\n"
-                        "caused by:\n"
-                        "  Property 't' is not compatible. Type '{ v: string }' could not be converted into 'T<number>'\n"
-                        "caused by:\n"
-                        "  Property 'v' is not compatible. Type 'string' could not be converted into 'number' in an invariant context";
-    else
-        expectedError = "Type 'bad' could not be converted into 'U<number>'\n"
-                        "caused by:\n"
-                        "  Property 't' is not compatible. Type '{ v: string }' could not be converted into 'T<number>'\n"
-                        "caused by:\n"
-                        "  Property 'v' is not compatible. Type 'string' could not be converted into 'number'";
+    const std::string expected =
+        R"(Type '{ t: { v: string } }' could not be converted into 'U<number>'; at [read "t"][read "v"], string is not exactly number)";
 
     CHECK(result.errors[0].location == Location{{4, 31}, {4, 52}});
-    CHECK(toString(result.errors[0]) == expectedError);
+    CHECK_EQ(expected, toString(result.errors[0]));
 }
 
 TEST_CASE_FIXTURE(Fixture, "mutually_recursive_generic_aliases")
 {
+    // CLI-116108
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
         --!strict
         type T<a> = { f: a, g: U<a> }
@@ -276,7 +277,7 @@ TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_errors")
     // We had a UAF in this example caused by not cloning type function arguments
     ModulePtr module = frontend.moduleResolver.getModule("MainModule");
     unfreeze(module->interfaceTypes);
-    copyErrors(module->errors, module->interfaceTypes);
+    copyErrors(module->errors, module->interfaceTypes, builtinTypes);
     freeze(module->interfaceTypes);
     module->internalTypes.clear();
     module->astTypes.clear();
@@ -329,7 +330,7 @@ TEST_CASE_FIXTURE(Fixture, "stringify_type_alias_of_recursive_template_table_typ
     TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
     REQUIRE(tm);
     CHECK_EQ("Wrapped", toString(tm->wantedType));
-    CHECK_EQ(typeChecker.numberType, tm->givenType);
+    CHECK_EQ(builtinTypes->numberType, tm->givenType);
 }
 
 TEST_CASE_FIXTURE(Fixture, "stringify_type_alias_of_recursive_template_table_type2")
@@ -344,13 +345,20 @@ TEST_CASE_FIXTURE(Fixture, "stringify_type_alias_of_recursive_template_table_typ
 
     TypeMismatch* tm = get<TypeMismatch>(result.errors[0]);
     REQUIRE(tm);
-    CHECK_EQ("t1 where t1 = ({| a: t1 |}) -> string", toString(tm->wantedType));
-    CHECK_EQ(typeChecker.numberType, tm->givenType);
+    if (FFlag::LuauSolverV2)
+        CHECK_EQ("t1 where t1 = ({ a: t1 }) -> string", toString(tm->wantedType));
+    else
+        CHECK_EQ("t1 where t1 = ({| a: t1 |}) -> string", toString(tm->wantedType));
+    CHECK_EQ(builtinTypes->numberType, tm->givenType);
 }
 
 // Check that recursive intersection type doesn't generate an OOM
 TEST_CASE_FIXTURE(Fixture, "cli_38393_recursive_intersection_oom")
 {
+    ScopedFastFlag sff[] = {
+        {FFlag::LuauSolverV2, false},
+    }; // FIXME
+
     CheckResult result = check(R"(
         function _(l0:(t0)&((t0)&(((t0)&((t0)->()))->(typeof(_),typeof(# _)))),l39,...):any
         end
@@ -374,15 +382,19 @@ TEST_CASE_FIXTURE(Fixture, "corecursive_types_generic")
     const std::string code = R"(
         type A<T> = {v:T, b:B<T>}
         type B<T> = {v:T, a:A<T>}
-        local aa:A<number>
-        local bb = aa
+
+        function f(a: A<number>)
+            return a
+        end
     )";
 
     const std::string expected = R"(
         type A<T> = {v:T, b:B<T>}
         type B<T> = {v:T, a:A<T>}
-        local aa:A<number>
-        local bb:A<number>=aa
+
+        function f(a: A<number>): A<number>
+            return a
+        end
     )";
 
     CHECK_EQ(expected, decorateWithTypes(code));
@@ -396,18 +408,18 @@ TEST_CASE_FIXTURE(Fixture, "corecursive_function_types")
     CheckResult result = check(R"(
         type A = () -> (number, B)
         type B = () -> (string, A)
-        local a: A
-        local b: B
     )");
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    CHECK_EQ("t1 where t1 = () -> (number, () -> (string, t1))", toString(requireType("a")));
-    CHECK_EQ("t1 where t1 = () -> (string, () -> (number, t1))", toString(requireType("b")));
+    CHECK_EQ("t1 where t1 = () -> (number, () -> (string, t1))", toString(requireTypeAlias("A")));
+    CHECK_EQ("t1 where t1 = () -> (string, () -> (number, t1))", toString(requireTypeAlias("B")));
 }
 
 TEST_CASE_FIXTURE(Fixture, "generic_param_remap")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     const std::string code = R"(
         -- An example of a forwarded use of a type that has different type arguments than parameters
         type A<T,U> = {t:T, u:U, next:A<U,T>?}
@@ -520,7 +532,7 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "type_alias_import_mutation")
     CheckResult result = check("type t10<x> = typeof(table)");
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    TypeId ty = getGlobalBinding(frontend, "table");
+    TypeId ty = getGlobalBinding(frontend.globals, "table");
 
     CHECK(toString(ty) == "typeof(table)");
 
@@ -532,11 +544,13 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "type_alias_import_mutation")
 
 TEST_CASE_FIXTURE(Fixture, "type_alias_local_mutation")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
-type Cool = { a: number, b: string }
-local c: Cool = { a = 1, b = "s" }
-type NotCool<x> = Cool
-)");
+        type Cool = { a: number, b: string }
+        local c: Cool = { a = 1, b = "s" }
+        type NotCool<x> = Cool
+    )");
     LUAU_REQUIRE_NO_ERRORS(result);
 
     std::optional<TypeId> ty = requireType("c");
@@ -551,6 +565,8 @@ type NotCool<x> = Cool
 
 TEST_CASE_FIXTURE(Fixture, "type_alias_local_rename")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
 type Cool = { a: number, b: string }
 type NotCool = Cool
@@ -612,16 +628,16 @@ type X = Import.X
 TEST_CASE_FIXTURE(BuiltinsFixture, "type_alias_of_an_imported_recursive_generic_type")
 {
     fileResolver.source["game/A"] = R"(
-export type X<T, U> = { a: T, b: U, C: X<T, U>? }
-return {}
+        export type X<T, U> = { a: T, b: U, C: X<T, U>? }
+        return {}
     )";
 
     CheckResult aResult = frontend.check("game/A");
     LUAU_REQUIRE_NO_ERRORS(aResult);
 
     CheckResult bResult = check(R"(
-local Import = require(game.A)
-type X<T, U> = Import.X<T, U>
+        local Import = require(game.A)
+        type X<T, U> = Import.X<T, U>
     )");
     LUAU_REQUIRE_NO_ERRORS(bResult);
 
@@ -634,8 +650,8 @@ type X<T, U> = Import.X<T, U>
     CHECK_EQ(toString(*ty1, {true}), toString(*ty2, {true}));
 
     bResult = check(R"(
-local Import = require(game.A)
-type X<T, U> = Import.X<U, T>
+        local Import = require(game.A)
+        type X<T, U> = Import.X<U, T>
     )");
     LUAU_REQUIRE_NO_ERRORS(bResult);
 
@@ -645,8 +661,16 @@ type X<T, U> = Import.X<U, T>
     ty2 = lookupType("X");
     REQUIRE(ty2);
 
-    CHECK_EQ(toString(*ty1, {true}), "t1 where t1 = {| C: t1?, a: T, b: U |}");
-    CHECK_EQ(toString(*ty2, {true}), "{| C: t1, a: U, b: T |} where t1 = {| C: t1, a: U, b: T |}?");
+    if (FFlag::LuauSolverV2)
+    {
+        CHECK(toString(*ty1, {true}) == "t1 where t1 = { C: t1?, a: T, b: U }");
+        CHECK(toString(*ty2, {true}) == "t1 where t1 = { C: t1?, a: U, b: T }");
+    }
+    else
+    {
+        CHECK_EQ(toString(*ty1, {true}), "t1 where t1 = {| C: t1?, a: T, b: U |}");
+        CHECK_EQ(toString(*ty2, {true}), "{| C: t1, a: U, b: T |} where t1 = {| C: t1, a: U, b: T |}?");
+    }
 }
 
 TEST_CASE_FIXTURE(Fixture, "module_export_free_type_leak")
@@ -688,6 +712,9 @@ TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_restriction_ok")
 
 TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_restriction_not_ok_1")
 {
+    // CLI-116108
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
         -- OK because forwarded types are used with their parameters.
         type Tree<T> = { data: T, children: Forest<T> }
@@ -699,6 +726,9 @@ TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_restriction_not_ok_1")
 
 TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_restriction_not_ok_2")
 {
+    // CLI-116108
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
         -- Not OK because forwarded types are used with different types than their parameters.
         type Forest<T> = {Tree<{T}>}
@@ -720,6 +750,9 @@ TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_swapsies_ok")
 
 TEST_CASE_FIXTURE(Fixture, "mutually_recursive_types_swapsies_not_ok")
 {
+    // CLI-116108
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
         type Tree1<T,U> = { data: T, children: {Tree2<U,T>} }
         type Tree2<T,U> = { data: U, children: {Tree1<T,U>} }
@@ -823,40 +856,12 @@ TEST_CASE_FIXTURE(Fixture, "forward_declared_alias_is_not_clobbered_by_prior_uni
         local d: FutureType = { smth = true } -- missing error, 'd' is resolved to 'any'
     )");
 
-    CHECK_EQ("{| foo: number |}", toString(requireType("d"), {true}));
+    if (FFlag::LuauSolverV2)
+        CHECK_EQ("{ foo: number }", toString(requireType("d"), {true}));
+    else
+        CHECK_EQ("{| foo: number |}", toString(requireType("d"), {true}));
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
-}
-
-TEST_CASE_FIXTURE(Fixture, "forward_declared_alias_is_not_clobbered_by_prior_unification_with_any_2")
-{
-    ScopedFastFlag sff[] = {
-        {"DebugLuauSharedSelf", true},
-    };
-
-    CheckResult result = check(R"(
-        local B = {}
-        B.bar = 4
-
-        function B:smth1()
-            local self: FutureIntersection = self
-            self.foo = 4
-            return 4
-        end
-
-        function B:smth2()
-            local self: FutureIntersection = self
-            self.bar = 5 -- error, even though we should have B part with bar
-        end
-
-        type A = { foo: typeof(B.smth1({foo=3})) } -- trick toposort into sorting functions before types
-        type B = typeof(B)
-
-        type FutureIntersection = A & B
-    )");
-
-    // TODO: shared self causes this test to break in bizarre ways.
-    LUAU_REQUIRE_ERRORS(result);
 }
 
 TEST_CASE_FIXTURE(Fixture, "recursive_types_restriction_ok")
@@ -870,6 +875,9 @@ TEST_CASE_FIXTURE(Fixture, "recursive_types_restriction_ok")
 
 TEST_CASE_FIXTURE(Fixture, "recursive_types_restriction_not_ok")
 {
+    // CLI-116108
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     CheckResult result = check(R"(
         -- this would be an infinite type if we allowed it
         type Tree<T> = { data: T, children: {Tree<{T}>} }
@@ -880,6 +888,9 @@ TEST_CASE_FIXTURE(Fixture, "recursive_types_restriction_not_ok")
 
 TEST_CASE_FIXTURE(Fixture, "report_shadowed_aliases")
 {
+    // CLI-116110
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
     // We allow a previous type alias to depend on a future type alias. That exact feature enables a confusing example, like the following snippet,
     // which has the type alias FakeString point to the type alias `string` that which points to `number`.
     CheckResult result = check(R"(
@@ -920,6 +931,269 @@ TEST_CASE_FIXTURE(Fixture, "cannot_create_cyclic_type_with_unknown_module")
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
     CHECK(toString(result.errors[0]) == "Unknown type 'B.AAA'");
+}
+
+TEST_CASE_FIXTURE(Fixture, "type_alias_locations")
+{
+    check(R"(
+        type T = number
+
+        do
+            type T = string
+            type X = boolean
+        end
+    )");
+
+    ModulePtr mod = getMainModule();
+    REQUIRE(!mod->scopes.empty());
+
+    REQUIRE(mod->scopes[0].second->typeAliasNameLocations.count("T") > 0);
+    CHECK(mod->scopes[0].second->typeAliasNameLocations["T"] == Location(Position(1, 13), 1));
+
+    ScopePtr doScope = findScopeAtPosition(*mod, Position{4, 0});
+    REQUIRE(doScope);
+
+    REQUIRE(doScope->typeAliasNameLocations.count("T") > 0);
+    CHECK(doScope->typeAliasNameLocations["T"] == Location(Position(4, 17), 1));
+
+    REQUIRE(doScope->typeAliasNameLocations.count("X") > 0);
+    CHECK(doScope->typeAliasNameLocations["X"] == Location(Position(5, 17), 1));
+}
+
+/*
+ * We had a bug in DCR where substitution would improperly clone a
+ * PendingExpansionType.
+ *
+ * This cloned type did not have a matching constraint to expand it, so it was
+ * left dangling and unexpanded forever.
+ *
+ * We must also delay the dispatch a constraint if doing so would require
+ * unifying a PendingExpansionType.
+ */
+TEST_CASE_FIXTURE(BuiltinsFixture, "dont_lose_track_of_PendingExpansionTypes_after_substitution")
+{
+    // CLI-114134 - We need egraphs to properly simplify these types.
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
+
+    fileResolver.source["game/ReactCurrentDispatcher"] = R"(
+        export type BasicStateAction<S> = ((S) -> S) | S
+        export type Dispatch<A> = (A) -> ()
+
+        export type Dispatcher = {
+            useState: <S>(initialState: (() -> S) | S) -> (S, Dispatch<BasicStateAction<S>>),
+        }
+
+        return {}
+    )";
+
+    // Note: This script path is actually as short as it can be.  Any shorter
+    // and we somehow fail to surface the bug.
+    fileResolver.source["game/React/React/ReactHooks"] = R"(
+        local RCD = require(script.Parent.Parent.Parent.ReactCurrentDispatcher)
+
+        local function resolveDispatcher(): RCD.Dispatcher
+            return (nil :: any) :: RCD.Dispatcher
+        end
+
+        function useState<S>(
+            initialState: (() -> S) | S
+        ): (S, RCD.Dispatch<RCD.BasicStateAction<S>>)
+            local dispatcher = resolveDispatcher()
+            return dispatcher.useState(initialState)
+        end
+    )";
+
+    CheckResult result = frontend.check("game/React/React/ReactHooks");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "another_thing_from_roact")
+{
+    CheckResult result = check(R"(
+        type Map<K, V> = { [K]: V }
+        type Set<T> = { [T]: boolean }
+
+        type FiberRoot = {
+            pingCache: Map<Wakeable, (Set<any> | Map<Wakeable, Set<any>>)> | nil,
+        }
+
+        type Wakeable = {
+            andThen: (self: Wakeable) -> nil | Wakeable,
+        }
+
+        local function attachPingListener(root: FiberRoot, wakeable: Wakeable, lanes: number)
+            local pingCache: Map<Wakeable, (Set<any> | Map<Wakeable, Set<any>>)> | nil = root.pingCache
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+/*
+ * It is sometimes possible for type alias resolution to produce a TypeId that
+ * belongs to a different module.
+ *
+ * We must not mutate any fields of the resulting type when this happens.  The
+ * memory has been frozen.
+ */
+TEST_CASE_FIXTURE(BuiltinsFixture, "alias_expands_to_bare_reference_to_imported_type")
+{
+    fileResolver.source["game/A"] = R"(
+        --!strict
+        export type Object = {[string]: any}
+        return {}
+    )";
+
+    fileResolver.source["game/B"] = R"(
+        local A = require(script.Parent.A)
+
+        type Object = A.Object
+        type ReadOnly<T> = T
+
+        local function f(): ReadOnly<Object>
+            return nil :: any
+        end
+    )";
+
+    CheckResult result = frontend.check("game/B");
+    LUAU_REQUIRE_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "table_types_record_the_property_locations")
+{
+    CheckResult result = check(R"(
+        type Table = {
+            create: () -> ()
+        }
+
+        local x: Table
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    auto ty = requireTypeAlias("Table");
+
+    auto ttv = Luau::get<Luau::TableType>(follow(ty));
+    REQUIRE(ttv);
+
+    auto propIt = ttv->props.find("create");
+    REQUIRE(propIt != ttv->props.end());
+
+    CHECK_EQ(propIt->second.location, std::nullopt);
+    CHECK_EQ(propIt->second.typeLocation, Location({2, 12}, {2, 18}));
+}
+
+TEST_CASE_FIXTURE(Fixture, "typeof_is_not_a_valid_alias_name")
+{
+    CheckResult result = check(R"(
+        type typeof = number
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+
+    CHECK("Type aliases cannot be named typeof" == toString(result.errors[0]));
+}
+
+TEST_CASE_FIXTURE(Fixture, "fuzzer_bug_doesnt_crash")
+{
+    CheckResult result = check(R"(
+type t0 = (t0<t0...>)
+)");
+    LUAU_REQUIRE_ERRORS(result);
+}
+
+
+TEST_CASE_FIXTURE(Fixture, "recursive_type_alias_warns")
+{
+    CheckResult result = check(R"(
+type Foo<T> = Foo<T>
+)");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    auto occursCheckError = get<OccursCheckFailed>(result.errors[0]);
+    REQUIRE(occursCheckError);
+}
+
+TEST_CASE_FIXTURE(Fixture, "recursive_type_alias_bad_pack_use_warns")
+{
+    if (!FFlag::LuauSolverV2)
+        return;
+
+    CheckResult result = check(R"(
+type Foo<T> = Foo<T...>
+)");
+
+    LUAU_REQUIRE_ERROR_COUNT(4, result);
+    auto occursCheckFailed = get<OccursCheckFailed>(result.errors[1]);
+    REQUIRE(occursCheckFailed);
+
+    auto swappedGeneric = get<SwappedGenericTypeParameter>(result.errors[2]);
+    REQUIRE(swappedGeneric);
+    CHECK(swappedGeneric->name == "T");
+}
+
+TEST_CASE_FIXTURE(Fixture, "corecursive_aliases")
+{
+    CheckResult result = check(R"(
+type Foo<T> = Bar<T>
+type Bar<T> = Foo<T>
+)");
+
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    auto err = get<OccursCheckFailed>(result.errors[0]);
+    REQUIRE(err);
+}
+
+TEST_CASE_FIXTURE(Fixture, "should_also_occurs_check")
+{
+    CheckResult result = check(R"(
+type Foo<T> = Foo<T> | string
+)");
+    LUAU_REQUIRE_ERROR_COUNT(1, result);
+    auto err = get<OccursCheckFailed>(result.errors[0]);
+    REQUIRE(err);
+}
+
+TEST_CASE_FIXTURE(BuiltinsFixture, "type_alias_adds_reduce_constraint_for_type_function")
+{
+    if (!FFlag::LuauSolverV2 || !FFlag::LuauUserDefinedTypeFunctions2)
+        return;
+
+    CheckResult result = check(R"(
+    type plus<T> = add<number, T>
+
+    local sum: plus<number> = 10
+    )");
+
+    LUAU_CHECK_NO_ERRORS(result);
+}
+
+TEST_CASE_FIXTURE(Fixture, "user_defined_type_function_errors")
+{
+    ScopedFastFlag sff{FFlag::LuauUserDefinedTypeFunctionsSyntax2, true};
+    ScopedFastFlag noUDTFimpl{FFlag::LuauUserDefinedTypeFunctions2, false};
+
+    CheckResult result = check(R"(
+    type function foo()
+        return nil
+    end
+    )");
+    LUAU_CHECK_ERROR_COUNT(1, result);
+    CHECK(toString(result.errors[0]) == "This syntax is not supported");
+}
+
+TEST_CASE_FIXTURE(Fixture, "bound_type_in_alias_segfault")
+{
+    ScopedFastFlag sff{FFlag::LuauSolverV2, true};
+
+    LUAU_CHECK_NO_ERRORS(check(R"(
+        --!nonstrict
+        type Map<T, V> = {[ K]: V}
+        function foo:bar(): Config<any, any> end
+        type Config<TSource, TContext> = Map<TSource, TContext> & { fields: FieldConfigMap<any, any>}
+        export type FieldConfig<TSource, TContext, TArgs> = {[ string]: any}
+        export type FieldConfigMap<TSource, TContext> = Map<string, FieldConfig<TSource, TContext>>
+    )"));
 }
 
 TEST_SUITE_END();

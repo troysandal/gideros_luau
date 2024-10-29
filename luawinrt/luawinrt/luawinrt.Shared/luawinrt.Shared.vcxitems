@@ -33,11 +33,14 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\lcode.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\PseudoCode.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\TableShape.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\Types.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\Compiler\src\ValueTracking.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lapi.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\laux.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbaselib.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbitlib.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuffer.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuflib.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuiltins.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lcorolib.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\ldblib.cpp" />
@@ -69,6 +72,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lapi.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuffer.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbuiltins.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lbytecode.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)..\..\..\VM\src\lcommon.h" />

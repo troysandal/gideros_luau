@@ -62,6 +62,7 @@ struct Lexeme
         Dot3,
         SkinnyArrow,
         DoubleColon,
+        FloorDiv,
 
         InterpStringBegin,
         InterpStringMid,
@@ -73,6 +74,7 @@ struct Lexeme
         SubAssign,
         MulAssign,
         DivAssign,
+        FloorDivAssign,
         ModAssign,
         PowAssign,
         ConcatAssign,
@@ -93,11 +95,12 @@ struct Lexeme
         Comment,
         BlockComment,
 
+        Attribute,
+
         BrokenString,
         BrokenComment,
         BrokenUnicode,
         BrokenInterpDoubleBrace,
-
         Error,
 
         Reserved_BEGIN,
@@ -127,8 +130,15 @@ struct Lexeme
 
     Type type;
     Location location;
+
+    // Field declared here, before the union, to ensure that Lexeme size is 32 bytes.
+private:
+    // length is used to extract a slice from the input buffer.
+    // This field is only valid for certain lexeme types which don't duplicate portions of input
+    // but instead store a pointer to a location in the input buffer and the length of lexeme.
     unsigned int length;
 
+public:
     union
     {
         const char* data;       // String, Number, Comment
@@ -141,8 +151,12 @@ struct Lexeme
     Lexeme(const Location& location, Type type, const char* data, size_t size);
     Lexeme(const Location& location, Type type, const char* name);
 
+    unsigned int getLength() const;
+
     std::string toString() const;
 };
+
+static_assert(sizeof(Lexeme) <= 32, "Size of `Lexeme` struct should be up to 32 bytes.");
 
 class AstNameTable
 {
@@ -212,7 +226,9 @@ private:
 
     Position position() const;
 
+    // consume() assumes current character is not a newline for performance; when that is not known, consumeAny() should be used instead.
     void consume();
+    void consumeAny();
 
     Lexeme readCommentBody();
 

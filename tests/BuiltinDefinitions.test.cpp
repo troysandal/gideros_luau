@@ -12,15 +12,16 @@ TEST_SUITE_BEGIN("BuiltinDefinitionsTest");
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "lib_documentation_symbols")
 {
-    CHECK(!typeChecker.globalScope->bindings.empty());
+    CHECK(!frontend.globals.globalScope->bindings.empty());
 
-    for (const auto& [name, binding] : typeChecker.globalScope->bindings)
+    for (const auto& [name, binding] : frontend.globals.globalScope->bindings)
     {
         std::string nameString(name.c_str());
         std::string expectedRootSymbol = "@luau/global/" + nameString;
         std::optional<std::string> actualRootSymbol = binding.documentationSymbol;
         CHECK_MESSAGE(
-            actualRootSymbol == expectedRootSymbol, "expected symbol ", expectedRootSymbol, " for global ", nameString, ", got ", actualRootSymbol);
+            actualRootSymbol == expectedRootSymbol, "expected symbol ", expectedRootSymbol, " for global ", nameString, ", got ", actualRootSymbol
+        );
 
         const TableType::Props* props = nullptr;
         if (const TableType* ttv = get<TableType>(binding.typeId))
@@ -39,8 +40,9 @@ TEST_CASE_FIXTURE(BuiltinsFixture, "lib_documentation_symbols")
                 std::string fullPropName = nameString + "." + propName;
                 std::string expectedPropSymbol = expectedRootSymbol + "." + propName;
                 std::optional<std::string> actualPropSymbol = prop.documentationSymbol;
-                CHECK_MESSAGE(actualPropSymbol == expectedPropSymbol, "expected symbol ", expectedPropSymbol, " for ", fullPropName, ", got ",
-                    actualPropSymbol);
+                CHECK_MESSAGE(
+                    actualPropSymbol == expectedPropSymbol, "expected symbol ", expectedPropSymbol, " for ", fullPropName, ", got ", actualPropSymbol
+                );
             }
         }
     }

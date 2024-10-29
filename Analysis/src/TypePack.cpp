@@ -6,8 +6,73 @@
 
 #include <stdexcept>
 
+LUAU_FASTFLAG(LuauSolverV2);
+
 namespace Luau
 {
+
+FreeTypePack::FreeTypePack(TypeLevel level)
+    : index(Unifiable::freshIndex())
+    , level(level)
+    , scope(nullptr)
+{
+}
+
+FreeTypePack::FreeTypePack(Scope* scope)
+    : index(Unifiable::freshIndex())
+    , level{}
+    , scope(scope)
+{
+}
+
+FreeTypePack::FreeTypePack(Scope* scope, TypeLevel level)
+    : index(Unifiable::freshIndex())
+    , level(level)
+    , scope(scope)
+{
+}
+
+GenericTypePack::GenericTypePack()
+    : index(Unifiable::freshIndex())
+    , name("g" + std::to_string(index))
+{
+}
+
+GenericTypePack::GenericTypePack(TypeLevel level)
+    : index(Unifiable::freshIndex())
+    , level(level)
+    , name("g" + std::to_string(index))
+{
+}
+
+GenericTypePack::GenericTypePack(const Name& name)
+    : index(Unifiable::freshIndex())
+    , name(name)
+    , explicitName(true)
+{
+}
+
+GenericTypePack::GenericTypePack(Scope* scope)
+    : index(Unifiable::freshIndex())
+    , scope(scope)
+{
+}
+
+GenericTypePack::GenericTypePack(TypeLevel level, const Name& name)
+    : index(Unifiable::freshIndex())
+    , level(level)
+    , name(name)
+    , explicitName(true)
+{
+}
+
+GenericTypePack::GenericTypePack(Scope* scope, const Name& name)
+    : index(Unifiable::freshIndex())
+    , scope(scope)
+    , name(name)
+    , explicitName(true)
+{
+}
 
 BlockedTypePack::BlockedTypePack()
     : index(++nextIndex)
@@ -160,8 +225,8 @@ bool areEqual(SeenSet& seen, const TypePackVar& lhs, const TypePackVar& rhs)
     TypePackId rhsTail = *rhsIter.tail();
 
     {
-        const Unifiable::Free* lf = get_if<Unifiable::Free>(&lhsTail->ty);
-        const Unifiable::Free* rf = get_if<Unifiable::Free>(&rhsTail->ty);
+        const FreeTypePack* lf = get_if<FreeTypePack>(&lhsTail->ty);
+        const FreeTypePack* rf = get_if<FreeTypePack>(&rhsTail->ty);
         if (lf && rf)
             return lf->index == rf->index;
     }
@@ -174,8 +239,8 @@ bool areEqual(SeenSet& seen, const TypePackVar& lhs, const TypePackVar& rhs)
     }
 
     {
-        const Unifiable::Generic* lg = get_if<Unifiable::Generic>(&lhsTail->ty);
-        const Unifiable::Generic* rg = get_if<Unifiable::Generic>(&rhsTail->ty);
+        const GenericTypePack* lg = get_if<GenericTypePack>(&lhsTail->ty);
+        const GenericTypePack* rg = get_if<GenericTypePack>(&rhsTail->ty);
         if (lg && rg)
             return lg->index == rg->index;
     }
@@ -192,16 +257,26 @@ bool areEqual(SeenSet& seen, const TypePackVar& lhs, const TypePackVar& rhs)
 
 TypePackId follow(TypePackId tp)
 {
-    return follow(tp, [](TypePackId t) {
-        return t;
-    });
+    return follow(
+        tp,
+        nullptr,
+        [](const void*, TypePackId t)
+        {
+            return t;
+        }
+    );
 }
 
-TypePackId follow(TypePackId tp, std::function<TypePackId(TypePackId)> mapper)
+TypePackId follow(TypePackId tp, const void* context, TypePackId (*mapper)(const void*, TypePackId))
 {
-    auto advance = [&mapper](TypePackId ty) -> std::optional<TypePackId> {
-        if (const Unifiable::Bound<TypePackId>* btv = get<Unifiable::Bound<TypePackId>>(mapper(ty)))
+    auto advance = [context, mapper](TypePackId ty) -> std::optional<TypePackId>
+    {
+        TypePackId mapped = mapper(context, ty);
+
+        if (const Unifiable::Bound<TypePackId>* btv = get<Unifiable::Bound<TypePackId>>(mapped))
             return btv->boundTo;
+        else if (const TypePack* tp = get<TypePack>(mapped); tp && tp->head.empty())
+            return tp->tail;
         else
             return std::nullopt;
     };
@@ -211,6 +286,9 @@ TypePackId follow(TypePackId tp, std::function<TypePackId(TypePackId)> mapper)
         cycleTester = *a;
     else
         return tp;
+
+    if (!advance(cycleTester)) // Short circuit traversal for the rather common case when advance(advance(t)) == null
+        return cycleTester;
 
     while (true)
     {
@@ -391,6 +469,13 @@ bool containsNever(TypePackId tp)
     }
 
     return false;
+}
+
+template<>
+LUAU_NOINLINE Unifiable::Bound<TypePackId>* emplaceTypePack<BoundTypePack>(TypePackVar* ty, TypePackId& tyArg)
+{
+    LUAU_ASSERT(ty != follow(tyArg));
+    return &ty->ty.emplace<BoundTypePack>(tyArg);
 }
 
 } // namespace Luau

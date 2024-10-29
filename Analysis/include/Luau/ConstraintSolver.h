@@ -3,20 +3,31 @@
 #pragma once
 
 #include "Luau/Constraint.h"
+#include "Luau/DataFlowGraph.h"
+#include "Luau/DenseHash.h"
 #include "Luau/Error.h"
+#include "Luau/Location.h"
 #include "Luau/Module.h"
 #include "Luau/Normalize.h"
+#include "Luau/Substitution.h"
 #include "Luau/ToString.h"
 #include "Luau/Type.h"
-#include "Luau/TypeReduction.h"
+#include "Luau/TypeCheckLimits.h"
+#include "Luau/TypeFunction.h"
+#include "Luau/TypeFwd.h"
 #include "Luau/Variant.h"
 
+#include <utility>
 #include <vector>
 
 namespace Luau
 {
 
+enum class ValueContext;
+
 struct DcrLogger;
+
+class AstExpr;
 
 // TypeId, TypePackId, or Constraint*. It is impossible to know which, but we
 // never dereference this pointer.
@@ -49,15 +60,18 @@ struct HashInstantiationSignature
 
 struct ConstraintSolver
 {
-    TypeArena* arena;
+    NotNull<TypeArena> arena;
     NotNull<BuiltinTypes> builtinTypes;
     InternalErrorReporter iceReporter;
     NotNull<Normalizer> normalizer;
-    NotNull<TypeReduction> reducer;
+    NotNull<TypeFunctionRuntime> typeFunctionRuntime;
     // The entire set of constraints that the solver is trying to resolve.
     std::vector<NotNull<Constraint>> constraints;
     NotNull<Scope> rootScope;
     ModuleName currentModuleName;
+
+    // The dataflow graph of the program, used in constraint generation and for magic functions.
+    NotNull<const DataFlowGraph> dfg;
 
     // Constraints that the solver has generated, rather than sourcing from the
     // scope tree.
@@ -72,9 +86,23 @@ struct ConstraintSolver
     // anything.
     std::unordered_map<NotNull<const Constraint>, size_t> blockedConstraints;
     // A mapping of type/pack pointers to the constraints they block.
-    std::unordered_map<BlockedConstraintId, std::vector<NotNull<const Constraint>>, HashBlockedConstraintId> blocked;
+    std::unordered_map<BlockedConstraintId, DenseHashSet<const Constraint*>, HashBlockedConstraintId> blocked;
     // Memoized instantiations of type aliases.
     DenseHashMap<InstantiationSignature, TypeId, HashInstantiationSignature> instantiatedAliases{{}};
+    // Breadcrumbs for where a free type's upper bound was expanded. We use
+    // these to provide more helpful error messages when a free type is solved
+    // as never unexpectedly.
+    DenseHashMap<TypeId, std::vector<std::pair<Location, TypeId>>> upperBoundContributors{nullptr};
+
+    // A mapping from free types to the number of unresolved constraints that mention them.
+    DenseHashMap<TypeId, size_t> unresolvedConstraints{{}};
+
+    // Irreducible/uninhabited type functions or type pack functions.
+    DenseHashSet<const void*> uninhabitedTypeFunctions{{}};
+
+    // The set of types that will definitely be unchanged by generalization.
+    DenseHashSet<TypeId> generalizedTypes_{nullptr};
+    const NotNull<DenseHashSet<TypeId>> generalizedTypes{&generalizedTypes_};
 
     // Recorded errors that take place within the solver.
     ErrorVec errors;
@@ -83,10 +111,22 @@ struct ConstraintSolver
     std::vector<RequireCycle> requireCycles;
 
     DcrLogger* logger;
+    TypeCheckLimits limits;
 
-    explicit ConstraintSolver(NotNull<Normalizer> normalizer, NotNull<Scope> rootScope, std::vector<NotNull<Constraint>> constraints,
-        ModuleName moduleName, NotNull<TypeReduction> reducer, NotNull<ModuleResolver> moduleResolver, std::vector<RequireCycle> requireCycles,
-        DcrLogger* logger);
+    DenseHashMap<TypeId, const Constraint*> typeFunctionsToFinalize{nullptr};
+
+    explicit ConstraintSolver(
+        NotNull<Normalizer> normalizer,
+        NotNull<TypeFunctionRuntime> typeFunctionRuntime,
+        NotNull<Scope> rootScope,
+        std::vector<NotNull<Constraint>> constraints,
+        ModuleName moduleName,
+        NotNull<ModuleResolver> moduleResolver,
+        std::vector<RequireCycle> requireCycles,
+        DcrLogger* logger,
+        NotNull<const DataFlowGraph> dfg,
+        TypeCheckLimits limits
+    );
 
     // Randomize the order in which to dispatch constraints
     void randomize(unsigned seed);
@@ -97,43 +137,109 @@ struct ConstraintSolver
      **/
     void run();
 
+
+    /**
+     * Attempts to perform one final reduction on type functions after every constraint has been completed
+     *
+     **/
+    void finalizeTypeFunctions();
+
     bool isDone();
 
-    void finalizeModule();
+private:
+    /**
+     * Bind a type variable to another type.
+     *
+     * A constraint is required and will validate that blockedTy is owned by this
+     * constraint. This prevents one constraint from interfering with another's
+     * blocked types.
+     *
+     * Bind will also unblock the type variable for you.
+     */
+    void bind(NotNull<const Constraint> constraint, TypeId ty, TypeId boundTo);
+    void bind(NotNull<const Constraint> constraint, TypePackId tp, TypePackId boundTo);
 
+    template<typename T, typename... Args>
+    void emplace(NotNull<const Constraint> constraint, TypeId ty, Args&&... args);
+
+    template<typename T, typename... Args>
+    void emplace(NotNull<const Constraint> constraint, TypePackId tp, Args&&... args);
+
+public:
     /** Attempt to dispatch a constraint.  Returns true if it was successful. If
      * tryDispatch() returns false, the constraint remains in the unsolved set
      * and will be retried later.
      */
     bool tryDispatch(NotNull<const Constraint> c, bool force);
 
-    bool tryDispatch(const SubtypeConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const PackSubtypeConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const GeneralizationConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const InstantiationConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const UnaryConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const BinaryConstraint& c, NotNull<const Constraint> constraint, bool force);
+    bool tryDispatch(const SubtypeConstraint& c, NotNull<const Constraint> constraint);
+    bool tryDispatch(const PackSubtypeConstraint& c, NotNull<const Constraint> constraint);
+    bool tryDispatch(const GeneralizationConstraint& c, NotNull<const Constraint> constraint);
     bool tryDispatch(const IterableConstraint& c, NotNull<const Constraint> constraint, bool force);
     bool tryDispatch(const NameConstraint& c, NotNull<const Constraint> constraint);
     bool tryDispatch(const TypeAliasExpansionConstraint& c, NotNull<const Constraint> constraint);
     bool tryDispatch(const FunctionCallConstraint& c, NotNull<const Constraint> constraint);
+    bool tryDispatch(const FunctionCheckConstraint& c, NotNull<const Constraint> constraint);
     bool tryDispatch(const PrimitiveTypeConstraint& c, NotNull<const Constraint> constraint);
     bool tryDispatch(const HasPropConstraint& c, NotNull<const Constraint> constraint);
-    bool tryDispatch(const SetPropConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const SetIndexerConstraint& c, NotNull<const Constraint> constraint, bool force);
-    bool tryDispatch(const SingletonOrTopTypeConstraint& c, NotNull<const Constraint> constraint);
+
+
+    bool tryDispatchHasIndexer(
+        int& recursionDepth,
+        NotNull<const Constraint> constraint,
+        TypeId subjectType,
+        TypeId indexType,
+        TypeId resultType,
+        Set<TypeId>& seen
+    );
+    bool tryDispatch(const HasIndexerConstraint& c, NotNull<const Constraint> constraint);
+
+    bool tryDispatch(const AssignPropConstraint& c, NotNull<const Constraint> constraint);
+    bool tryDispatch(const AssignIndexConstraint& c, NotNull<const Constraint> constraint);
     bool tryDispatch(const UnpackConstraint& c, NotNull<const Constraint> constraint);
+    bool tryDispatch(const ReduceConstraint& c, NotNull<const Constraint> constraint, bool force);
+    bool tryDispatch(const ReducePackConstraint& c, NotNull<const Constraint> constraint, bool force);
+    bool tryDispatch(const EqualityConstraint& c, NotNull<const Constraint> constraint);
 
     // for a, ... in some_table do
     // also handles __iter metamethod
     bool tryDispatchIterableTable(TypeId iteratorTy, const IterableConstraint& c, NotNull<const Constraint> constraint, bool force);
 
     // for a, ... in next_function, t, ... do
-    bool tryDispatchIterableFunction(
-        TypeId nextTy, TypeId tableTy, TypeId firstIndexTy, const IterableConstraint& c, NotNull<const Constraint> constraint, bool force);
+    bool tryDispatchIterableFunction(TypeId nextTy, TypeId tableTy, const IterableConstraint& c, NotNull<const Constraint> constraint);
 
-    std::pair<std::vector<TypeId>, std::optional<TypeId>> lookupTableProp(TypeId subjectType, const std::string& propName);
-    std::pair<std::vector<TypeId>, std::optional<TypeId>> lookupTableProp(TypeId subjectType, const std::string& propName, std::unordered_set<TypeId>& seen);
+    std::pair<std::vector<TypeId>, std::optional<TypeId>> lookupTableProp(
+        NotNull<const Constraint> constraint,
+        TypeId subjectType,
+        const std::string& propName,
+        ValueContext context,
+        bool inConditional = false,
+        bool suppressSimplification = false
+    );
+    std::pair<std::vector<TypeId>, std::optional<TypeId>> lookupTableProp(
+        NotNull<const Constraint> constraint,
+        TypeId subjectType,
+        const std::string& propName,
+        ValueContext context,
+        bool inConditional,
+        bool suppressSimplification,
+        DenseHashSet<TypeId>& seen
+    );
+
+    /**
+     * Generate constraints to unpack the types of srcTypes and assign each
+     * value to the corresponding BlockedType in destTypes.
+     *
+     * This function also overwrites the owners of each BlockedType.  This is
+     * okay because this function is only used to decompose IterableConstraint
+     * into an UnpackConstraint.
+     *
+     * @param destTypes A vector of types comprised of BlockedTypes.
+     * @param srcTypes A TypePack that represents rvalues to be assigned.
+     * @returns The underlying UnpackConstraint.  There's a bit of code in
+     * iteration that needs to pass blocks on to this constraint.
+     */
+    NotNull<const Constraint> unpackAndAssign(const std::vector<TypeId> destTypes, TypePackId srcTypes, NotNull<const Constraint> constraint);
 
     void block(NotNull<const Constraint> target, NotNull<const Constraint> constraint);
     /**
@@ -143,53 +249,55 @@ struct ConstraintSolver
     bool block(TypeId target, NotNull<const Constraint> constraint);
     bool block(TypePackId target, NotNull<const Constraint> constraint);
 
-    // Traverse the type.  If any blocked or pending types are found, block
-    // the constraint on them.
+    // Block on every target
+    template<typename T>
+    bool block(const T& targets, NotNull<const Constraint> constraint)
+    {
+        for (TypeId target : targets)
+            block(target, constraint);
+
+        return false;
+    }
+
+    /**
+     * For all constraints that are blocked on one constraint, make them block
+     * on a new constraint.
+     * @param source the constraint to copy blocks from.
+     * @param addition the constraint that other constraints should now block on.
+     */
+    void inheritBlocks(NotNull<const Constraint> source, NotNull<const Constraint> addition);
+
+    // Traverse the type.  If any pending types are found, block the constraint
+    // on them.
     //
     // Returns false if a type blocks the constraint.
     //
     // FIXME: This use of a boolean for the return result is an appalling
     // interface.
-    bool recursiveBlock(TypeId target, NotNull<const Constraint> constraint);
-    bool recursiveBlock(TypePackId target, NotNull<const Constraint> constraint);
+    bool blockOnPendingTypes(TypeId target, NotNull<const Constraint> constraint);
+    bool blockOnPendingTypes(TypePackId target, NotNull<const Constraint> constraint);
 
     void unblock(NotNull<const Constraint> progressed);
-    void unblock(TypeId progressed);
-    void unblock(TypePackId progressed);
-    void unblock(const std::vector<TypeId>& types);
-    void unblock(const std::vector<TypePackId>& packs);
+    void unblock(TypeId progressed, Location location);
+    void unblock(TypePackId progressed, Location location);
+    void unblock(const std::vector<TypeId>& types, Location location);
+    void unblock(const std::vector<TypePackId>& packs, Location location);
 
     /**
      * @returns true if the TypeId is in a blocked state.
      */
-    bool isBlocked(TypeId ty);
+    bool isBlocked(TypeId ty) const;
 
     /**
      * @returns true if the TypePackId is in a blocked state.
      */
-    bool isBlocked(TypePackId tp);
+    bool isBlocked(TypePackId tp) const;
 
     /**
      * Returns whether the constraint is blocked on anything.
      * @param constraint the constraint to check.
      */
-    bool isBlocked(NotNull<const Constraint> constraint);
-
-    /**
-     * Creates a new Unifier and performs a single unification operation. Commits
-     * the result.
-     * @param subType the sub-type to unify.
-     * @param superType the super-type to unify.
-     */
-    void unify(TypeId subType, TypeId superType, NotNull<Scope> scope);
-
-    /**
-     * Creates a new Unifier and performs a single unification operation. Commits
-     * the result.
-     * @param subPack the sub-type pack to unify.
-     * @param superPack the super-type pack to unify.
-     */
-    void unify(TypePackId subPack, TypePackId superPack, NotNull<Scope> scope);
+    bool isBlocked(NotNull<const Constraint> constraint) const;
 
     /** Pushes a new solver constraint to the solver.
      * @param cv the body of the constraint.
@@ -210,7 +318,48 @@ struct ConstraintSolver
     void reportError(TypeErrorData&& data, const Location& location);
     void reportError(TypeError e);
 
-private:
+    /**
+     * Shifts the count of references from `source` to `target`. This should be paired
+     * with any instance of binding a free type in order to maintain accurate refcounts.
+     * If `target` is not a free type, this is a noop.
+     * @param source the free type which is being bound
+     * @param target the type which the free type is being bound to
+     */
+    void shiftReferences(TypeId source, TypeId target);
+
+    /**
+     * Generalizes the given free type if the reference counting allows it.
+     * @param the scope to generalize in
+     * @param type the free type we want to generalize
+     * @returns a non-free type that generalizes the argument, or `std::nullopt` if one
+     * does not exist
+     */
+    std::optional<TypeId> generalizeFreeType(NotNull<Scope> scope, TypeId type, bool avoidSealingTables = false);
+
+    /**
+     * Checks the existing set of constraints to see if there exist any that contain
+     * the provided free type, indicating that it is not yet ready to be replaced by
+     * one of its bounds.
+     * @param ty the free type that to check for related constraints
+     * @returns whether or not it is unsafe to replace the free type by one of its bounds
+     */
+    bool hasUnresolvedConstraints(TypeId ty);
+
+    /** Attempts to unify subTy with superTy.  If doing so would require unifying
+     * BlockedTypes, fail and block the constraint on those BlockedTypes.
+     *
+     * Note: TID can only be TypeId or TypePackId.
+     *
+     * If unification fails, replace all free types with errorType.
+     *
+     * If unification succeeds, unblock every type changed by the unification.
+     *
+     * @returns true if the unification succeeded.  False if the unification was
+     * too complex.
+     */
+    template<typename TID>
+    bool unify(NotNull<const Constraint> constraint, TID subTy, TID superTy);
+
     /**
      * Marks a constraint as being blocked on a type or type pack. The constraint
      * solver will not attempt to dispatch blocked constraints until their
@@ -218,7 +367,7 @@ private:
      * @param target the type or type pack pointer that the constraint is blocked on.
      * @param constraint the constraint to block.
      **/
-    void block_(BlockedConstraintId target, NotNull<const Constraint> constraint);
+    bool block_(BlockedConstraintId target, NotNull<const Constraint> constraint);
 
     /**
      * Informs the solver that progress has been made on a type or type pack. The
@@ -228,10 +377,20 @@ private:
      **/
     void unblock_(BlockedConstraintId progressed);
 
+    /**
+     * Reproduces any constraints necessary for new types that are copied when applying a substitution.
+     * At the time of writing, this pertains only to type functions.
+     * @param subst the substitution that was applied
+     **/
+    void reproduceConstraints(NotNull<Scope> scope, const Location& location, const Substitution& subst);
+
     TypeId errorRecoveryType() const;
     TypePackId errorRecoveryTypePack() const;
 
-    TypeId unionOfTypes(TypeId a, TypeId b, NotNull<Scope> scope, bool unifyFreeTypes);
+    TypePackId anyifyModuleReturnTypePackGenerics(TypePackId tp);
+
+    void throwTimeLimitError() const;
+    void throwUserCancelError() const;
 
     ToStringOptions opts;
 };

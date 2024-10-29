@@ -46,7 +46,7 @@ int luaV_tostring(lua_State* L, StkId obj)
 const float* luaV_tovector(const TValue* obj)
 {
     if (ttisvector(obj))
-        return obj->value.v;
+        return vvalue(obj);
 
     return nullptr;
 }
@@ -209,15 +209,23 @@ static const TValue* get_compTM(lua_State* L, Table* mt1, Table* mt2, TMS event)
     return NULL;
 }
 
-static int call_orderTM(lua_State* L, const TValue* p1, const TValue* p2, TMS event)
+static int call_orderTM(lua_State* L, const TValue* p1, const TValue* p2, TMS event, bool error = false)
 {
     const TValue* tm1 = luaT_gettmbyobj(L, p1, event);
     const TValue* tm2;
     if (ttisnil(tm1))
+    {
+        if (error)
+            luaG_ordererror(L, p1, p2, event);
         return -1; // no metamethod?
+    }
     tm2 = luaT_gettmbyobj(L, p2, event);
     if (!luaO_rawequalObj(tm1, tm2)) // different metamethods?
+    {
+        if (error)
+            luaG_ordererror(L, p1, p2, event);
         return -1;
+    }
     callTMres(L, L->top, tm1, p1, p2);
     return !l_isfalse(L->top);
 }
@@ -247,16 +255,14 @@ int luaV_strcmp(const TString* ls, const TString* rs)
 
 int luaV_lessthan(lua_State* L, const TValue* l, const TValue* r)
 {
-    int res;
-    if (ttype(l) != ttype(r))
+    if (LUAU_UNLIKELY(ttype(l) != ttype(r)))
         luaG_ordererror(L, l, r, TM_LT);
-    else if (ttisnumber(l))
+    else if (LUAU_LIKELY(ttisnumber(l)))
         return luai_numlt(nvalue(l), nvalue(r));
     else if (ttisstring(l))
         return luaV_strcmp(tsvalue(l), tsvalue(r)) < 0;
-    else if ((res = call_orderTM(L, l, r, TM_LT)) == -1)
-        luaG_ordererror(L, l, r, TM_LT);
-    return res;
+    else
+        return call_orderTM(L, l, r, TM_LT, /* error= */ true);
 }
 
 int luaV_lessequal(lua_State* L, const TValue* l, const TValue* r)
@@ -290,7 +296,7 @@ int luaV_equalval(lua_State* L, const TValue* t1, const TValue* t2)
     case LUA_TBOOLEAN:
         return bvalue(t1) == bvalue(t2); // true must be 1 !!
     case LUA_TLIGHTUSERDATA:
-        return pvalue(t1) == pvalue(t2);
+        return pvalue(t1) == pvalue(t2) && lightuserdatatag(t1) == lightuserdatatag(t2);
     case LUA_TUSERDATA:
     {
         tm = get_compTM(L, uvalue(t1)->metatable, uvalue(t2)->metatable, TM_EQ);
@@ -375,13 +381,128 @@ void luaV_concat(lua_State* L, int total, int last)
     } while (total > 1); // repeat until only 1 result left
 }
 
-void luaV_doarith(lua_State* L, StkId ra, const TValue* rb, const TValue* rc, TMS op)
+template<TMS op>
+void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc)
 {
     TValue tempb, tempc;
     const TValue *b, *c;
+
+    // vector operations that we support:
+    // v+v  v-v  -v    (add/sub/neg)
+    // v*v  s*v  v*s   (mul)
+    // v/v  s/v  v/s   (div)
+    // v//v s//v v//s  (floor div)
+    // v<>v v><v       (max/min)
+    const float* vb = ttisvector(rb) ? vvalue(rb) : nullptr;
+    const float* vc = ttisvector(rc) ? vvalue(rc) : nullptr;
+
+    if (vb && vc)
+    {
+        switch (op)
+        {
+        case TM_ADD:
+            setvvalue(ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3]);
+            return;
+        case TM_SUB:
+            setvvalue(ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3]);
+            return;
+        case TM_MUL:
+            setvvalue(ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3]);
+            return;
+        case TM_DIV:
+            setvvalue(ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3]);
+            return;
+        case TM_IDIV:
+            setvvalue(
+                ra,
+                float(luai_numidiv(vb[0], vc[0])),
+                float(luai_numidiv(vb[1], vc[1])),
+                float(luai_numidiv(vb[2], vc[2])),
+                float(luai_numidiv(vb[3], vc[3]))
+            );
+            return;
+        case TM_UNM:
+            setvvalue(ra, -vb[0], -vb[1], -vb[2], -vb[3]);
+            return;
+        case TM_MAXOF:
+            setvvalue(
+                ra,
+                float(luai_nummax(vb[0], vc[0])),
+                float(luai_nummax(vb[1], vc[1])),
+                float(luai_nummax(vb[2], vc[2])),
+                float(luai_nummax(vb[3], vc[3]))
+                );
+            return;
+        case TM_MINOF:
+            setvvalue(
+                ra,
+                float(luai_nummin(vb[0], vc[0])),
+                float(luai_nummin(vb[1], vc[1])),
+                float(luai_nummin(vb[2], vc[2])),
+                float(luai_nummin(vb[3], vc[3]))
+                );
+            return;
+        default:
+            break;
+        }
+    }
+    else if (vb)
+    {
+        c = ttisnumber(rc) ? rc : luaV_tonumber(rc, &tempc);
+
+        if (c)
+        {
+            float nc = cast_to(float, nvalue(c));
+
+            switch (op)
+            {
+            case TM_MUL:
+                setvvalue(ra, vb[0] * nc, vb[1] * nc, vb[2] * nc, vb[3] * nc);
+                return;
+            case TM_DIV:
+                setvvalue(ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc);
+                return;
+            case TM_IDIV:
+                setvvalue(
+                    ra, float(luai_numidiv(vb[0], nc)), float(luai_numidiv(vb[1], nc)), float(luai_numidiv(vb[2], nc)), float(luai_numidiv(vb[3], nc))
+                );
+                return;
+            default:
+                break;
+            }
+        }
+    }
+    else if (vc)
+    {
+        b = ttisnumber(rb) ? rb : luaV_tonumber(rb, &tempb);
+
+        if (b)
+        {
+            float nb = cast_to(float, nvalue(b));
+
+            switch (op)
+            {
+            case TM_MUL:
+                setvvalue(ra, nb * vc[0], nb * vc[1], nb * vc[2], nb * vc[3]);
+                return;
+            case TM_DIV:
+                setvvalue(ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3]);
+                return;
+            case TM_IDIV:
+                setvvalue(
+                    ra, float(luai_numidiv(nb, vc[0])), float(luai_numidiv(nb, vc[1])), float(luai_numidiv(nb, vc[2])), float(luai_numidiv(nb, vc[3]))
+                );
+                return;
+            default:
+                break;
+            }
+        }
+    }
+
     if ((b = luaV_tonumber(rb, &tempb)) != NULL && (c = luaV_tonumber(rc, &tempc)) != NULL)
     {
         double nb = nvalue(b), nc = nvalue(c);
+
         switch (op)
         {
         case TM_ADD:
@@ -396,6 +517,9 @@ void luaV_doarith(lua_State* L, StkId ra, const TValue* rb, const TValue* rc, TM
         case TM_DIV:
             setnvalue(ra, luai_numdiv(nb, nc));
             break;
+        case TM_IDIV:
+            setnvalue(ra, luai_numidiv(nb, nc));
+            break;
         case TM_MOD:
             setnvalue(ra, luai_nummod(nb, nc));
             break;
@@ -405,8 +529,29 @@ void luaV_doarith(lua_State* L, StkId ra, const TValue* rb, const TValue* rc, TM
         case TM_UNM:
             setnvalue(ra, luai_numunm(nb));
             break;
-        case TM_IDIV:
-            setnvalue(ra, luai_numidiv(nb, nc));
+        case TM_MAXOF:
+            setnvalue(ra, luai_nummax(nb,nc));
+            break;
+        case TM_MINOF:
+            setnvalue(ra, luai_nummin(nb,nc));
+            break;
+        case TM_BOR:
+            setnvalue(ra, luai_numbor(nb,nc));
+            break;
+        case TM_BAND:
+            setnvalue(ra, luai_numband(nb,nc));
+            break;
+        case TM_BXOR:
+            setnvalue(ra, luai_numbxor(nb,nc));
+            break;
+        case TM_SHR:
+            setnvalue(ra, luai_numbsr(nb,nc));
+            break;
+        case TM_SHL:
+            setnvalue(ra, luai_numbsl(nb,nc));
+            break;
+        case TM_BNOT:
+            setnvalue(ra, luai_numbnot(nb));
             break;
         default:
             LUAU_ASSERT(0);
@@ -415,82 +560,30 @@ void luaV_doarith(lua_State* L, StkId ra, const TValue* rb, const TValue* rc, TM
     }
     else
     {
-        // vector operations that we support: v + v, v - v, v * v, s * v, v * s, v / v, s / v, v / s, -v
-        const float* vb = luaV_tovector(rb);
-        const float* vc = luaV_tovector(rc);
-
-        if (vb && vc)
-        {
-            switch (op)
-            {
-            case TM_ADD:
-                setvvalue(ra, vb[0] + vc[0], vb[1] + vc[1], vb[2] + vc[2], vb[3] + vc[3]);
-                return;
-            case TM_SUB:
-                setvvalue(ra, vb[0] - vc[0], vb[1] - vc[1], vb[2] - vc[2], vb[3] - vc[3]);
-                return;
-            case TM_MUL:
-                setvvalue(ra, vb[0] * vc[0], vb[1] * vc[1], vb[2] * vc[2], vb[3] * vc[3]);
-                return;
-            case TM_DIV:
-                setvvalue(ra, vb[0] / vc[0], vb[1] / vc[1], vb[2] / vc[2], vb[3] / vc[3]);
-                return;
-            case TM_UNM:
-                setvvalue(ra, -vb[0], -vb[1], -vb[2], -vb[3]);
-                return;
-            default:
-                break;
-            }
-        }
-        else if (vb)
-        {
-            c = luaV_tonumber(rc, &tempc);
-
-            if (c)
-            {
-                float nc = cast_to(float, nvalue(c));
-
-                switch (op)
-                {
-                case TM_MUL:
-                    setvvalue(ra, vb[0] * nc, vb[1] * nc, vb[2] * nc, vb[3] * nc);
-                    return;
-                case TM_DIV:
-                    setvvalue(ra, vb[0] / nc, vb[1] / nc, vb[2] / nc, vb[3] / nc);
-                    return;
-                default:
-                    break;
-                }
-            }
-        }
-        else if (vc)
-        {
-            b = luaV_tonumber(rb, &tempb);
-
-            if (b)
-            {
-                float nb = cast_to(float, nvalue(b));
-
-                switch (op)
-                {
-                case TM_MUL:
-                    setvvalue(ra, nb * vc[0], nb * vc[1], nb * vc[2], nb * vc[3]);
-                    return;
-                case TM_DIV:
-                    setvvalue(ra, nb / vc[0], nb / vc[1], nb / vc[2], nb / vc[3]);
-                    return;
-                default:
-                    break;
-                }
-            }
-        }
-
         if (!call_binTM(L, rb, rc, ra, op))
         {
             luaG_aritherror(L, rb, rc, op);
         }
     }
 }
+
+// instantiate private template implementation for external callers
+template void luaV_doarithimpl<TM_ADD>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_SUB>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_MUL>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_DIV>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_IDIV>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_MOD>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_POW>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_UNM>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_MAXOF>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_MINOF>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_BOR>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_BAND>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_BXOR>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_SHR>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_SHL>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
+template void luaV_doarithimpl<TM_BNOT>(lua_State* L, StkId ra, const TValue* rb, const TValue* rc);
 
 void luaV_dolen(lua_State* L, StkId ra, const TValue* rb)
 {

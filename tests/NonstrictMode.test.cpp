@@ -5,6 +5,7 @@
 
 #include "Fixture.h"
 
+#include "ScopedFlags.h"
 #include "doctest.h"
 
 #include <algorithm>
@@ -15,6 +16,7 @@ TEST_SUITE_BEGIN("NonstrictModeTests");
 
 TEST_CASE_FIXTURE(Fixture, "infer_nullary_function")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         function foo(x, y) end
@@ -37,6 +39,7 @@ TEST_CASE_FIXTURE(Fixture, "infer_nullary_function")
 
 TEST_CASE_FIXTURE(Fixture, "infer_the_maximum_number_of_values_the_function_could_return")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         function getMinCardCountForWidth(width)
@@ -64,7 +67,7 @@ TEST_CASE_FIXTURE(Fixture, "return_annotation_is_still_checked")
 
     LUAU_REQUIRE_ERROR_COUNT(1, result);
 
-    REQUIRE_NE(*typeChecker.anyType, *requireType("foo"));
+    REQUIRE_NE(*builtinTypes->anyType, *requireType("foo"));
 }
 #endif
 
@@ -100,6 +103,7 @@ TEST_CASE_FIXTURE(Fixture, "inconsistent_return_types_are_ok")
 
 TEST_CASE_FIXTURE(Fixture, "locals_are_any_by_default")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         local m = 55
@@ -107,7 +111,7 @@ TEST_CASE_FIXTURE(Fixture, "locals_are_any_by_default")
 
     LUAU_REQUIRE_NO_ERRORS(result);
 
-    CHECK_EQ(*typeChecker.anyType, *requireType("m"));
+    CHECK_EQ(*builtinTypes->anyType, *requireType("m"));
 }
 
 TEST_CASE_FIXTURE(Fixture, "parameters_having_type_any_are_optional")
@@ -126,6 +130,7 @@ TEST_CASE_FIXTURE(Fixture, "parameters_having_type_any_are_optional")
 
 TEST_CASE_FIXTURE(Fixture, "local_tables_are_not_any")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         local T = {}
@@ -143,6 +148,7 @@ TEST_CASE_FIXTURE(Fixture, "local_tables_are_not_any")
 
 TEST_CASE_FIXTURE(Fixture, "offer_a_hint_if_you_use_a_dot_instead_of_a_colon")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         local T = {}
@@ -157,6 +163,7 @@ TEST_CASE_FIXTURE(Fixture, "offer_a_hint_if_you_use_a_dot_instead_of_a_colon")
 
 TEST_CASE_FIXTURE(Fixture, "table_props_are_any")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         local T = {}
@@ -170,14 +177,15 @@ TEST_CASE_FIXTURE(Fixture, "table_props_are_any")
     REQUIRE(ttv != nullptr);
 
     REQUIRE(ttv->props.count("foo"));
-    TypeId fooProp = ttv->props["foo"].type;
+    TypeId fooProp = ttv->props["foo"].type();
     REQUIRE(fooProp != nullptr);
 
-    CHECK_EQ(*fooProp, *typeChecker.anyType);
+    CHECK_EQ(*fooProp, *builtinTypes->anyType);
 }
 
 TEST_CASE_FIXTURE(Fixture, "inline_table_props_are_also_any")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
         local T = {
@@ -192,9 +200,9 @@ TEST_CASE_FIXTURE(Fixture, "inline_table_props_are_also_any")
     TableType* ttv = getMutable<TableType>(requireType("T"));
     REQUIRE_MESSAGE(ttv, "Should be a table: " << toString(requireType("T")));
 
-    CHECK_EQ(*typeChecker.anyType, *ttv->props["one"].type);
-    CHECK_EQ(*typeChecker.anyType, *ttv->props["two"].type);
-    CHECK_MESSAGE(get<FunctionType>(follow(ttv->props["three"].type)), "Should be a function: " << *ttv->props["three"].type);
+    CHECK_EQ(*builtinTypes->anyType, *ttv->props["one"].type());
+    CHECK_EQ(*builtinTypes->anyType, *ttv->props["two"].type());
+    CHECK_MESSAGE(get<FunctionType>(follow(ttv->props["three"].type())), "Should be a function: " << *ttv->props["three"].type());
 }
 
 TEST_CASE_FIXTURE(BuiltinsFixture, "for_in_iterator_variables_are_any")
@@ -253,6 +261,7 @@ TEST_CASE_FIXTURE(Fixture, "delay_function_does_not_require_its_argument_to_retu
 
 TEST_CASE_FIXTURE(Fixture, "inconsistent_module_return_types_are_ok")
 {
+    ScopedFastFlag sff{FFlag::LuauSolverV2, false};
     CheckResult result = check(R"(
         --!nonstrict
 

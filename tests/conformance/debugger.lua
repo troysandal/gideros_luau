@@ -69,4 +69,34 @@ end
 
 breakpointSetFromMetamethod()
 
+-- break inside function with non-monotonic line info
+local function cond(a)
+	if a then
+		print('a')
+	else
+		print('not a')
+	end
+end
+
+breakpoint(77)
+
+pcall(cond, nil) -- prevent inlining
+
+local function continueLocals()
+	repeat
+		local x = tostring(game)
+		do continue end
+		local a1, a2, a3, a4, a5, a6
+	until pcall(
+		function()
+			print("1")
+			print("2")
+		end, nil
+	) or true
+end
+
+breakpoint(93)
+
+pcall(continueLocals, nil) -- prevent inlining
+
 return 'OK'

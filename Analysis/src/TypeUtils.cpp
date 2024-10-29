@@ -1,6 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/TypeUtils.h"
 
+#include "Luau/Common.h"
 #include "Luau/Normalize.h"
 #include "Luau/Scope.h"
 #include "Luau/ToString.h"
@@ -8,11 +9,96 @@
 
 #include <algorithm>
 
+LUAU_FASTFLAG(LuauSolverV2);
+
 namespace Luau
 {
 
+bool inConditional(const TypeContext& context)
+{
+    return context == TypeContext::Condition;
+}
+
+bool occursCheck(TypeId needle, TypeId haystack)
+{
+    LUAU_ASSERT(get<BlockedType>(needle) || get<PendingExpansionType>(needle));
+    haystack = follow(haystack);
+
+    auto checkHaystack = [needle](TypeId haystack)
+    {
+        return occursCheck(needle, haystack);
+    };
+
+    if (needle == haystack)
+        return true;
+    else if (auto ut = get<UnionType>(haystack))
+        return std::any_of(begin(ut), end(ut), checkHaystack);
+    else if (auto it = get<IntersectionType>(haystack))
+        return std::any_of(begin(it), end(it), checkHaystack);
+
+    return false;
+}
+
+// FIXME: Property is quite large.
+//
+// Returning it on the stack like this isn't great. We'd like to just return a
+// const Property*, but we mint a property of type any if the subject type is
+// any.
+std::optional<Property> findTableProperty(NotNull<BuiltinTypes> builtinTypes, ErrorVec& errors, TypeId ty, const std::string& name, Location location)
+{
+    if (get<AnyType>(ty))
+        return Property::rw(ty);
+
+    if (const TableType* tableType = getTableType(ty))
+    {
+        const auto& it = tableType->props.find(name);
+        if (it != tableType->props.end())
+            return it->second;
+    }
+
+    std::optional<TypeId> mtIndex = findMetatableEntry(builtinTypes, errors, ty, "__index", location);
+    int count = 0;
+    while (mtIndex)
+    {
+        TypeId index = follow(*mtIndex);
+
+        if (count >= 100)
+            return std::nullopt;
+
+        ++count;
+
+        if (const auto& itt = getTableType(index))
+        {
+            const auto& fit = itt->props.find(name);
+            if (fit != itt->props.end())
+                return fit->second.type();
+        }
+        else if (const auto& itf = get<FunctionType>(index))
+        {
+            std::optional<TypeId> r = first(follow(itf->retTypes));
+            if (!r)
+                return builtinTypes->nilType;
+            else
+                return *r;
+        }
+        else if (get<AnyType>(index))
+            return builtinTypes->anyType;
+        else
+            errors.push_back(TypeError{location, GenericError{"__index should either be a function or table. Got " + toString(index)}});
+
+        mtIndex = findMetatableEntry(builtinTypes, errors, *mtIndex, "__index", location);
+    }
+
+    return std::nullopt;
+}
+
 std::optional<TypeId> findMetatableEntry(
-    NotNull<BuiltinTypes> builtinTypes, ErrorVec& errors, TypeId type, const std::string& entry, Location location)
+    NotNull<BuiltinTypes> builtinTypes,
+    ErrorVec& errors,
+    TypeId type,
+    const std::string& entry,
+    Location location
+)
 {
     type = follow(type);
 
@@ -34,13 +120,30 @@ std::optional<TypeId> findMetatableEntry(
 
     auto it = mtt->props.find(entry);
     if (it != mtt->props.end())
-        return it->second.type;
+        return it->second.type();
     else
         return std::nullopt;
 }
 
 std::optional<TypeId> findTablePropertyRespectingMeta(
-    NotNull<BuiltinTypes> builtinTypes, ErrorVec& errors, TypeId ty, const std::string& name, Location location)
+    NotNull<BuiltinTypes> builtinTypes,
+    ErrorVec& errors,
+    TypeId ty,
+    const std::string& name,
+    Location location
+)
+{
+    return findTablePropertyRespectingMeta(builtinTypes, errors, ty, name, ValueContext::RValue, location);
+}
+
+std::optional<TypeId> findTablePropertyRespectingMeta(
+    NotNull<BuiltinTypes> builtinTypes,
+    ErrorVec& errors,
+    TypeId ty,
+    const std::string& name,
+    ValueContext context,
+    Location location
+)
 {
     if (get<AnyType>(ty))
         return ty;
@@ -49,7 +152,20 @@ std::optional<TypeId> findTablePropertyRespectingMeta(
     {
         const auto& it = tableType->props.find(name);
         if (it != tableType->props.end())
-            return it->second.type;
+        {
+            if (FFlag::LuauSolverV2)
+            {
+                switch (context)
+                {
+                case ValueContext::RValue:
+                    return it->second.readTy;
+                case ValueContext::LValue:
+                    return it->second.writeTy;
+                }
+            }
+            else
+                return it->second.type();
+        }
     }
 
     std::optional<TypeId> mtIndex = findMetatableEntry(builtinTypes, errors, ty, "__index", location);
@@ -67,7 +183,7 @@ std::optional<TypeId> findTablePropertyRespectingMeta(
         {
             const auto& fit = itt->props.find(name);
             if (fit != itt->props.end())
-                return fit->second.type;
+                return fit->second.type();
         }
         else if (const auto& itf = get<FunctionType>(index))
         {
@@ -118,7 +234,12 @@ std::pair<size_t, std::optional<size_t>> getParameterExtents(const TxnLog* log, 
 }
 
 TypePack extendTypePack(
-    TypeArena& arena, NotNull<BuiltinTypes> builtinTypes, TypePackId pack, size_t length, std::vector<std::optional<TypeId>> overrides)
+    TypeArena& arena,
+    NotNull<BuiltinTypes> builtinTypes,
+    TypePackId pack,
+    size_t length,
+    std::vector<std::optional<TypeId>> overrides
+)
 {
     TypePack result;
 
@@ -180,6 +301,8 @@ TypePack extendTypePack(
 
             TypePack newPack;
             newPack.tail = arena.freshTypePack(ftp->scope);
+            if (FFlag::LuauSolverV2)
+                result.tail = newPack.tail;
             size_t overridesIndex = 0;
             while (result.head.size() < length)
             {
@@ -190,7 +313,13 @@ TypePack extendTypePack(
                 }
                 else
                 {
-                    t = arena.freshType(ftp->scope);
+                    if (FFlag::LuauSolverV2)
+                    {
+                        FreeType ft{ftp->scope, builtinTypes->neverType, builtinTypes->unknownType};
+                        t = arena.addType(ft);
+                    }
+                    else
+                        t = arena.freshType(ftp->scope);
                 }
 
                 newPack.head.push_back(t);
@@ -294,5 +423,124 @@ TypeId stripNil(NotNull<BuiltinTypes> builtinTypes, TypeArena& arena, TypeId ty)
 
     return follow(ty);
 }
+
+ErrorSuppression shouldSuppressErrors(NotNull<Normalizer> normalizer, TypeId ty)
+{
+    LUAU_ASSERT(FFlag::LuauSolverV2);
+    std::shared_ptr<const NormalizedType> normType = normalizer->normalize(ty);
+
+    if (!normType)
+        return ErrorSuppression::NormalizationFailed;
+
+    return (normType->shouldSuppressErrors()) ? ErrorSuppression::Suppress : ErrorSuppression::DoNotSuppress;
+}
+
+ErrorSuppression shouldSuppressErrors(NotNull<Normalizer> normalizer, TypePackId tp)
+{
+    auto [tys, tail] = flatten(tp);
+
+    // check the head, one type at a time
+    for (TypeId ty : tys)
+    {
+        auto result = shouldSuppressErrors(normalizer, ty);
+        if (result != ErrorSuppression::DoNotSuppress)
+            return result;
+    }
+
+    // check the tail if we have one and it's finite
+    if (tail && tp != tail && finite(*tail))
+        return shouldSuppressErrors(normalizer, *tail);
+
+    return ErrorSuppression::DoNotSuppress;
+}
+
+// This is a useful helper because it is often the case that we are looking at specifically a pair of types that might suppress.
+ErrorSuppression shouldSuppressErrors(NotNull<Normalizer> normalizer, TypeId ty1, TypeId ty2)
+{
+    auto result = shouldSuppressErrors(normalizer, ty1);
+
+    // if ty1 is do not suppress, ty2 determines our overall behavior
+    if (result == ErrorSuppression::DoNotSuppress)
+        return shouldSuppressErrors(normalizer, ty2);
+
+    // otherwise, ty1 is either suppress or normalization failure which are both the appropriate overarching result
+    return result;
+}
+
+ErrorSuppression shouldSuppressErrors(NotNull<Normalizer> normalizer, TypePackId tp1, TypePackId tp2)
+{
+    auto result = shouldSuppressErrors(normalizer, tp1);
+
+    // if tp1 is do not suppress, tp2 determines our overall behavior
+    if (result == ErrorSuppression::DoNotSuppress)
+        return shouldSuppressErrors(normalizer, tp2);
+
+    // otherwise, tp1 is either suppress or normalization failure which are both the appropriate overarching result
+    return result;
+}
+
+bool isLiteral(const AstExpr* expr)
+{
+    return (
+        expr->is<AstExprTable>() || expr->is<AstExprFunction>() || expr->is<AstExprConstantNumber>() || expr->is<AstExprConstantString>() ||
+        expr->is<AstExprConstantBool>() || expr->is<AstExprConstantNil>()
+    );
+}
+/**
+ * Visitor which, given an expression and a mapping from expression to TypeId,
+ * determines if there are any literal expressions that contain blocked types.
+ * This is used for bi-directional inference: we want to "apply" a type from
+ * a function argument or a type annotation to a literal.
+ */
+class BlockedTypeInLiteralVisitor : public AstVisitor
+{
+public:
+    explicit BlockedTypeInLiteralVisitor(NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes, NotNull<std::vector<TypeId>> toBlock)
+        : astTypes_{astTypes}
+        , toBlock_{toBlock}
+    {
+    }
+    bool visit(AstNode*) override
+    {
+        return false;
+    }
+
+    bool visit(AstExpr* e) override
+    {
+        auto ty = astTypes_->find(e);
+        if (ty && (get<BlockedType>(follow(*ty)) != nullptr))
+        {
+            toBlock_->push_back(*ty);
+        }
+        return isLiteral(e) || e->is<AstExprGroup>();
+    }
+
+private:
+    NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes_;
+    NotNull<std::vector<TypeId>> toBlock_;
+};
+
+std::vector<TypeId> findBlockedTypesIn(AstExprTable* expr, NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes)
+{
+    std::vector<TypeId> toBlock;
+    BlockedTypeInLiteralVisitor v{astTypes, NotNull{&toBlock}};
+    expr->visit(&v);
+    return toBlock;
+}
+
+std::vector<TypeId> findBlockedArgTypesIn(AstExprCall* expr, NotNull<DenseHashMap<const AstExpr*, TypeId>> astTypes)
+{
+    std::vector<TypeId> toBlock;
+    BlockedTypeInLiteralVisitor v{astTypes, NotNull{&toBlock}};
+    for (auto arg: expr->args)
+    {
+        if (isLiteral(arg) || arg->is<AstExprGroup>())
+        {
+            arg->visit(&v);
+        }
+    }
+    return toBlock;
+}
+
 
 } // namespace Luau

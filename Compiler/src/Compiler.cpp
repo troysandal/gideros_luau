@@ -214,11 +214,17 @@ struct Compiler
         bool self = func->self != 0;
         uint32_t fid = bytecode.beginFunction(uint8_t(self + func->args.size), func->vararg);
 
-        if (func->returnAnnotation) {
+        bool isShader=false;
+        for (auto it:func->attributes) {
+            if (it->type==AstAttr::Shader) isShader=true;
+        }
+        if ((!isShader)&&(func->returnAnnotation)) {
             AstTypeReference *returnType=(AstTypeReference *)func->returnAnnotation->types.data[0];
             if (returnType->name=="Shader")
-                bytecode.setPseudoCode(generatePseudoCode(func));
+                isShader=true;
         }
+        if (isShader)
+            bytecode.setPseudoCode(generatePseudoCode(func));
 
         setDebugLine(func);
 

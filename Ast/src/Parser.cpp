@@ -34,7 +34,11 @@ struct AttributeEntry
     AstAttr::Type type;
 };
 
-AttributeEntry kAttributeEntries[] = {{"@checked", AstAttr::Type::Checked}, {"@native", AstAttr::Type::Native}, {nullptr, AstAttr::Type::Checked}};
+AttributeEntry kAttributeEntries[] = {
+    {"@checked", AstAttr::Type::Checked},
+    {"@native", AstAttr::Type::Native},
+    {"@shader", AstAttr::Type::Shader},
+    {nullptr, AstAttr::Type::Checked}};
 
 ParseError::ParseError(const Location& location, const std::string& message)
     : location(location)

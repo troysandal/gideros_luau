@@ -208,6 +208,7 @@ public:
     {
         Checked,
         Native,
+        Shader,
     };
 
     AstAttr(const Location& location, Type type);

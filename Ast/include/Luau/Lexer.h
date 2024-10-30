@@ -79,7 +79,6 @@ struct Lexeme
         PowAssign,
         ConcatAssign,
 //GIDEROS ADDED
-        DivInt,
         MaxOf,
         MinOf,
         AngToRad,

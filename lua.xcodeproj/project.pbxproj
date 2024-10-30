@@ -50,6 +50,10 @@
 		03087B3A277EE070005D6D9B /* lbuiltins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1B277EE070005D6D9B /* lbuiltins.cpp */; };
 		03087B3B277EE070005D6D9B /* ldblib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1C277EE070005D6D9B /* ldblib.cpp */; };
 		032FC7C5278C277400DD298A /* lnumprint.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 032FC7C4278C277400DD298A /* lnumprint.cpp */; };
+		03A4070C2CD142D600D97912 /* Types.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A4070B2CD142D600D97912 /* Types.cpp */; };
+		03A4070D2CD142D600D97912 /* CostModel.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A407092CD142D600D97912 /* CostModel.cpp */; };
+		03A407112CD142E800D97912 /* lbuflib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A407102CD142E800D97912 /* lbuflib.cpp */; };
+		03A407122CD142E800D97912 /* lbuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A4070F2CD142E800D97912 /* lbuffer.cpp */; };
 		03EBB28D27ABED6800DBF3A4 /* Builtins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28527ABED6800DBF3A4 /* Builtins.cpp */; };
 		03EBB28E27ABED6800DBF3A4 /* ConstantFolding.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */; };
 		03EBB28F27ABED6800DBF3A4 /* ValueTracking.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28B27ABED6800DBF3A4 /* ValueTracking.cpp */; };
@@ -129,6 +133,13 @@
 		03087B1B277EE070005D6D9B /* lbuiltins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lbuiltins.cpp; sourceTree = "<group>"; };
 		03087B1C277EE070005D6D9B /* ldblib.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ldblib.cpp; sourceTree = "<group>"; };
 		032FC7C4278C277400DD298A /* lnumprint.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lnumprint.cpp; sourceTree = "<group>"; };
+		03A407082CD142D600D97912 /* CostModel.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CostModel.h; sourceTree = "<group>"; };
+		03A407092CD142D600D97912 /* CostModel.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CostModel.cpp; sourceTree = "<group>"; };
+		03A4070A2CD142D600D97912 /* Types.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Types.h; sourceTree = "<group>"; };
+		03A4070B2CD142D600D97912 /* Types.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Types.cpp; sourceTree = "<group>"; };
+		03A4070E2CD142E800D97912 /* lbuffer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lbuffer.h; sourceTree = "<group>"; };
+		03A4070F2CD142E800D97912 /* lbuffer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = lbuffer.cpp; sourceTree = "<group>"; };
+		03A407102CD142E800D97912 /* lbuflib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = lbuflib.cpp; sourceTree = "<group>"; };
 		03EBB28527ABED6800DBF3A4 /* Builtins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Builtins.cpp; sourceTree = "<group>"; };
 		03EBB28627ABED6800DBF3A4 /* TableShape.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TableShape.h; sourceTree = "<group>"; };
 		03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ConstantFolding.cpp; sourceTree = "<group>"; };
@@ -169,6 +180,10 @@
 		03087AE3277EE04D005D6D9B /* src */ = {
 			isa = PBXGroup;
 			children = (
+				03A407082CD142D600D97912 /* CostModel.h */,
+				03A407092CD142D600D97912 /* CostModel.cpp */,
+				03A4070A2CD142D600D97912 /* Types.h */,
+				03A4070B2CD142D600D97912 /* Types.cpp */,
 				03EBB28527ABED6800DBF3A4 /* Builtins.cpp */,
 				03EBB28A27ABED6800DBF3A4 /* Builtins.h */,
 				03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */,
@@ -189,6 +204,9 @@
 		03087AEC277EE070005D6D9B /* src */ = {
 			isa = PBXGroup;
 			children = (
+				03A4070E2CD142E800D97912 /* lbuffer.h */,
+				03A4070F2CD142E800D97912 /* lbuffer.cpp */,
+				03A407102CD142E800D97912 /* lbuflib.cpp */,
 				032FC7C4278C277400DD298A /* lnumprint.cpp */,
 				03087AED277EE070005D6D9B /* lmem.h */,
 				03087AEE277EE070005D6D9B /* lperf.cpp */,
@@ -313,6 +331,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				03A407112CD142E800D97912 /* lbuflib.cpp in Sources */,
+				03A407122CD142E800D97912 /* lbuffer.cpp in Sources */,
 				03087B34277EE070005D6D9B /* liolib.cpp in Sources */,
 				03087B26277EE070005D6D9B /* ludata.cpp in Sources */,
 				03087AE2277EE036005D6D9B /* Parser.cpp in Sources */,
@@ -320,6 +340,8 @@
 				03EBB28E27ABED6800DBF3A4 /* ConstantFolding.cpp in Sources */,
 				03087B27277EE070005D6D9B /* ldebug.cpp in Sources */,
 				03087B28277EE070005D6D9B /* lbaselib.cpp in Sources */,
+				03A4070C2CD142D600D97912 /* Types.cpp in Sources */,
+				03A4070D2CD142D600D97912 /* CostModel.cpp in Sources */,
 				03087B33277EE070005D6D9B /* lobject.cpp in Sources */,
 				03087AE1277EE036005D6D9B /* TimeTrace.cpp in Sources */,
 				03087B38277EE070005D6D9B /* linit.cpp in Sources */,

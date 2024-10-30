@@ -612,8 +612,17 @@ void luaV_dolen(lua_State* L, StkId ra, const TValue* rb)
         tm = luaT_gettmbyobj(L, rb, TM_LEN);
     }
 
-    if (ttisnil(tm))
+    if (ttisnil(tm)) {
+        switch (ttype(rb))
+        {
+            case LUA_TVECTOR:
+            {
+                setnvalue(ra, cast_num(luai_veclen(vvalue(rb))));
+                return;
+            }
+        }
         luaG_typeerror(L, rb, "get length of");
+    }
 
     StkId res = callTMres(L, ra, tm, rb, luaO_nilobject);
    //GIDEROS:hgy29:# (len) is used for int64 lib to construct a big int, so userdata is returned in this case

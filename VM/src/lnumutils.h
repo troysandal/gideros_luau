@@ -25,6 +25,18 @@
 #define luai_numbsl(a, b) (BINOP(a)<<BINOP(b))
 #define luai_numbnot(a) (~BINOP(a))
 
+inline double luai_veclen(const float* a)
+{
+    double ps=0;
+#if LUA_VECTOR_SIZE == 4
+    if (a[3]==a[3]) ps+=(a[3]*a[3]);
+#endif
+    if (a[2]==a[2]) ps+=(a[2]*a[2]);
+    ps+=(a[1]*a[1]);
+    ps+=(a[0]*a[0]);
+    return sqrt(ps);
+}
+
 inline bool luai_veceq(const float* a, const float* b)
 {
 #if LUA_VECTOR_SIZE == 4

@@ -667,6 +667,7 @@ int luaL_loadbuffer (lua_State *L, const char *buff, size_t size,
         Luau::CompileOptions opts;
         opts.debugLevel=2; //Full debug
         opts.optimizationLevel=2;
+        opts.vectorCtor="vector";
         result = compile(std::string(buff, size), name, opts);
         buff=result.data();
         size=result.size();

@@ -2191,6 +2191,7 @@ reentry:
                     else
                     {
                         // slow-path, may invoke C/Lua via metamethods
+                        luaunlock_table(h);
                         VM_PROTECT(luaV_dolen(L, ra, rb));
                         VM_NEXT();
                     }
@@ -2200,6 +2201,12 @@ reentry:
                 {
                     TString* ts = tsvalue(rb);
                     setnvalue(ra, cast_num(ts->len));
+                    VM_NEXT();
+                }
+                else if (ttisvector(rb)&&(
+                        (!(L->global->mt[LUA_TVECTOR]))||
+                        fastnotm(L->global->mt[LUA_TVECTOR]->metatable, TM_LEN)) ) {
+                    setnvalue(ra, cast_num(luai_veclen(vvalue(rb))));
                     VM_NEXT();
                 }
                 else

@@ -20,7 +20,7 @@ LUAU_FASTINTVARIABLE(LuauParseErrorLimit, 100)
 // flag so that we don't break production games by reverting syntax changes.
 // See docs/SyntaxChanges.md for an explanation.
 LUAU_FASTFLAGVARIABLE(LuauSolverV2, false)
-LUAU_FASTFLAGVARIABLE(LuauNativeAttribute, false)
+LUAU_FASTFLAGVARIABLE(LuauNativeAttribute, true)
 LUAU_FASTFLAGVARIABLE(LuauAttributeSyntaxFunExpr, false)
 LUAU_FASTFLAGVARIABLE(LuauUserDefinedTypeFunctionsSyntax2, false)
 LUAU_FASTFLAGVARIABLE(LuauAllowFragmentParsing, false)

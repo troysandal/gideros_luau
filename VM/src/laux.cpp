@@ -685,6 +685,16 @@ int luaL_loadfile (lua_State *L, const char *filename) {
 
 #include <string>
 #include "Luau/Compiler.h"
+#ifdef LUAU_ENABLE_CODEGEN
+#include "luacodegen.h"
+#endif
+void luaL_codegeninit(lua_State *L) {
+#ifdef LUAU_ENABLE_CODEGEN
+    if (luau_codegen_supported())
+        luau_codegen_create(L);
+#endif
+}
+
 int luaL_loadbuffer (lua_State *L, const char *buff, size_t size,
                                 const char *name) {
     std::string result;
@@ -697,7 +707,17 @@ int luaL_loadbuffer (lua_State *L, const char *buff, size_t size,
         buff=result.data();
         size=result.size();
     }
-    return luau_load(L,name,buff,size,0);
+    int nload=luau_load(L,name,buff,size,0);
+#ifdef LUAU_ENABLE_CODEGEN
+    if (nload<0) {
+        for (int k=nload;k<0;k++) {
+            lua_rawgeti(L,-1,-k);
+            luau_codegen_compile(L,-1);
+            lua_pop(L,1);
+        }
+    }
+#endif
+    return nload;
 }
 
 

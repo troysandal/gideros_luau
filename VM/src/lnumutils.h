@@ -37,6 +37,11 @@ inline double luai_veclen(const float* a)
     return sqrt(ps);
 }
 
+inline bool luai_coleq(const unsigned char* a, const unsigned char* b)
+{
+    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+}
+
 inline bool luai_veceq(const float* a, const float* b)
 {
 #if LUA_VECTOR_SIZE == 4

@@ -528,8 +528,6 @@ reentry:
                         if (unsigned(ic) < LUA_VECTOR_SIZE && name[1] == '\0')
                         {
                         	float v=rb->value.v[ic];
-                        	if ((ic==2)&&isnan(v)) v=0; //Automatic promotion: Z value is 0 if NaN (vec2)
-                        	if ((ic==3)&&isnan(v)) v=1; //Automatic promotion: W or A value is 1 if NaN (vec2 or vec3)
                             setnvalue(ra, v);
                             VM_NEXT();
                         }
@@ -554,6 +552,41 @@ reentry:
                         }
 
                         // fall through to slow path
+                    }
+                    else if (ttiscolor(rb))
+                    {
+                        // fast-path: quick case-insensitive comparison
+                        const char* name = getstr(tsvalue(kv));
+                        int ic = (name[0] | ' ') - 'a';
+                        ic=((ic>25)?'?':luau_vectorMap[ic])&0x0F;
+
+                        if (unsigned(ic) < 4 && name[1] == '\0')
+                        {
+                            float v=rb->value.col[ic]/255.0;
+                            setnvalue(ra, v);
+                            VM_NEXT();
+                        }
+
+                        fn = fasttm(L, L->global->mt[LUA_TCOLOR], TM_INDEX);
+
+                        if (fn && ttisfunction(fn) && clvalue(fn)->isC)
+                        {
+                            // note: it's safe to push arguments past top for complicated reasons (see top of the file)
+                            LUAU_ASSERT(L->top + 3 < L->stack + L->stacksize);
+                            StkId top = L->top;
+                            setobj2s(L, top + 0, fn);
+                            setobj2s(L, top + 1, rb);
+                            setobj2s(L, top + 2, kv);
+                            L->top = top + 3;
+
+                            L->cachedslot = LUAU_INSN_C(insn);
+                            VM_PROTECT(luaV_callTM(L, 2, LUAU_INSN_A(insn)));
+                            // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
+                            VM_PATCH_C(pc - 2, L->cachedslot);
+                            VM_NEXT();
+                        }
+
+                               // fall through to slow path
                     }
 
                     // fall through to slow path
@@ -644,11 +677,50 @@ reentry:
 
                         if (unsigned(ic) < LUA_VECTOR_SIZE && name[1] == '\0' && ttisnumber(ra))
                         {
-                        	rb->value.v[ic] = nvalue(ra);
+                            rb->value.v[ic] = nvalue(ra);
                             VM_NEXT();
                         }
 
                         fn = fasttm(L, L->global->mt[LUA_TVECTOR], TM_NEWINDEX);
+
+                        if (fn && ttisfunction(fn) && clvalue(fn)->isC)
+                        {
+                            // note: it's safe to push arguments past top for complicated reasons (see top of the file)
+                            LUAU_ASSERT(L->top + 4 < L->stack + L->stacksize);
+                            StkId top = L->top;
+                            setobj2s(L, top + 0, fn);
+                            setobj2s(L, top + 1, rb);
+                            setobj2s(L, top + 2, kv);
+                            setobj2s(L, top + 3, ra);
+                            L->top = top + 4;
+
+                            L->cachedslot = LUAU_INSN_C(insn);
+                            VM_PROTECT(luaV_callTM(L, 3, -1));
+                            // save cachedslot to accelerate future lookups; patches currently executing instruction since pc-2 rolls back two pc++
+                            VM_PATCH_C(pc - 2, L->cachedslot);
+                            VM_NEXT();
+                        }
+                        else
+                        {
+                            // slow-path, may invoke Lua calls via __index metamethod
+                            VM_PROTECT(luaV_settable(L, rb, kv, ra));
+                            VM_NEXT();
+                        }
+                    }
+                    else if (ttiscolor(rb))
+                    {
+                        // fast-path: quick case-insensitive comparison
+                        const char* name = getstr(tsvalue(kv));
+                        int ic = (name[0] | ' ') - 'a';
+                        ic=((ic>25)?'?':luau_vectorMap[ic])&0x0F;
+
+                        if (unsigned(ic) < 4 && name[1] == '\0' && ttisnumber(ra))
+                        {
+                            rb->value.col[ic] = nvalue(ra)*255;
+                            VM_NEXT();
+                        }
+
+                        fn = fasttm(L, L->global->mt[LUA_TCOLOR], TM_NEWINDEX);
 
                         if (fn && ttisfunction(fn) && clvalue(fn)->isC)
                         {
@@ -1184,6 +1256,11 @@ reentry:
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                         VM_NEXT();
 
+                    case LUA_TCOLOR:
+                        pc += luai_coleq(colvalue(ra), colvalue(rb)) ? LUAU_INSN_D(insn) : 1;
+                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
+                        VM_NEXT();
+
                     case LUA_TSTRING:
                     case LUA_TFUNCTION:
                     case LUA_TTHREAD:
@@ -1296,6 +1373,11 @@ reentry:
 
                     case LUA_TVECTOR:
                         pc += !luai_veceq(vvalue(ra), vvalue(rb)) ? LUAU_INSN_D(insn) : 1;
+                        LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
+                        VM_NEXT();
+
+                    case LUA_TCOLOR:
+                        pc += !luai_coleq(colvalue(ra), colvalue(rb)) ? LUAU_INSN_D(insn) : 1;
                         LUAU_ASSERT(unsigned(pc - cl->l.p->code) < unsigned(cl->l.p->sizecode));
                         VM_NEXT();
 

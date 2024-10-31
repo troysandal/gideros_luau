@@ -474,9 +474,9 @@ Constant foldBuiltin(int bfid, const Constant* args, size_t count)
         if (count >= 2 && args[0].type == Constant::Type_Number && args[1].type == Constant::Type_Number)
         {
             if (count == 2)
-                return cvector(args[0].valueNumber, args[1].valueNumber, nan(""), nan(""));
+                return cvector(args[0].valueNumber, args[1].valueNumber, 0, 0);
             else if (count == 3 && args[2].type == Constant::Type_Number)
-                return cvector(args[0].valueNumber, args[1].valueNumber, args[2].valueNumber, nan(""));
+                return cvector(args[0].valueNumber, args[1].valueNumber, args[2].valueNumber, 0);
             else if (count == 4 && args[2].type == Constant::Type_Number && args[3].type == Constant::Type_Number)
                 return cvector(args[0].valueNumber, args[1].valueNumber, args[2].valueNumber, args[3].valueNumber);
         }

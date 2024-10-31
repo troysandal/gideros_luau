@@ -76,6 +76,7 @@ enum lua_Type
     LUA_TLIGHTUSERDATA,
     LUA_TNUMBER,
     LUA_TVECTOR,
+	LUA_TCOLOR,
 
     LUA_TSTRING, // all types above this must be value types, all types below this must be GC types - see iscollectable
 
@@ -138,6 +139,7 @@ LUA_API void lua_xpush(lua_State* from, lua_State* to, int idx);
 
 LUA_API int lua_isnumber(lua_State* L, int idx);
 LUA_API int lua_isstring(lua_State* L, int idx);
+LUA_API int lua_iscolor(lua_State* L, int idx);
 LUA_API int lua_iscfunction(lua_State* L, int idx);
 LUA_API int lua_isLfunction(lua_State* L, int idx);
 LUA_API int lua_isuserdata(lua_State* L, int idx);
@@ -152,6 +154,7 @@ LUA_API double lua_tonumberx(lua_State* L, int idx, int* isnum);
 LUA_API int lua_tointegerx(lua_State* L, int idx, int* isnum);
 LUA_API unsigned lua_tounsignedx(lua_State* L, int idx, int* isnum);
 LUA_API const float* lua_tovector(lua_State* L, int idx);
+LUA_API int lua_tocolorf(lua_State* L, int idx, float *color);
 LUA_API int lua_toboolean(lua_State* L, int idx);
 LUA_API const char* lua_tolstring(lua_State* L, int idx, size_t* len);
 LUA_API const char* lua_tostringatom(lua_State* L, int idx, int* atom);
@@ -180,6 +183,7 @@ LUA_API void lua_pushvector(lua_State* L, float x, float y, float z, float w);
 #else
 LUA_API void lua_pushvector(lua_State* L, float x, float y, float z);
 #endif
+LUA_API void lua_pushcolorf(lua_State* L, float r, float g, float b, float a);
 LUA_API void lua_pushlstring(lua_State* L, const char* s, size_t l);
 LUA_API void lua_pushstring(lua_State* L, const char* s);
 LUA_API const char* lua_pushvfstring(lua_State* L, const char* fmt, va_list argp);

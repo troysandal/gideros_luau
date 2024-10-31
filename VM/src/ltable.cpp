@@ -126,6 +126,11 @@ static LuaNode* hashvec(const Table* t, const float* v)
     return hashpow2(t, h);
 }
 
+static LuaNode* hashcol(const Table* t, const unsigned char* v)
+{
+	uint32_t h=(v[3]<<24)|(v[2]<<16)|(v[1]<<8)|(v[0]);
+    return hashpow2(t, h);
+}
 /*
 ** returns the `main' position of an element in a table (that is, the index
 ** of its hash value)
@@ -138,6 +143,8 @@ static LuaNode* mainposition(const Table* t, const TValue* key)
         return hashnum(t, nvalue(key));
     case LUA_TVECTOR:
         return hashvec(t, vvalue(key));
+    case LUA_TCOLOR:
+        return hashcol(t, colvalue(key));
     case LUA_TSTRING:
         return hashstr(t, tsvalue(key));
     case LUA_TBOOLEAN:

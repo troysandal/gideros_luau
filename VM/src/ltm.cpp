@@ -20,6 +20,7 @@ const char* const luaT_typenames[] = {
     "userdata",
     "number",
     "vector",
+    "color",
 
     "string",
 

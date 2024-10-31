@@ -97,6 +97,7 @@ typedef union
     double n;
     int b;
     float v[2]; // v[0], v[1] live here; v[2] lives in TValue::extra
+    unsigned char col[8]; // Too much space for 8 bit colors, but may be useful if we support 16 bit one day
 } Value;
 
 /*
@@ -122,6 +123,7 @@ typedef struct lua_TValue
 #define ttisbuffer(o) (ttype(o) == LUA_TBUFFER)
 #define ttislightuserdata(o) (ttype(o) == LUA_TLIGHTUSERDATA)
 #define ttisvector(o) (ttype(o) == LUA_TVECTOR)
+#define ttiscolor(o) (ttype(o) == LUA_TCOLOR)
 #define ttisupval(o) (ttype(o) == LUA_TUPVAL)
 
 // Macros to access values
@@ -131,6 +133,7 @@ typedef struct lua_TValue
 #define nvalue(o) check_exp(ttisnumber(o), (o)->value.n)
 #define vvalue(o) check_exp(ttisvector(o), (o)->value.v)
 #define tsvalue(o) check_exp(ttisstring(o), &(o)->value.gc->ts)
+#define colvalue(o) check_exp(ttiscolor(o), (o)->value.col)
 #define uvalue(o) check_exp(ttisuserdata(o), &(o)->value.gc->u)
 #define clvalue(o) check_exp(ttisfunction(o), &(o)->value.gc->cl)
 #define hvalue(o) check_exp(ttistable(o), &(o)->value.gc->h)
@@ -185,6 +188,17 @@ typedef struct lua_TValue
         i_o->tt = LUA_TVECTOR; \
     }
 #endif
+
+#define setcolvalue(obj, r, g, b, a) \
+    { \
+        TValue* i_o = (obj); \
+        unsigned char* i_c = i_o->value.col; \
+        i_c[0] = (r); \
+        i_c[1] = (g); \
+        i_c[2] = (b); \
+        i_c[3] = (a); \
+        i_o->tt = LUA_TCOLOR; \
+    }
 
 #define setpvalue(obj, x, tag) \
     { \

@@ -249,6 +249,12 @@ const float* luaL_optvector(lua_State* L, int narg, const float* def)
     return luaL_opt(L, luaL_checkvector, narg, def);
 }
 
+void luaL_checkcolorf(lua_State* L, int narg, float *color)
+{
+    if (!lua_tocolorf(L, narg, color))
+        tag_error(L, narg, LUA_TCOLOR);
+}
+
 int luaL_getmetafield(lua_State* L, int obj, const char* event)
 {
     if (!lua_getmetatable(L, obj)) // no metatable?
@@ -567,6 +573,25 @@ const char* luaL_tolstring(lua_State* L, int idx, size_t* len)
                 *e++ = ' ';
             }
             e = luai_num2str(e, v[i]);
+        }
+        lua_pushlstring(L, s, e - s);
+        break;
+    }
+    case LUA_TCOLOR:
+    {
+        float col[4];
+        lua_tocolorf(L, idx,col);
+
+        char s[LUAI_MAXNUM2STR * 4];
+        char* e = s;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (i != 0)
+            {
+                *e++ = ',';
+                *e++ = ' ';
+            }
+            e = luai_num2str(e, col[i]);
         }
         lua_pushlstring(L, s, e - s);
         break;

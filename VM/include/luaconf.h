@@ -166,6 +166,6 @@
         long l; \
     }
 
-#define LUA_VECTOR_SIZE 4	/* must be 3 or 4 */
+#define LUA_VECTOR_SIZE 3	/* must be 3 or 4 */
 
 #define LUA_EXTRA_SIZE (LUA_VECTOR_SIZE - 2)

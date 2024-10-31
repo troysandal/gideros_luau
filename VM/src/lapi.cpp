@@ -328,6 +328,12 @@ int lua_isstring(lua_State* L, int idx)
     return (t == LUA_TSTRING || t == LUA_TNUMBER);
 }
 
+int lua_iscolor(lua_State* L, int idx)
+{
+    int t = lua_type(L, idx);
+    return (t == LUA_TCOLOR || t == LUA_TVECTOR);
+}
+
 int lua_isuserdata(lua_State* L, int idx)
 {
     const TValue* o = index2addr(L, idx);
@@ -480,6 +486,46 @@ const float* lua_tovector(lua_State* L, int idx)
     if (!ttisvector(o))
         return NULL;
     return vvalue(o);
+}
+
+int lua_tocolorf(lua_State* L, int idx, float* color) {
+    StkId o = index2addr(L, idx);
+	switch (ttype(o)) {
+	case LUA_TVECTOR:
+	{
+		const float *c=vvalue(o);
+		color[0]=c[0];
+		color[1]=c[1];
+		color[2]=c[2];
+#if LUA_VECTOR_SIZE == 4
+		color[3]=c[3];
+#else
+		color[3]=1;
+#endif
+		return 1;
+	}
+	case LUA_TCOLOR:
+	{
+		const unsigned char *c=colvalue(o);
+		color[0]=c[0]/255.0;
+		color[1]=c[1]/255.0;
+		color[2]=c[2]/255.0;
+		color[3]=c[3]/255.0;
+		return 1;
+	}
+	case LUA_TNUMBER:
+	{
+		unsigned int c;
+        luai_num2unsigned(c, nvalue(o));
+
+		color[0]= (1.0/255)*((c >> 16) & 0xff);
+		color[1]= (1.0/255)*((c >> 8) & 0xff);
+		color[2]= (1.0/255)*((c >> 0) & 0xff);
+		color[3]=1;
+		return 1;
+	}
+	}
+    return 0;
 }
 
 int lua_objlen(lua_State* L, int idx)
@@ -643,6 +689,12 @@ void lua_pushvector(lua_State* L, float x, float y, float z)
     api_incr_top(L);
 }
 #endif
+
+void lua_pushcolorf(lua_State* L, float r, float g, float b, float a)
+{
+    setcolvalue(L->top, r*255, g*255, b*255, a*255);
+    api_incr_top(L);
+}
 
 void lua_pushlstring(lua_State* L, const char* s, size_t len)
 {

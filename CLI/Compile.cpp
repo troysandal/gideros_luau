@@ -314,6 +314,7 @@ static bool compileFile(const char* name, CompileFormat format, Luau::CodeGen::A
     try
     {
         Luau::BytecodeBuilder bcb;
+        bcb.setChunkName(name);
 
         Luau::CodeGen::AssemblyOptions options;
         options.target = assemblyTarget;

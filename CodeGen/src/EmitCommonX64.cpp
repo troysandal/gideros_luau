@@ -182,6 +182,30 @@ void callArithHelper(IrRegAllocX64& regs, AssemblyBuilderX64& build, int ra, Ope
     case TM_UNM:
         callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithunm)]);
         break;
+    case TM_MAXOF:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithmaxof)]);
+        break;
+    case TM_MINOF:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithminof)]);
+        break;
+    case TM_BAND:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithband)]);
+        break;
+    case TM_BOR:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithbor)]);
+        break;
+    case TM_BXOR:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithbxor)]);
+        break;
+    case TM_SHR:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithshr)]);
+        break;
+    case TM_SHL:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithshl)]);
+        break;
+    case TM_BNOT:
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, luaV_doarithbnot)]);
+        break;
     default:
         CODEGEN_ASSERT(!"Invalid doarith helper operation tag");
         break;

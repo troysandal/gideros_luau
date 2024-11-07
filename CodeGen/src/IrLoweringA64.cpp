@@ -1269,6 +1269,30 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         case TM_UNM:
             build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithunm)));
             break;
+        case TM_MINOF:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithminof)));
+            break;
+        case TM_MAXOF:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithmaxof)));
+            break;
+        case TM_BAND:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithband)));
+            break;
+        case TM_BOR:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithbor)));
+            break;
+        case TM_BXOR:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithbxor)));
+            break;
+        case TM_SHR:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithshr)));
+            break;
+        case TM_SHL:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithshl)));
+            break;
+        case TM_BNOT:
+            build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, luaV_doarithbnot)));
+            break;
         default:
             CODEGEN_ASSERT(!"Invalid doarith helper operation tag");
             break;

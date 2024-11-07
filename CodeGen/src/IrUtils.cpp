@@ -295,6 +295,23 @@ HostMetamethod tmToHostMetamethod(int tm)
         return HostMetamethod::Length;
     case TM_CONCAT:
         return HostMetamethod::Concat;
+        //GIDEROS
+    case TM_MAXOF:
+        return HostMetamethod::MaxOf;
+    case TM_MINOF:
+        return HostMetamethod::MinOf;
+    case TM_BOR:
+        return HostMetamethod::BinOr;
+    case TM_BAND:
+        return HostMetamethod::BinAnd;
+    case TM_BXOR:
+        return HostMetamethod::BinXor;
+    case TM_SHR:
+        return HostMetamethod::ShiftR;
+    case TM_SHL:
+        return HostMetamethod::ShiftL;
+    case TM_BNOT:
+        return HostMetamethod::BinNot;
     default:
         CODEGEN_ASSERT(!"invalid tag method for host");
         break;

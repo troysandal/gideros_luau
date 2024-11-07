@@ -479,7 +479,7 @@ static void translateInstBinaryNumeric(IrBuilder& build, int ra, int rb, int rc,
 
     IrOp vb = loadDoubleOrConstant(build, opb);
     IrOp vc;
-    IrOp result;
+    IrOp result,rtemp;
 
     if (opc.kind == IrOpKind::VmConst)
     {
@@ -529,6 +529,43 @@ static void translateInstBinaryNumeric(IrBuilder& build, int ra, int rb, int rc,
             break;
         case TM_POW:
             result = build.inst(IrCmd::INVOKE_LIBM, build.constUint(LBF_MATH_POW), vb, vc);
+            break;
+        //Gideros
+        case TM_MINOF:
+            result = build.inst(IrCmd::MIN_NUM, vb, vc);
+            break;
+        case TM_MAXOF:
+            result = build.inst(IrCmd::MAX_NUM, vb, vc);
+            break;
+        case TM_BAND:
+            result = build.inst(IrCmd::NUM_TO_UINT, vb);
+            rtemp  = build.inst(IrCmd::NUM_TO_UINT, vc);
+            result = build.inst(IrCmd::BITAND_UINT, result, rtemp);
+            result = build.inst(IrCmd::UINT_TO_NUM, result);
+            break;
+        case TM_BOR:
+            result = build.inst(IrCmd::NUM_TO_UINT, vb);
+            rtemp  = build.inst(IrCmd::NUM_TO_UINT, vc);
+            result = build.inst(IrCmd::BITOR_UINT, result, rtemp);
+            result = build.inst(IrCmd::UINT_TO_NUM, result);
+            break;
+        case TM_BXOR:
+            result = build.inst(IrCmd::NUM_TO_UINT, vb);
+            rtemp  = build.inst(IrCmd::NUM_TO_UINT, vc);
+            result = build.inst(IrCmd::BITXOR_UINT, result, rtemp);
+            result = build.inst(IrCmd::UINT_TO_NUM, result);
+            break;
+        case TM_SHL:
+            result = build.inst(IrCmd::NUM_TO_UINT, vb);
+            rtemp  = build.inst(IrCmd::NUM_TO_UINT, vc);
+            result = build.inst(IrCmd::BITLSHIFT_UINT, result, rtemp);
+            result = build.inst(IrCmd::UINT_TO_NUM, result);
+            break;
+        case TM_SHR:
+            result = build.inst(IrCmd::NUM_TO_UINT, vb);
+            rtemp  = build.inst(IrCmd::NUM_TO_UINT, vc);
+            result = build.inst(IrCmd::BITRSHIFT_UINT, result, rtemp);
+            result = build.inst(IrCmd::UINT_TO_NUM, result);
             break;
         default:
             CODEGEN_ASSERT(!"Unsupported binary op");
@@ -586,19 +623,30 @@ void translateInstNot(IrBuilder& build, const Instruction* pc)
     build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TBOOLEAN));
 }
 
-void translateInstMinus(IrBuilder& build, const Instruction* pc, int pcpos)
+void translateInstUnary(IrBuilder& build, const Instruction* pc, int pcpos, TMS tm)
 {
     BytecodeTypes bcTypes = build.function.getBytecodeTypesAt(pcpos);
 
     int ra = LUAU_INSN_A(*pc);
     int rb = LUAU_INSN_B(*pc);
 
-    if (bcTypes.a == LBC_TYPE_VECTOR)
+    if ((bcTypes.a == LBC_TYPE_VECTOR) && (tm==TM_UNM))
     {
         build.inst(IrCmd::CHECK_TAG, build.inst(IrCmd::LOAD_TAG, build.vmReg(rb)), build.constTag(LUA_TVECTOR), build.vmExit(pcpos));
 
         IrOp vb = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(rb));
-        IrOp va = build.inst(IrCmd::UNM_VEC, vb);
+        IrOp va;
+        switch (tm)
+        {
+        case TM_UNM:
+            va = build.inst(IrCmd::UNM_VEC, vb);
+            break;
+        case TM_BNOT:
+            //Unsupported yet
+            break;
+        default:
+            CODEGEN_ASSERT(!"Unsupported unary op");
+        }
         va = build.inst(IrCmd::TAG_VECTOR, va);
         build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), va);
         return;
@@ -607,11 +655,11 @@ void translateInstMinus(IrBuilder& build, const Instruction* pc, int pcpos)
     if (isUserdataBytecodeType(bcTypes.a))
     {
         if (build.hostHooks.userdataMetamethod &&
-            build.hostHooks.userdataMetamethod(build, bcTypes.a, bcTypes.b, ra, build.vmReg(rb), {}, tmToHostMetamethod(TM_UNM), pcpos))
+            build.hostHooks.userdataMetamethod(build, bcTypes.a, bcTypes.b, ra, build.vmReg(rb), {}, tmToHostMetamethod(tm), pcpos))
             return;
 
         build.inst(IrCmd::SET_SAVEDPC, build.constUint(pcpos + 1));
-        build.inst(IrCmd::DO_ARITH, build.vmReg(ra), build.vmReg(rb), build.vmReg(rb), build.constInt(TM_UNM));
+        build.inst(IrCmd::DO_ARITH, build.vmReg(ra), build.vmReg(rb), build.vmReg(rb), build.constInt(tm));
         return;
     }
 
@@ -627,7 +675,20 @@ void translateInstMinus(IrBuilder& build, const Instruction* pc, int pcpos)
 
     // fast-path: number
     IrOp vb = build.inst(IrCmd::LOAD_DOUBLE, build.vmReg(rb));
-    IrOp va = build.inst(IrCmd::UNM_NUM, vb);
+    IrOp va;
+    switch (tm)
+    {
+    case TM_UNM:
+        va = build.inst(IrCmd::UNM_NUM, vb);
+        break;
+    case TM_BNOT:
+        va = build.inst(IrCmd::NUM_TO_UINT, vb);
+        va = build.inst(IrCmd::BITNOT_UINT, va);
+        va = build.inst(IrCmd::UINT_TO_NUM, va);
+        break;
+    default:
+        CODEGEN_ASSERT(!"Unsupported unary op");
+    }
 
     build.inst(IrCmd::STORE_DOUBLE, build.vmReg(ra), va);
 
@@ -640,7 +701,7 @@ void translateInstMinus(IrBuilder& build, const Instruction* pc, int pcpos)
         FallbackStreamScope scope(build, fallback, next);
 
         build.inst(IrCmd::SET_SAVEDPC, build.constUint(pcpos + 1));
-        build.inst(IrCmd::DO_ARITH, build.vmReg(ra), build.vmReg(rb), build.vmReg(rb), build.constInt(TM_UNM));
+        build.inst(IrCmd::DO_ARITH, build.vmReg(ra), build.vmReg(rb), build.vmReg(rb), build.constInt(tm));
         build.inst(IrCmd::JUMP, next);
     }
 }

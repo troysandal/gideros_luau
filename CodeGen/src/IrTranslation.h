@@ -37,7 +37,7 @@ void translateInstBinary(IrBuilder& build, const Instruction* pc, int pcpos, TMS
 void translateInstBinaryK(IrBuilder& build, const Instruction* pc, int pcpos, TMS tm);
 void translateInstBinaryRK(IrBuilder& build, const Instruction* pc, int pcpos, TMS tm);
 void translateInstNot(IrBuilder& build, const Instruction* pc);
-void translateInstMinus(IrBuilder& build, const Instruction* pc, int pcpos);
+void translateInstUnary(IrBuilder& build, const Instruction* pc, int pcpos, TMS tm);
 void translateInstLength(IrBuilder& build, const Instruction* pc, int pcpos);
 void translateInstNewTable(IrBuilder& build, const Instruction* pc, int pcpos);
 void translateInstDupTable(IrBuilder& build, const Instruction* pc, int pcpos);

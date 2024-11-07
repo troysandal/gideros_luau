@@ -418,8 +418,55 @@ void IrBuilder::translateInst(LuauOpcode op, const Instruction* pc, int i)
         translateInstNot(*this, pc);
         break;
     case LOP_MINUS:
-        translateInstMinus(*this, pc, i);
+        translateInstUnary(*this, pc, i, TM_UNM);
         break;
+    //Gideros
+    case LOP_MINOF:
+        translateInstBinary(*this, pc, i, TM_MINOF);
+        break;
+    case LOP_MAXOF:
+        translateInstBinary(*this, pc, i, TM_MAXOF);
+        break;
+    case LOP_BINAND:
+        translateInstBinary(*this, pc, i, TM_BAND);
+        break;
+    case LOP_BINOR:
+        translateInstBinary(*this, pc, i, TM_BOR);
+        break;
+    case LOP_BINXOR:
+        translateInstBinary(*this, pc, i, TM_BXOR);
+        break;
+    case LOP_SHIFTL:
+        translateInstBinary(*this, pc, i, TM_SHL);
+        break;
+    case LOP_SHIFTR:
+        translateInstBinary(*this, pc, i, TM_SHR);
+        break;
+    case LOP_MINOFK:
+        translateInstBinaryK(*this, pc, i, TM_MINOF);
+        break;
+    case LOP_MAXOFK:
+        translateInstBinaryK(*this, pc, i, TM_MAXOF);
+        break;
+    case LOP_BINANDK:
+        translateInstBinaryK(*this, pc, i, TM_BAND);
+        break;
+    case LOP_BINORK:
+        translateInstBinaryK(*this, pc, i, TM_BOR);
+        break;
+    case LOP_BINXORK:
+        translateInstBinaryK(*this, pc, i, TM_BXOR);
+        break;
+    case LOP_SHIFTLK:
+        translateInstBinaryK(*this, pc, i, TM_SHL);
+        break;
+    case LOP_SHIFTRK:
+        translateInstBinaryK(*this, pc, i, TM_SHR);
+        break;
+    case LOP_BINNOT:
+        translateInstUnary(*this, pc, i, TM_BNOT);
+        break;
+    //End Gideros
     case LOP_LENGTH:
         translateInstLength(*this, pc, i);
         break;

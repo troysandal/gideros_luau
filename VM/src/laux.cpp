@@ -251,7 +251,7 @@ const float* luaL_optvector(lua_State* L, int narg, const float* def)
 
 void luaL_checkcolorf(lua_State* L, int narg, float *color)
 {
-    if (!lua_tocolorf(L, narg, color))
+    if (!lua_tocolorf(L, narg, color,0))
         tag_error(L, narg, LUA_TCOLOR);
 }
 
@@ -580,7 +580,7 @@ const char* luaL_tolstring(lua_State* L, int idx, size_t* len)
     case LUA_TCOLOR:
     {
         float col[4];
-        lua_tocolorf(L, idx,col);
+        lua_tocolorf(L, idx,col,0);
 
         char s[LUAI_MAXNUM2STR * 4];
         char* e = s;

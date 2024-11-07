@@ -554,7 +554,36 @@ static HostMetamethod opcodeToHostMetamethod(LuauOpcode op)
         return HostMetamethod::Sub;
     case LOP_DIVRK:
         return HostMetamethod::Div;
-    default:
+    //GIDEROS OPCODES
+    case LOP_MINOF:
+        return HostMetamethod::MinOf;
+    case LOP_MAXOF:
+        return HostMetamethod::MaxOf;
+    case LOP_BINAND:
+        return HostMetamethod::BinAnd;
+    case LOP_BINOR:
+        return HostMetamethod::BinOr;
+    case LOP_BINXOR:
+        return HostMetamethod::BinXor;
+    case LOP_SHIFTR:
+        return HostMetamethod::ShiftR;
+    case LOP_SHIFTL:
+        return HostMetamethod::ShiftL;
+    case LOP_MINOFK:
+        return HostMetamethod::MinOf;
+    case LOP_MAXOFK:
+        return HostMetamethod::MaxOf;
+    case LOP_BINANDK:
+        return HostMetamethod::BinAnd;
+    case LOP_BINORK:
+        return HostMetamethod::BinOr;
+    case LOP_BINXORK:
+        return HostMetamethod::BinXor;
+    case LOP_SHIFTRK:
+        return HostMetamethod::ShiftR;
+    case LOP_SHIFTLK:
+        return HostMetamethod::ShiftL;
+	default:
         CODEGEN_ASSERT(!"opcode is not assigned to a host metamethod");
     }
 
@@ -794,6 +823,9 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
             }
             case LOP_ADD:
             case LOP_SUB:
+            case LOP_BINAND:
+            case LOP_BINOR:
+            case LOP_BINXOR:
             {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
@@ -817,6 +849,8 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
             case LOP_MUL:
             case LOP_DIV:
             case LOP_IDIV:
+            case LOP_MINOF:
+            case LOP_MAXOF:
             {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
@@ -849,6 +883,8 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
             }
             case LOP_MOD:
             case LOP_POW:
+            case LOP_SHIFTR:
+            case LOP_SHIFTL:
             {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
@@ -869,6 +905,9 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
             }
             case LOP_ADDK:
             case LOP_SUBK:
+            case LOP_BINANDK:
+            case LOP_BINORK:
+            case LOP_BINXORK:
             {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
@@ -892,7 +931,9 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
             case LOP_MULK:
             case LOP_DIVK:
             case LOP_IDIVK:
-            {
+            case LOP_MINOFK:
+            case LOP_MAXOFK:
+           {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
                 int kc = LUAU_INSN_C(*pc);
@@ -924,6 +965,8 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
             }
             case LOP_MODK:
             case LOP_POWK:
+            case LOP_SHIFTRK:
+            case LOP_SHIFTLK:
             {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
@@ -1006,6 +1049,7 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
                 break;
             }
             case LOP_MINUS:
+            case LOP_BINNOT:
             {
                 int ra = LUAU_INSN_A(*pc);
                 int rb = LUAU_INSN_B(*pc);
@@ -1019,7 +1063,7 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
                 else if (bcType.a == LBC_TYPE_VECTOR)
                     regTags[ra] = LBC_TYPE_VECTOR;
                 else if (hostHooks.userdataMetamethodBytecodeType && isCustomUserdataBytecodeType(bcType.a))
-                    regTags[ra] = hostHooks.userdataMetamethodBytecodeType(bcType.a, LBC_TYPE_ANY, HostMetamethod::Minus);
+                    regTags[ra] = hostHooks.userdataMetamethodBytecodeType(bcType.a, LBC_TYPE_ANY, (op==LOP_BINNOT)?HostMetamethod::BinNot:HostMetamethod::Minus);
 
                 bcType.result = regTags[ra];
                 break;

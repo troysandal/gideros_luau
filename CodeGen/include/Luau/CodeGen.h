@@ -95,6 +95,15 @@ enum class HostMetamethod
     LessEqual,
     Length,
     Concat,
+	//GIDEROS
+	MinOf,
+	MaxOf,
+	BinAnd,
+	BinOr,
+	BinXor,
+	ShiftR,
+	ShiftL,
+	BinNot,
 };
 
 using HostUserdataOperationBytecodeType = uint8_t (*)(uint8_t type, const char* member, size_t memberLength);

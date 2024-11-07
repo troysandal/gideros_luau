@@ -488,7 +488,7 @@ const float* lua_tovector(lua_State* L, int idx)
     return vvalue(o);
 }
 
-int lua_tocolorf(lua_State* L, int idx, float* color) {
+int lua_tocolorf(lua_State* L, int idx, float* color, int acceptNumber) {
     StkId o = index2addr(L, idx);
 	switch (ttype(o)) {
 	case LUA_TVECTOR:
@@ -515,14 +515,16 @@ int lua_tocolorf(lua_State* L, int idx, float* color) {
 	}
 	case LUA_TNUMBER:
 	{
-		unsigned int c;
-        luai_num2unsigned(c, nvalue(o));
+		if (acceptNumber) {
+			unsigned int c;
+			luai_num2unsigned(c, nvalue(o));
 
-		color[0]= (1.0/255)*((c >> 16) & 0xff);
-		color[1]= (1.0/255)*((c >> 8) & 0xff);
-		color[2]= (1.0/255)*((c >> 0) & 0xff);
-		color[3]=1;
-		return 1;
+			color[0]= (1.0/255)*((c >> 16) & 0xff);
+			color[1]= (1.0/255)*((c >> 8) & 0xff);
+			color[2]= (1.0/255)*((c >> 0) & 0xff);
+			color[3]= 1;
+			return 1;
+		}
 	}
 	}
     return 0;

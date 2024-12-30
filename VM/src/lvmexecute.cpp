@@ -779,6 +779,17 @@ reentry:
 
                     // fall through to slow path
                 }
+                else if (ttisbuffer(rb) && ttisnumber(rc)) {
+                    Buffer* b=bufvalue(rb);
+                    double indexd = nvalue(rc);
+                    if ((indexd>=0)&&(indexd<b->len))
+                    {
+                        int index = int(indexd); //zero-based index, consistent with writeXXX API
+                        setnvalue(ra,((unsigned char *)(b->data))[index]);
+                        VM_NEXT();
+                    }
+                    // fall through to slow path
+                }
 
                 // slow-path: handles out of bounds array lookups, non-integer numeric keys, non-array table lookup, __index MT calls
                 VM_PROTECT(luaV_gettable(L, rb, rc, ra));
@@ -810,6 +821,17 @@ reentry:
 
                     // fall through to slow path
                 }
+                else if (ttisbuffer(rb) && ttisnumber(rc) && ttisnumber(ra)) {
+                    Buffer* b=bufvalue(rb);
+                    double indexd = nvalue(rc);
+                    if ((indexd>=0)&&(indexd<b->len))
+                    {
+                        int index = int(indexd); //zero-based index, consistent with writeXXX API
+                        b->data[index]=nvalue(ra);
+                        VM_NEXT();
+                    }
+                    // fall through to slow path
+                }
 
                 // slow-path: handles out of bounds array assignments, non-integer numeric keys, non-array table access, __newindex MT calls
                 VM_PROTECT(luaV_settable(L, rb, rc, ra));
@@ -834,6 +856,16 @@ reentry:
                         VM_NEXT();
                     }
 
+                    // fall through to slow path
+                }
+                else if (ttisbuffer(rb)) {
+                    Buffer* b=bufvalue(rb);
+                    if ((c>=-1)&&(c<((int)(b->len-1))-1))
+                    {
+                        unsigned index=unsigned(c+1);
+                        setnvalue(ra,((unsigned char *)(b->data))[index]);
+                        VM_NEXT();
+                    }
                     // fall through to slow path
                 }
 
@@ -865,6 +897,17 @@ reentry:
 
                     // fall through to slow path
                 }
+                else if (ttisbuffer(rb) && ttisnumber(ra)) {
+                    Buffer* b=bufvalue(rb);
+                    if ((c>=-1)&&(c<((int)(b->len-1))-1))
+                    {
+                        unsigned index=unsigned(c+1);
+                        b->data[index]=nvalue(ra);
+                        VM_NEXT();
+                    }
+                    // fall through to slow path
+                }
+
 
                 // slow-path: handles out of bounds array lookups
                 TValue n;
@@ -1138,7 +1181,10 @@ reentry:
                 CallInfo* cip = ci - 1;
 
                 if (L->profilerHook)
-                    L->profilerHook(L,0);
+                    if (!LUAU_UNLIKELY((cip->flags & LUA_CALLINFO_NATIVE)))
+                    {
+                        L->profilerHook(L,0);
+                    }
 
                 StkId res = ci->func; // note: we assume CALL always puts func+args and expects results to start at func
 

@@ -184,6 +184,10 @@
       <AdditionalIncludeDirectories>..\..\..\VM\src;..\..\..\VM\include;..\..\..\Ast\include;..\..\..\Compiler\include;..\..\..\Common\include;..\..\..\..\libgvfs;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WINSTORE;LUA_ANSI;LUA_COMPAT_ALL;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <Optimization>Disabled</Optimization>
+      <IntrinsicFunctions>false</IntrinsicFunctions>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

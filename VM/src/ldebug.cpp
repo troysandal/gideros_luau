@@ -306,6 +306,12 @@ l_noret luaG_readonlyerror(lua_State* L)
     luaG_runerror(L, "attempt to modify a readonly table");
 }
 
+l_noret luaG_boundserror(lua_State* L, const TValue* p1, lua_Number idx, size_t bmin, size_t bmax)
+{
+    const char* t1 = luaT_objtypename(L, p1);
+    luaG_runerror(L, "%s index '%f' out of bounds [%zu,%zu]", t1, idx, bmin, bmax);
+}
+
 static void pusherror(lua_State* L, const char* msg)
 {
     CallInfo* ci = L->ci;

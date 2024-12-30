@@ -12,6 +12,9 @@
 #include <setjmp.h>
 #include <stdlib.h>
 #else
+#ifdef WINSTORE
+#include <setjmp.h>
+#endif
 #include <stdexcept>
 #endif
 
@@ -123,6 +126,14 @@ int luaD_rawrunprotected(lua_State* L, Pfunc f, void* ud)
 {
     int status = 0;
 
+#ifdef WINSTORE
+    jmp_buf buf;
+    status=setjmp(buf);
+    if (status)
+        return status;
+#endif
+
+
     try
     {
         f(L, ud);
@@ -153,6 +164,10 @@ int luaD_rawrunprotected(lua_State* L, Pfunc f, void* ud)
             status = LUA_ERRMEM;
         }
     }
+
+#ifdef WINSTORE
+    longjmp(buf, status);
+#endif
 
     return status;
 }

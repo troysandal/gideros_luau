@@ -119,6 +119,19 @@ void luaV_gettable(lua_State* L, const TValue* t, TValue* key, StkId val)
             luaunlock_table(h);
             // t isn't a table, so see if it has an INDEX meta-method to look up the key with
         }
+        else if (ttisbuffer(t) && ttisnumber(key)) {
+            //buffer lookup
+            Buffer* b=bufvalue(t);
+            lua_Number indexd = nvalue(key);
+            if ((indexd>=0)&&(indexd<b->len))
+            {
+                int index = int(indexd); //zero-based index, consistent with writeXXX API
+                setnvalue(val,((unsigned char *)(b->data))[index]);
+            }
+            else
+                luaG_boundserror(L, t, indexd, 0, b->len-1);
+            return;
+        }
         else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_INDEX)))
             luaG_indexerror(L, t, key);
         if (ttisfunction(tm))
@@ -166,6 +179,23 @@ void luaV_settable(lua_State* L, const TValue* t, TValue* key, StkId val)
             luaunlock_table(h);
 
             // fallthrough to metamethod
+        }
+        else if (ttisbuffer(t) && ttisnumber(key)) {
+            //buffer lookup
+            Buffer* b=bufvalue(t);
+            if (ttisnumber(val)) {
+                lua_Number indexd = nvalue(key);
+                if ((indexd>=0)&&(indexd<b->len))
+                {
+                    int index = int(indexd); //zero-based index, consistent with writeXXX API
+                    b->data[index]=nvalue(val);
+                }
+                else
+                    luaG_boundserror(L, t, indexd, 0, b->len-1);
+            }
+            else
+                luaG_typeerrorL(L, val, "assign");
+            return;
         }
         else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_NEWINDEX)))
             luaG_indexerror(L, t, key);

@@ -13,7 +13,7 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := lua
 LOCAL_ARM_MODE := arm
-LOCAL_CFLAGS := -O2 -DLUA_USE_MKSTEMP -std=c++17 -DLUAU_ENABLE_CODEGEN
+LOCAL_CFLAGS := -O2 -DLUA_USE_MKSTEMP -std=c++17
 LOCAL_C_INCLUDES += $(addprefix $(LOCAL_PATH)/../,VM/src VM/include Common/Include Compiler/include Codegen/include Ast/include ../libgvfs)
 
 LOCAL_SRC_FILES += $(addsuffix .cpp, \

@@ -55,6 +55,42 @@
 		03A407112CD142E800D97912 /* lbuflib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A407102CD142E800D97912 /* lbuflib.cpp */; };
 		03A407122CD142E800D97912 /* lbuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A4070F2CD142E800D97912 /* lbuffer.cpp */; };
 		03A407162CDA69CF00D97912 /* BuiltinFolding.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A407152CDA69CF00D97912 /* BuiltinFolding.cpp */; };
+		03AAC6CE2D2FE1ED000988E7 /* CodeAllocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC69C2D2FE1ED000988E7 /* CodeAllocator.cpp */; };
+		03AAC6CF2D2FE1ED000988E7 /* OptimizeConstProp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C72D2FE1ED000988E7 /* OptimizeConstProp.cpp */; };
+		03AAC6D02D2FE1ED000988E7 /* CodeGenContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6A32D2FE1ED000988E7 /* CodeGenContext.cpp */; };
+		03AAC6D12D2FE1ED000988E7 /* IrValueLocationTracking.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C22D2FE1ED000988E7 /* IrValueLocationTracking.cpp */; };
+		03AAC6D22D2FE1ED000988E7 /* NativeState.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C62D2FE1ED000988E7 /* NativeState.cpp */; };
+		03AAC6D32D2FE1ED000988E7 /* CodeBlockUnwind.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC69D2D2FE1ED000988E7 /* CodeBlockUnwind.cpp */; };
+		03AAC6D42D2FE1ED000988E7 /* BytecodeSummary.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC69A2D2FE1ED000988E7 /* BytecodeSummary.cpp */; };
+		03AAC6D52D2FE1ED000988E7 /* SharedCodeAllocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6CA2D2FE1ED000988E7 /* SharedCodeAllocator.cpp */; };
+		03AAC6D62D2FE1ED000988E7 /* IrTranslation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6BF2D2FE1ED000988E7 /* IrTranslation.cpp */; };
+		03AAC6D72D2FE1ED000988E7 /* IrDump.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B42D2FE1ED000988E7 /* IrDump.cpp */; };
+		03AAC6D82D2FE1ED000988E7 /* OptimizeFinalX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C92D2FE1ED000988E7 /* OptimizeFinalX64.cpp */; };
+		03AAC6D92D2FE1ED000988E7 /* NativeProtoExecData.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C42D2FE1ED000988E7 /* NativeProtoExecData.cpp */; };
+		03AAC6DA2D2FE1ED000988E7 /* AssemblyBuilderA64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6962D2FE1ED000988E7 /* AssemblyBuilderA64.cpp */; };
+		03AAC6DB2D2FE1ED000988E7 /* IrCallWrapperX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B32D2FE1ED000988E7 /* IrCallWrapperX64.cpp */; };
+		03AAC6DC2D2FE1ED000988E7 /* lcodegen.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C32D2FE1ED000988E7 /* lcodegen.cpp */; };
+		03AAC6DD2D2FE1ED000988E7 /* IrUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C02D2FE1ED000988E7 /* IrUtils.cpp */; };
+		03AAC6DE2D2FE1ED000988E7 /* CodeGenUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6A62D2FE1ED000988E7 /* CodeGenUtils.cpp */; };
+		03AAC6DF2D2FE1ED000988E7 /* IrBuilder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B22D2FE1ED000988E7 /* IrBuilder.cpp */; };
+		03AAC6E02D2FE1ED000988E7 /* CodeGenA64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6A02D2FE1ED000988E7 /* CodeGenA64.cpp */; };
+		03AAC6E12D2FE1ED000988E7 /* IrLoweringX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B82D2FE1ED000988E7 /* IrLoweringX64.cpp */; };
+		03AAC6E22D2FE1ED000988E7 /* AssemblyBuilderX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6972D2FE1ED000988E7 /* AssemblyBuilderX64.cpp */; };
+		03AAC6E32D2FE1ED000988E7 /* CodeGenX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6A82D2FE1ED000988E7 /* CodeGenX64.cpp */; };
+		03AAC6E42D2FE1ED000988E7 /* IrLoweringA64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B62D2FE1ED000988E7 /* IrLoweringA64.cpp */; };
+		03AAC6E52D2FE1ED000988E7 /* EmitInstructionX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B02D2FE1ED000988E7 /* EmitInstructionX64.cpp */; };
+		03AAC6E62D2FE1ED000988E7 /* IrAnalysis.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6B12D2FE1ED000988E7 /* IrAnalysis.cpp */; };
+		03AAC6E72D2FE1ED000988E7 /* BytecodeAnalysis.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6992D2FE1ED000988E7 /* BytecodeAnalysis.cpp */; };
+		03AAC6E82D2FE1ED000988E7 /* IrTranslateBuiltins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6BD2D2FE1ED000988E7 /* IrTranslateBuiltins.cpp */; };
+		03AAC6E92D2FE1ED000988E7 /* CodeGen.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC69E2D2FE1ED000988E7 /* CodeGen.cpp */; };
+		03AAC6EA2D2FE1ED000988E7 /* UnwindBuilderDwarf2.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6CB2D2FE1ED000988E7 /* UnwindBuilderDwarf2.cpp */; };
+		03AAC6EB2D2FE1ED000988E7 /* EmitBuiltinsX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6AA2D2FE1ED000988E7 /* EmitBuiltinsX64.cpp */; };
+		03AAC6EC2D2FE1ED000988E7 /* CodeGenAssembly.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6A12D2FE1ED000988E7 /* CodeGenAssembly.cpp */; };
+		03AAC6ED2D2FE1ED000988E7 /* IrRegAllocA64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6BA2D2FE1ED000988E7 /* IrRegAllocA64.cpp */; };
+		03AAC6EE2D2FE1ED000988E7 /* UnwindBuilderWin.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6CC2D2FE1ED000988E7 /* UnwindBuilderWin.cpp */; };
+		03AAC6EF2D2FE1ED000988E7 /* EmitCommonX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6AE2D2FE1ED000988E7 /* EmitCommonX64.cpp */; };
+		03AAC6F02D2FE1ED000988E7 /* IrRegAllocX64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6BB2D2FE1ED000988E7 /* IrRegAllocX64.cpp */; };
+		03AAC6F12D2FE1ED000988E7 /* OptimizeDeadStore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03AAC6C82D2FE1ED000988E7 /* OptimizeDeadStore.cpp */; };
 		03EBB28D27ABED6800DBF3A4 /* Builtins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28527ABED6800DBF3A4 /* Builtins.cpp */; };
 		03EBB28E27ABED6800DBF3A4 /* ConstantFolding.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */; };
 		03EBB28F27ABED6800DBF3A4 /* ValueTracking.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03EBB28B27ABED6800DBF3A4 /* ValueTracking.cpp */; };
@@ -143,6 +179,61 @@
 		03A407102CD142E800D97912 /* lbuflib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = lbuflib.cpp; sourceTree = "<group>"; };
 		03A407142CDA69CF00D97912 /* BuiltinFolding.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BuiltinFolding.h; sourceTree = "<group>"; };
 		03A407152CDA69CF00D97912 /* BuiltinFolding.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BuiltinFolding.cpp; sourceTree = "<group>"; };
+		03AAC6962D2FE1ED000988E7 /* AssemblyBuilderA64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AssemblyBuilderA64.cpp; sourceTree = "<group>"; };
+		03AAC6972D2FE1ED000988E7 /* AssemblyBuilderX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AssemblyBuilderX64.cpp; sourceTree = "<group>"; };
+		03AAC6982D2FE1ED000988E7 /* BitUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BitUtils.h; sourceTree = "<group>"; };
+		03AAC6992D2FE1ED000988E7 /* BytecodeAnalysis.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BytecodeAnalysis.cpp; sourceTree = "<group>"; };
+		03AAC69A2D2FE1ED000988E7 /* BytecodeSummary.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BytecodeSummary.cpp; sourceTree = "<group>"; };
+		03AAC69B2D2FE1ED000988E7 /* ByteUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ByteUtils.h; sourceTree = "<group>"; };
+		03AAC69C2D2FE1ED000988E7 /* CodeAllocator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeAllocator.cpp; sourceTree = "<group>"; };
+		03AAC69D2D2FE1ED000988E7 /* CodeBlockUnwind.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeBlockUnwind.cpp; sourceTree = "<group>"; };
+		03AAC69E2D2FE1ED000988E7 /* CodeGen.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeGen.cpp; sourceTree = "<group>"; };
+		03AAC69F2D2FE1ED000988E7 /* CodeGenA64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CodeGenA64.h; sourceTree = "<group>"; };
+		03AAC6A02D2FE1ED000988E7 /* CodeGenA64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeGenA64.cpp; sourceTree = "<group>"; };
+		03AAC6A12D2FE1ED000988E7 /* CodeGenAssembly.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeGenAssembly.cpp; sourceTree = "<group>"; };
+		03AAC6A22D2FE1ED000988E7 /* CodeGenContext.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CodeGenContext.h; sourceTree = "<group>"; };
+		03AAC6A32D2FE1ED000988E7 /* CodeGenContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeGenContext.cpp; sourceTree = "<group>"; };
+		03AAC6A42D2FE1ED000988E7 /* CodeGenLower.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CodeGenLower.h; sourceTree = "<group>"; };
+		03AAC6A52D2FE1ED000988E7 /* CodeGenUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CodeGenUtils.h; sourceTree = "<group>"; };
+		03AAC6A62D2FE1ED000988E7 /* CodeGenUtils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeGenUtils.cpp; sourceTree = "<group>"; };
+		03AAC6A72D2FE1ED000988E7 /* CodeGenX64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CodeGenX64.h; sourceTree = "<group>"; };
+		03AAC6A82D2FE1ED000988E7 /* CodeGenX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CodeGenX64.cpp; sourceTree = "<group>"; };
+		03AAC6A92D2FE1ED000988E7 /* EmitBuiltinsX64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EmitBuiltinsX64.h; sourceTree = "<group>"; };
+		03AAC6AA2D2FE1ED000988E7 /* EmitBuiltinsX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EmitBuiltinsX64.cpp; sourceTree = "<group>"; };
+		03AAC6AB2D2FE1ED000988E7 /* EmitCommon.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EmitCommon.h; sourceTree = "<group>"; };
+		03AAC6AC2D2FE1ED000988E7 /* EmitCommonA64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EmitCommonA64.h; sourceTree = "<group>"; };
+		03AAC6AD2D2FE1ED000988E7 /* EmitCommonX64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EmitCommonX64.h; sourceTree = "<group>"; };
+		03AAC6AE2D2FE1ED000988E7 /* EmitCommonX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EmitCommonX64.cpp; sourceTree = "<group>"; };
+		03AAC6AF2D2FE1ED000988E7 /* EmitInstructionX64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EmitInstructionX64.h; sourceTree = "<group>"; };
+		03AAC6B02D2FE1ED000988E7 /* EmitInstructionX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EmitInstructionX64.cpp; sourceTree = "<group>"; };
+		03AAC6B12D2FE1ED000988E7 /* IrAnalysis.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrAnalysis.cpp; sourceTree = "<group>"; };
+		03AAC6B22D2FE1ED000988E7 /* IrBuilder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrBuilder.cpp; sourceTree = "<group>"; };
+		03AAC6B32D2FE1ED000988E7 /* IrCallWrapperX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrCallWrapperX64.cpp; sourceTree = "<group>"; };
+		03AAC6B42D2FE1ED000988E7 /* IrDump.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrDump.cpp; sourceTree = "<group>"; };
+		03AAC6B52D2FE1ED000988E7 /* IrLoweringA64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IrLoweringA64.h; sourceTree = "<group>"; };
+		03AAC6B62D2FE1ED000988E7 /* IrLoweringA64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrLoweringA64.cpp; sourceTree = "<group>"; };
+		03AAC6B72D2FE1ED000988E7 /* IrLoweringX64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IrLoweringX64.h; sourceTree = "<group>"; };
+		03AAC6B82D2FE1ED000988E7 /* IrLoweringX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrLoweringX64.cpp; sourceTree = "<group>"; };
+		03AAC6B92D2FE1ED000988E7 /* IrRegAllocA64.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IrRegAllocA64.h; sourceTree = "<group>"; };
+		03AAC6BA2D2FE1ED000988E7 /* IrRegAllocA64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrRegAllocA64.cpp; sourceTree = "<group>"; };
+		03AAC6BB2D2FE1ED000988E7 /* IrRegAllocX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrRegAllocX64.cpp; sourceTree = "<group>"; };
+		03AAC6BC2D2FE1ED000988E7 /* IrTranslateBuiltins.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IrTranslateBuiltins.h; sourceTree = "<group>"; };
+		03AAC6BD2D2FE1ED000988E7 /* IrTranslateBuiltins.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrTranslateBuiltins.cpp; sourceTree = "<group>"; };
+		03AAC6BE2D2FE1ED000988E7 /* IrTranslation.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IrTranslation.h; sourceTree = "<group>"; };
+		03AAC6BF2D2FE1ED000988E7 /* IrTranslation.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrTranslation.cpp; sourceTree = "<group>"; };
+		03AAC6C02D2FE1ED000988E7 /* IrUtils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrUtils.cpp; sourceTree = "<group>"; };
+		03AAC6C12D2FE1ED000988E7 /* IrValueLocationTracking.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IrValueLocationTracking.h; sourceTree = "<group>"; };
+		03AAC6C22D2FE1ED000988E7 /* IrValueLocationTracking.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IrValueLocationTracking.cpp; sourceTree = "<group>"; };
+		03AAC6C32D2FE1ED000988E7 /* lcodegen.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = lcodegen.cpp; sourceTree = "<group>"; };
+		03AAC6C42D2FE1ED000988E7 /* NativeProtoExecData.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeProtoExecData.cpp; sourceTree = "<group>"; };
+		03AAC6C52D2FE1ED000988E7 /* NativeState.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeState.h; sourceTree = "<group>"; };
+		03AAC6C62D2FE1ED000988E7 /* NativeState.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeState.cpp; sourceTree = "<group>"; };
+		03AAC6C72D2FE1ED000988E7 /* OptimizeConstProp.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OptimizeConstProp.cpp; sourceTree = "<group>"; };
+		03AAC6C82D2FE1ED000988E7 /* OptimizeDeadStore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OptimizeDeadStore.cpp; sourceTree = "<group>"; };
+		03AAC6C92D2FE1ED000988E7 /* OptimizeFinalX64.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OptimizeFinalX64.cpp; sourceTree = "<group>"; };
+		03AAC6CA2D2FE1ED000988E7 /* SharedCodeAllocator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SharedCodeAllocator.cpp; sourceTree = "<group>"; };
+		03AAC6CB2D2FE1ED000988E7 /* UnwindBuilderDwarf2.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UnwindBuilderDwarf2.cpp; sourceTree = "<group>"; };
+		03AAC6CC2D2FE1ED000988E7 /* UnwindBuilderWin.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UnwindBuilderWin.cpp; sourceTree = "<group>"; };
 		03EBB28527ABED6800DBF3A4 /* Builtins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Builtins.cpp; sourceTree = "<group>"; };
 		03EBB28627ABED6800DBF3A4 /* TableShape.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TableShape.h; sourceTree = "<group>"; };
 		03EBB28727ABED6800DBF3A4 /* ConstantFolding.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ConstantFolding.cpp; sourceTree = "<group>"; };
@@ -266,9 +357,73 @@
 			path = VM/src;
 			sourceTree = "<group>";
 		};
+		03AAC6CD2D2FE1ED000988E7 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				03AAC6962D2FE1ED000988E7 /* AssemblyBuilderA64.cpp */,
+				03AAC6972D2FE1ED000988E7 /* AssemblyBuilderX64.cpp */,
+				03AAC6982D2FE1ED000988E7 /* BitUtils.h */,
+				03AAC6992D2FE1ED000988E7 /* BytecodeAnalysis.cpp */,
+				03AAC69A2D2FE1ED000988E7 /* BytecodeSummary.cpp */,
+				03AAC69B2D2FE1ED000988E7 /* ByteUtils.h */,
+				03AAC69C2D2FE1ED000988E7 /* CodeAllocator.cpp */,
+				03AAC69D2D2FE1ED000988E7 /* CodeBlockUnwind.cpp */,
+				03AAC69E2D2FE1ED000988E7 /* CodeGen.cpp */,
+				03AAC69F2D2FE1ED000988E7 /* CodeGenA64.h */,
+				03AAC6A02D2FE1ED000988E7 /* CodeGenA64.cpp */,
+				03AAC6A12D2FE1ED000988E7 /* CodeGenAssembly.cpp */,
+				03AAC6A22D2FE1ED000988E7 /* CodeGenContext.h */,
+				03AAC6A32D2FE1ED000988E7 /* CodeGenContext.cpp */,
+				03AAC6A42D2FE1ED000988E7 /* CodeGenLower.h */,
+				03AAC6A52D2FE1ED000988E7 /* CodeGenUtils.h */,
+				03AAC6A62D2FE1ED000988E7 /* CodeGenUtils.cpp */,
+				03AAC6A72D2FE1ED000988E7 /* CodeGenX64.h */,
+				03AAC6A82D2FE1ED000988E7 /* CodeGenX64.cpp */,
+				03AAC6A92D2FE1ED000988E7 /* EmitBuiltinsX64.h */,
+				03AAC6AA2D2FE1ED000988E7 /* EmitBuiltinsX64.cpp */,
+				03AAC6AB2D2FE1ED000988E7 /* EmitCommon.h */,
+				03AAC6AC2D2FE1ED000988E7 /* EmitCommonA64.h */,
+				03AAC6AD2D2FE1ED000988E7 /* EmitCommonX64.h */,
+				03AAC6AE2D2FE1ED000988E7 /* EmitCommonX64.cpp */,
+				03AAC6AF2D2FE1ED000988E7 /* EmitInstructionX64.h */,
+				03AAC6B02D2FE1ED000988E7 /* EmitInstructionX64.cpp */,
+				03AAC6B12D2FE1ED000988E7 /* IrAnalysis.cpp */,
+				03AAC6B22D2FE1ED000988E7 /* IrBuilder.cpp */,
+				03AAC6B32D2FE1ED000988E7 /* IrCallWrapperX64.cpp */,
+				03AAC6B42D2FE1ED000988E7 /* IrDump.cpp */,
+				03AAC6B52D2FE1ED000988E7 /* IrLoweringA64.h */,
+				03AAC6B62D2FE1ED000988E7 /* IrLoweringA64.cpp */,
+				03AAC6B72D2FE1ED000988E7 /* IrLoweringX64.h */,
+				03AAC6B82D2FE1ED000988E7 /* IrLoweringX64.cpp */,
+				03AAC6B92D2FE1ED000988E7 /* IrRegAllocA64.h */,
+				03AAC6BA2D2FE1ED000988E7 /* IrRegAllocA64.cpp */,
+				03AAC6BB2D2FE1ED000988E7 /* IrRegAllocX64.cpp */,
+				03AAC6BC2D2FE1ED000988E7 /* IrTranslateBuiltins.h */,
+				03AAC6BD2D2FE1ED000988E7 /* IrTranslateBuiltins.cpp */,
+				03AAC6BE2D2FE1ED000988E7 /* IrTranslation.h */,
+				03AAC6BF2D2FE1ED000988E7 /* IrTranslation.cpp */,
+				03AAC6C02D2FE1ED000988E7 /* IrUtils.cpp */,
+				03AAC6C12D2FE1ED000988E7 /* IrValueLocationTracking.h */,
+				03AAC6C22D2FE1ED000988E7 /* IrValueLocationTracking.cpp */,
+				03AAC6C32D2FE1ED000988E7 /* lcodegen.cpp */,
+				03AAC6C42D2FE1ED000988E7 /* NativeProtoExecData.cpp */,
+				03AAC6C52D2FE1ED000988E7 /* NativeState.h */,
+				03AAC6C62D2FE1ED000988E7 /* NativeState.cpp */,
+				03AAC6C72D2FE1ED000988E7 /* OptimizeConstProp.cpp */,
+				03AAC6C82D2FE1ED000988E7 /* OptimizeDeadStore.cpp */,
+				03AAC6C92D2FE1ED000988E7 /* OptimizeFinalX64.cpp */,
+				03AAC6CA2D2FE1ED000988E7 /* SharedCodeAllocator.cpp */,
+				03AAC6CB2D2FE1ED000988E7 /* UnwindBuilderDwarf2.cpp */,
+				03AAC6CC2D2FE1ED000988E7 /* UnwindBuilderWin.cpp */,
+			);
+			name = src;
+			path = CodeGen/src;
+			sourceTree = "<group>";
+		};
 		5F11834A1833B78A00904D46 = {
 			isa = PBXGroup;
 			children = (
+				03AAC6CD2D2FE1ED000988E7 /* src */,
 				03087AD4277EE036005D6D9B /* src */,
 				03087AE3277EE04D005D6D9B /* src */,
 				03087AEC277EE070005D6D9B /* src */,
@@ -350,6 +505,42 @@
 				03A4070D2CD142D600D97912 /* CostModel.cpp in Sources */,
 				03087B33277EE070005D6D9B /* lobject.cpp in Sources */,
 				03087AE1277EE036005D6D9B /* TimeTrace.cpp in Sources */,
+				03AAC6CE2D2FE1ED000988E7 /* CodeAllocator.cpp in Sources */,
+				03AAC6CF2D2FE1ED000988E7 /* OptimizeConstProp.cpp in Sources */,
+				03AAC6D02D2FE1ED000988E7 /* CodeGenContext.cpp in Sources */,
+				03AAC6D12D2FE1ED000988E7 /* IrValueLocationTracking.cpp in Sources */,
+				03AAC6D22D2FE1ED000988E7 /* NativeState.cpp in Sources */,
+				03AAC6D32D2FE1ED000988E7 /* CodeBlockUnwind.cpp in Sources */,
+				03AAC6D42D2FE1ED000988E7 /* BytecodeSummary.cpp in Sources */,
+				03AAC6D52D2FE1ED000988E7 /* SharedCodeAllocator.cpp in Sources */,
+				03AAC6D62D2FE1ED000988E7 /* IrTranslation.cpp in Sources */,
+				03AAC6D72D2FE1ED000988E7 /* IrDump.cpp in Sources */,
+				03AAC6D82D2FE1ED000988E7 /* OptimizeFinalX64.cpp in Sources */,
+				03AAC6D92D2FE1ED000988E7 /* NativeProtoExecData.cpp in Sources */,
+				03AAC6DA2D2FE1ED000988E7 /* AssemblyBuilderA64.cpp in Sources */,
+				03AAC6DB2D2FE1ED000988E7 /* IrCallWrapperX64.cpp in Sources */,
+				03AAC6DC2D2FE1ED000988E7 /* lcodegen.cpp in Sources */,
+				03AAC6DD2D2FE1ED000988E7 /* IrUtils.cpp in Sources */,
+				03AAC6DE2D2FE1ED000988E7 /* CodeGenUtils.cpp in Sources */,
+				03AAC6DF2D2FE1ED000988E7 /* IrBuilder.cpp in Sources */,
+				03AAC6E02D2FE1ED000988E7 /* CodeGenA64.cpp in Sources */,
+				03AAC6E12D2FE1ED000988E7 /* IrLoweringX64.cpp in Sources */,
+				03AAC6E22D2FE1ED000988E7 /* AssemblyBuilderX64.cpp in Sources */,
+				03AAC6E32D2FE1ED000988E7 /* CodeGenX64.cpp in Sources */,
+				03AAC6E42D2FE1ED000988E7 /* IrLoweringA64.cpp in Sources */,
+				03AAC6E52D2FE1ED000988E7 /* EmitInstructionX64.cpp in Sources */,
+				03AAC6E62D2FE1ED000988E7 /* IrAnalysis.cpp in Sources */,
+				03AAC6E72D2FE1ED000988E7 /* BytecodeAnalysis.cpp in Sources */,
+				03AAC6E82D2FE1ED000988E7 /* IrTranslateBuiltins.cpp in Sources */,
+				03AAC6E92D2FE1ED000988E7 /* CodeGen.cpp in Sources */,
+				03AAC6EA2D2FE1ED000988E7 /* UnwindBuilderDwarf2.cpp in Sources */,
+				03AAC6EB2D2FE1ED000988E7 /* EmitBuiltinsX64.cpp in Sources */,
+				03AAC6EC2D2FE1ED000988E7 /* CodeGenAssembly.cpp in Sources */,
+				03AAC6ED2D2FE1ED000988E7 /* IrRegAllocA64.cpp in Sources */,
+				03AAC6EE2D2FE1ED000988E7 /* UnwindBuilderWin.cpp in Sources */,
+				03AAC6EF2D2FE1ED000988E7 /* EmitCommonX64.cpp in Sources */,
+				03AAC6F02D2FE1ED000988E7 /* IrRegAllocX64.cpp in Sources */,
+				03AAC6F12D2FE1ED000988E7 /* OptimizeDeadStore.cpp in Sources */,
 				03087B38277EE070005D6D9B /* linit.cpp in Sources */,
 				03087B20277EE070005D6D9B /* lfunc.cpp in Sources */,
 				03087AE8277EE04D005D6D9B /* BytecodeBuilder.cpp in Sources */,
@@ -463,6 +654,8 @@
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				DSTROOT = /tmp/lua.dst;
+				GCC_PREPROCESSOR_DEFINITIONS = DEBUG;
+				"GCC_PREPROCESSOR_DEFINITIONS[sdk=macosx*]" = LUAU_ENABLE_CODEGEN;
 				HEADER_SEARCH_PATHS = (
 					../libgvfs,
 					./VM/include,
@@ -470,6 +663,7 @@
 					./Ast/include,
 					./VM/src,
 					./Common/include,
+					./Codegen/include,
 				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -482,6 +676,8 @@
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				DSTROOT = /tmp/lua.dst;
+				GCC_PREPROCESSOR_DEFINITIONS = "";
+				"GCC_PREPROCESSOR_DEFINITIONS[sdk=macosx*]" = LUAU_ENABLE_CODEGEN;
 				HEADER_SEARCH_PATHS = (
 					../libgvfs,
 					./VM/include,
@@ -489,6 +685,7 @@
 					./Ast/include,
 					./VM/src,
 					./Common/include,
+					./Codegen/include,
 				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = "$(TARGET_NAME)";

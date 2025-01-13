@@ -247,6 +247,52 @@ static int buffer_fill(lua_State* L)
     return 0;
 }
 
+static int buffer_setarrayaccess(lua_State* L)
+{
+    size_t len = 0;
+    luaL_checkbuffer(L, 1, &len);
+    Buffer* b = (Buffer *) lua_topointer(L,1);
+
+    size_t ss;
+    const char* at = luaL_checklstring(L, 2, &ss);
+    char att=at[0];
+    char atn1=at[1];
+    char atn2=(ss==3)?at[2]:0;
+    if ((ss<2)||(ss>3))
+    {
+        lua_pushfstring(L,"Access type invalid: %s",at);
+        lua_error(L);
+    }
+    int aType=0;
+    if ((att=='u')&&(atn1=='8')&&(atn2==0))
+        aType=0;
+    else if ((att=='i')&&(atn1=='8')&&(atn2==0))
+        aType=1;
+    else if ((att=='u')&&(atn1=='1')&&(atn2=='6'))
+        aType=2;
+    else if ((att=='i')&&(atn1=='1')&&(atn2=='6'))
+        aType=3;
+    else if ((att=='u')&&(atn1=='3')&&(atn2=='2'))
+        aType=4;
+    else if ((att=='i')&&(atn1=='3')&&(atn2=='2'))
+        aType=5;
+    else if ((att=='f')&&(atn1=='3')&&(atn2=='2'))
+        aType=6;
+    else if ((att=='f')&&(atn1=='6')&&(atn2=='4'))
+        aType=7;
+    else {
+        lua_pushfstring(L,"Access type invalid: %s",at);
+        lua_error(L);
+    }
+
+    b->atype = aType;
+    b->vx = luaL_optinteger(L, 3, 1);
+    b->vy = luaL_optinteger(L, 4, 1);
+    b->vz = luaL_optinteger(L, 5, 1);
+
+    return 0;
+}
+
 static const luaL_Reg bufferlib[] = {
     {"create", buffer_create},
     {"fromstring", buffer_fromstring},
@@ -272,6 +318,7 @@ static const luaL_Reg bufferlib[] = {
     {"len", buffer_len},
     {"copy", buffer_copy},
     {"fill", buffer_fill},
+    {"setarrayaccess", buffer_setarrayaccess},
     {NULL, NULL},
 };
 

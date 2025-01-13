@@ -14,6 +14,10 @@ Buffer* luaB_newbuffer(lua_State* L, size_t s)
     Buffer* b = luaM_newgco(L, Buffer, sizebuffer(s), L->activememcat);
     luaC_init(L, b, LUA_TBUFFER);
     b->len = unsigned(s);
+    b->atype=0; //u8
+    b->vx=1;
+    b->vy=1;
+    b->vz=1;
     memset(b->data, 0, b->len);
     return b;
 }

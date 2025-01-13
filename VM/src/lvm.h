@@ -22,6 +22,14 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
 LUAI_FUNC void luaV_dolen(lua_State* L, StkId ra, const TValue* rb);
 LUAI_FUNC const TValue* luaV_tonumber(const TValue* obj, TValue* n);
 LUAI_FUNC const float* luaV_tovector(const TValue* obj);
+#define luaV_buffervecindex(b,vec) (vec[0]*b->vy+vec[1]*b->vx+vec[2]*b->vz)
+extern const int luaV_bufTypeLengths[8];
+LUAI_FUNC void luaV_rawsetbuffer(Buffer *b,size_t index, lua_Number value);
+LUAI_FUNC lua_Number luaV_rawgetbuffer(const Buffer *b,size_t index);
+LUAI_FUNC void luaV_setbuffernum(lua_State* L, const TValue *tb, lua_Number index, lua_Number value);
+LUAI_FUNC lua_Number luaV_getbuffernum(lua_State* L, const TValue *tb, lua_Number index);
+LUAI_FUNC void luaV_setbuffervec(lua_State* L, const TValue *tb, const float *vec, lua_Number value);
+LUAI_FUNC lua_Number luaV_getbuffervec(lua_State* L, const TValue *tb, const float *vec);
 LUAI_FUNC int luaV_tostring(lua_State* L, StkId obj);
 LUAI_FUNC void luaV_gettable(lua_State* L, const TValue* t, TValue* key, StkId val);
 LUAI_FUNC void luaV_settable(lua_State* L, const TValue* t, TValue* key, StkId val);

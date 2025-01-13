@@ -782,10 +782,25 @@ reentry:
                 else if (ttisbuffer(rb) && ttisnumber(rc)) {
                     Buffer* b=bufvalue(rb);
                     double indexd = nvalue(rc);
-                    if ((indexd>=0)&&(indexd<b->len))
+                    int bl=luaV_bufTypeLengths[b->atype];
+                    indexd*=bl;
+                    if ((indexd>=0)&&((indexd+bl-1)<b->len))
                     {
-                        int index = int(indexd); //zero-based index, consistent with writeXXX API
-                        setnvalue(ra,((unsigned char *)(b->data))[index]);
+                        size_t index = size_t(indexd); //zero-based index, consistent with writeXXX API
+                        setnvalue(ra,luaV_rawgetbuffer(b,index));
+                        VM_NEXT();
+                    }
+                    // fall through to slow path
+                }
+                else if (ttisbuffer(rb) && ttisvector(rc)) {
+                    Buffer* b=bufvalue(rb);
+                    double indexd = luaV_buffervecindex(b,vvalue(rc));
+                    int bl=luaV_bufTypeLengths[b->atype];
+                    indexd*=bl;
+                    if ((indexd>=0)&&((indexd+bl-1)<b->len))
+                    {
+                        size_t index = size_t(indexd); //zero-based index, consistent with writeXXX API
+                        setnvalue(ra,luaV_rawgetbuffer(b,index));
                         VM_NEXT();
                     }
                     // fall through to slow path
@@ -824,10 +839,25 @@ reentry:
                 else if (ttisbuffer(rb) && ttisnumber(rc) && ttisnumber(ra)) {
                     Buffer* b=bufvalue(rb);
                     double indexd = nvalue(rc);
-                    if ((indexd>=0)&&(indexd<b->len))
+                    int bl=luaV_bufTypeLengths[b->atype];
+                    indexd*=bl;
+                    if ((indexd>=0)&&((indexd+bl-1)<b->len))
                     {
-                        int index = int(indexd); //zero-based index, consistent with writeXXX API
-                        b->data[index]=nvalue(ra);
+                        size_t index = size_t(indexd); //zero-based index, consistent with writeXXX API
+                        luaV_rawsetbuffer(b,index,nvalue(ra));
+                        VM_NEXT();
+                    }
+                    // fall through to slow path
+                }
+                else if (ttisbuffer(rb) && ttisvector(rc) && ttisnumber(ra)) {
+                    Buffer* b=bufvalue(rb);
+                    double indexd = luaV_buffervecindex(b,vvalue(rc));
+                    int bl=luaV_bufTypeLengths[b->atype];
+                    indexd*=bl;
+                    if ((indexd>=0)&&((indexd+bl-1)<b->len))
+                    {
+                        size_t index = size_t(indexd); //zero-based index, consistent with writeXXX API
+                        luaV_rawsetbuffer(b,index,nvalue(ra));
                         VM_NEXT();
                     }
                     // fall through to slow path
@@ -860,10 +890,12 @@ reentry:
                 }
                 else if (ttisbuffer(rb)) {
                     Buffer* b=bufvalue(rb);
-                    if ((c>=-1)&&(c<((int)(b->len-1))-1))
+                    int bl=luaV_bufTypeLengths[b->atype];
+                    double indexd=(c+1)*bl;
+                    if ((indexd>=0)&&((indexd+bl-1)<b->len))
                     {
-                        unsigned index=unsigned(c+1);
-                        setnvalue(ra,((unsigned char *)(b->data))[index]);
+                        size_t index = size_t(indexd); //zero-based index, consistent with writeXXX API
+                        setnvalue(ra,luaV_rawgetbuffer(b,index));
                         VM_NEXT();
                     }
                     // fall through to slow path
@@ -899,10 +931,12 @@ reentry:
                 }
                 else if (ttisbuffer(rb) && ttisnumber(ra)) {
                     Buffer* b=bufvalue(rb);
-                    if ((c>=-1)&&(c<((int)(b->len-1))-1))
+                    int bl=luaV_bufTypeLengths[b->atype];
+                    double indexd=(c+1)*bl;
+                    if ((indexd>=0)&&((indexd+bl-1)<b->len))
                     {
-                        unsigned index=unsigned(c+1);
-                        b->data[index]=nvalue(ra);
+                        size_t index = size_t(indexd); //zero-based index, consistent with writeXXX API
+                        luaV_rawsetbuffer(b,index,nvalue(ra));
                         VM_NEXT();
                     }
                     // fall through to slow path
@@ -1917,6 +1951,19 @@ reentry:
                     double nb = nvalue(rb);
                     double nc = nvalue(rc);
                     setnvalue(ra, luai_nummod(nb, nc));
+                    VM_NEXT();
+                }
+                else if (ttisvector(rb) && ttisnumber(rc))
+                {
+                    const float* vb = vvalue(rb);
+                    float vc = cast_to(float, nvalue(rc));
+                    setvvalue(
+                        ra,
+                        float(luai_nummod(vb[0], vc)),
+                        float(luai_nummod(vb[1], vc)),
+                        float(luai_nummod(vb[2], vc)),
+                        float(luai_nummod(vb[3], vc))
+                        );
                     VM_NEXT();
                 }
                 else

@@ -51,6 +51,77 @@ const float* luaV_tovector(const TValue* obj)
     return nullptr;
 }
 
+const int luaV_bufTypeLengths[8]={1,1,2,2,4,4,4,8};
+void luaV_rawsetbuffer(Buffer *b,size_t index, lua_Number value)
+{
+    switch (b->atype) {
+    case 0: b->data[index]=value; break; //u8
+    case 1: b->data[index]=value; break; //i8
+    case 2: *((uint16_t *)(b->data+index))=value; break; //u16
+    case 3: *((int16_t *)(b->data+index))=value; break; //i16
+    case 4: *((uint32_t *)(b->data+index))=value; break; //u32
+    case 5: *((int32_t *)(b->data+index))=value; break; //i32
+    case 6: *((float *)(b->data+index))=value; break; //f32
+    case 7: *((double *)(b->data+index))=value; break; //f64
+    }
+}
+
+lua_Number luaV_rawgetbuffer(const Buffer *b,size_t index)
+{
+    switch (b->atype) {
+    case 0: return ((uint8_t *)b->data)[index]; break; //u8
+    case 1: return ((int8_t *)b->data)[index]; break; //i8
+    case 2: return *((uint16_t *)(b->data+index)); break; //u16
+    case 3: return *((int16_t *)(b->data+index)); break; //i16
+    case 4: return *((uint32_t *)(b->data+index)); break; //u32
+    case 5: return *((int32_t *)(b->data+index)); break; //i32
+    case 6: return *((float *)(b->data+index)); break; //f32
+    case 7: return *((double *)(b->data+index)); break; //f64
+    }
+    return 0;
+}
+
+void luaV_setbuffernum(lua_State* L, const TValue *tb, lua_Number index, lua_Number value)
+{
+    Buffer* b=bufvalue(tb);
+    int bl=luaV_bufTypeLengths[b->atype];
+    index*=bl;
+    if ((index>=0)&&((index+bl-1)<b->len))
+    {
+        int indexi = int(index); //zero-based index, consistent with writeXXX API
+        luaV_rawsetbuffer(b,indexi,value);
+    }
+    else
+        luaG_boundserror(L, tb, index, 0, b->len-1);
+}
+
+lua_Number luaV_getbuffernum(lua_State* L, const TValue *tb, lua_Number index)
+{
+    const Buffer* b=bufvalue(tb);
+    int bl=luaV_bufTypeLengths[b->atype];
+    index*=bl;
+    if ((index>=0)&&((index+bl-1)<b->len))
+    {
+        int indexi = int(index); //zero-based index, consistent with writeXXX API
+        return luaV_rawgetbuffer(b,indexi);
+    }
+    else
+        luaG_boundserror(L, tb, index, 0, b->len-1);
+}
+
+void luaV_setbuffervec(lua_State* L, const TValue *tb, const float *vec, lua_Number value)
+{
+    Buffer* b=bufvalue(tb);
+    luaV_setbuffernum(L,tb,luaV_buffervecindex(b,vec),value);
+}
+
+lua_Number luaV_getbuffervec(lua_State* L, const TValue *tb, const float *vec)
+{
+    Buffer* b=bufvalue(tb);
+    return luaV_getbuffernum(L,tb,luaV_buffervecindex(b,vec));
+}
+
+
 static StkId callTMres(lua_State* L, StkId res, const TValue* f, const TValue* p1, const TValue* p2)
 {
     ptrdiff_t result = savestack(L, res);
@@ -120,16 +191,11 @@ void luaV_gettable(lua_State* L, const TValue* t, TValue* key, StkId val)
             // t isn't a table, so see if it has an INDEX meta-method to look up the key with
         }
         else if (ttisbuffer(t) && ttisnumber(key)) {
-            //buffer lookup
-            Buffer* b=bufvalue(t);
-            lua_Number indexd = nvalue(key);
-            if ((indexd>=0)&&(indexd<b->len))
-            {
-                int index = int(indexd); //zero-based index, consistent with writeXXX API
-                setnvalue(val,((unsigned char *)(b->data))[index]);
-            }
-            else
-                luaG_boundserror(L, t, indexd, 0, b->len-1);
+            setnvalue(val,luaV_getbuffernum(L,t,nvalue(key)));
+            return;
+        }
+        else if (ttisbuffer(t) && ttisvector(key)) {
+            setnvalue(val,luaV_getbuffervec(L,t,vvalue(key)));
             return;
         }
         else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_INDEX)))
@@ -181,17 +247,16 @@ void luaV_settable(lua_State* L, const TValue* t, TValue* key, StkId val)
             // fallthrough to metamethod
         }
         else if (ttisbuffer(t) && ttisnumber(key)) {
-            //buffer lookup
-            Buffer* b=bufvalue(t);
             if (ttisnumber(val)) {
-                lua_Number indexd = nvalue(key);
-                if ((indexd>=0)&&(indexd<b->len))
-                {
-                    int index = int(indexd); //zero-based index, consistent with writeXXX API
-                    b->data[index]=nvalue(val);
-                }
-                else
-                    luaG_boundserror(L, t, indexd, 0, b->len-1);
+                luaV_setbuffernum(L,t,nvalue(key),nvalue(val));
+            }
+            else
+                luaG_typeerrorL(L, val, "assign");
+            return;
+        }
+        else if (ttisbuffer(t) && ttisvector(key)) {
+            if (ttisnumber(val)) {
+                luaV_setbuffervec(L,t,vvalue(key),nvalue(val));
             }
             else
                 luaG_typeerrorL(L, val, "assign");
@@ -451,7 +516,16 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
                 float(luai_numidiv(vb[1], vc[1])),
                 float(luai_numidiv(vb[2], vc[2])),
                 float(luai_numidiv(vb[3], vc[3]))
-            );
+                );
+            return;
+        case TM_MOD:
+            setvvalue(
+                ra,
+                float(luai_nummod(vb[0], vc[0])),
+                float(luai_nummod(vb[1], vc[1])),
+                float(luai_nummod(vb[2], vc[2])),
+                float(luai_nummod(vb[3], vc[3]))
+                );
             return;
         case TM_UNM:
             setvvalue(ra, -vb[0], -vb[1], -vb[2], -vb[3]);
@@ -497,7 +571,12 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
             case TM_IDIV:
                 setvvalue(
                     ra, float(luai_numidiv(vb[0], nc)), float(luai_numidiv(vb[1], nc)), float(luai_numidiv(vb[2], nc)), float(luai_numidiv(vb[3], nc))
-                );
+                    );
+                return;
+            case TM_MOD:
+                setvvalue(
+                    ra, float(luai_nummod(vb[0], nc)), float(luai_nummod(vb[1], nc)), float(luai_nummod(vb[2], nc)), float(luai_nummod(vb[3], nc))
+                    );
                 return;
             default:
                 break;
@@ -523,7 +602,12 @@ void luaV_doarithimpl(lua_State* L, StkId ra, const TValue* rb, const TValue* rc
             case TM_IDIV:
                 setvvalue(
                     ra, float(luai_numidiv(nb, vc[0])), float(luai_numidiv(nb, vc[1])), float(luai_numidiv(nb, vc[2])), float(luai_numidiv(nb, vc[3]))
-                );
+                    );
+                return;
+            case TM_MOD:
+                setvvalue(
+                    ra, float(luai_nummod(nb, vc[0])), float(luai_nummod(nb, vc[1])), float(luai_nummod(nb, vc[2])), float(luai_nummod(nb, vc[3]))
+                    );
                 return;
             default:
                 break;

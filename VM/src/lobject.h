@@ -368,6 +368,8 @@ typedef struct Buffer
     CommonHeader;
 
     unsigned int len;
+    unsigned int atype;
+    unsigned int vx,vy,vz; //Vector access factors
 
     union
     {

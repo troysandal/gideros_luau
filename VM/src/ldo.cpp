@@ -329,10 +329,10 @@ static void resume_continue(lua_State* L)
             LUAU_ASSERT(cl->c.cont);
 
             // C continuation; we expect this to be followed by Lua continuations
-            int n = cl->c.cont(L, 0);
+            int n = cl->c.cont(L, 0,cl->c.contContext);
 
-            // Continuation can break again
-            if (L->status == LUA_BREAK)
+            // Continuation can break/yield again
+            if ((L->status == LUA_BREAK) || (L->status == LUA_YIELD))
                 break;
 
             luau_poscall(L, L->top - n);
@@ -435,7 +435,7 @@ static void resume_handle(lua_State* L, void* ud)
     ptrdiff_t old_ci = saveci(L, ci);
 
     // handle the error in continuation; note that this executes on top of original stack!
-    int n = cl->c.cont(L, status);
+    int n = cl->c.cont(L, status, cl->c.contContext);
 
     // restore the stack frame to the frame with continuation
     L->ci = restoreci(L, old_ci);
@@ -531,6 +531,17 @@ int lua_resumeerror(lua_State* L, lua_State* from)
     resume_finish(L, status);
     --L->nCcalls;
     return L->status;
+}
+
+int lua_yieldk(lua_State* L, lua_Continuation cont,void *context)
+{
+    if (L->nCcalls > L->baseCcalls)
+        luaG_runerror(L, "attempt to yield across metamethod/C-call boundary");
+    Closure* cl = curr_func(L);
+    cl->c.cont=cont;
+    cl->c.contContext=context;
+    L->status = LUA_YIELD;
+    return -1;
 }
 
 int lua_yield(lua_State* L, int nresults)

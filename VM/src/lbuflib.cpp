@@ -293,6 +293,52 @@ static int buffer_setarrayaccess(lua_State* L)
     return 0;
 }
 
+static int buffer_resize(lua_State* L) //new size, data offset
+{
+    size_t len = 0;
+    void *b=luaL_checkbuffer(L, 1, &len);
+    void *nb=b;
+    size_t nsz=luaL_checkunsigned(L,2);
+    int noff=luaL_optinteger(L,3,0);
+
+    if (nsz==len) {
+        lua_pushvalue(L,1);
+        if (!noff) return 1;
+    }
+    else {
+        nb=lua_newbuffer(L,nsz);
+        Buffer* bb = (Buffer *) lua_topointer(L,1);
+        Buffer* bnb = (Buffer *) lua_topointer(L,-1);
+        bnb->atype=bb->atype;
+    }
+    if (noff>=0) {
+        size_t nlen=nsz-noff;
+        if (nlen>len) nlen=len;
+        memmove((uint8_t *)nb+noff,b,nlen);
+    }
+    else if (noff<0) {
+        size_t nlen=len+noff;
+        if (nlen>nsz) nlen=nsz;
+        memmove((uint8_t *)nb,(uint8_t *)b-noff,nlen);
+    }
+
+    return 1;
+}
+
+static int buffer_extract(lua_State* L)
+{
+    size_t len = 0;
+    void *b=luaL_checkbuffer(L, 1, &len);
+    int noff=luaL_optunsigned(L,2,0);
+    size_t nsz=luaL_optunsigned(L,3,len-noff);
+    void *nb=lua_newbuffer(L,nsz);
+    memcpy(nb,(uint8_t *)b+noff,nsz);
+    Buffer* bb = (Buffer *) lua_topointer(L,1);
+    Buffer* bnb = (Buffer *) lua_topointer(L,-1);
+    bnb->atype=bb->atype;
+    return 1;
+}
+
 static const luaL_Reg bufferlib[] = {
     {"create", buffer_create},
     {"fromstring", buffer_fromstring},
@@ -319,6 +365,8 @@ static const luaL_Reg bufferlib[] = {
     {"copy", buffer_copy},
     {"fill", buffer_fill},
     {"setarrayaccess", buffer_setarrayaccess},
+    {"resize", buffer_resize},
+    {"extract", buffer_extract},
     {NULL, NULL},
 };
 

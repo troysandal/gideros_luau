@@ -125,6 +125,13 @@ static void getfunc(lua_State* L, int opt)
     }
 }
 
+static int luaB_setsafeenv(lua_State* L)
+{
+    int safe=luaL_optinteger(L,1,-1);
+    lua_setsafeenv(L, LUA_GLOBALSINDEX, safe);
+    return 0;
+}
+
 static int luaB_getfenv(lua_State* L)
 {
     getfunc(L, 1);
@@ -132,7 +139,7 @@ static int luaB_getfenv(lua_State* L)
         lua_pushvalue(L, LUA_GLOBALSINDEX); // return the thread's global env.
     else
         lua_getfenv(L, -1);
-    lua_setsafeenv(L, -1, false);
+    lua_setsafeenv(L, -1, 0);
     return 1;
 }
 
@@ -141,7 +148,7 @@ static int luaB_setfenv(lua_State* L)
     luaL_checktype(L, 2, LUA_TTABLE);
     getfunc(L, 0);
     lua_pushvalue(L, 2);
-    lua_setsafeenv(L, -1, false);
+    lua_setsafeenv(L, -1, 0);
     if (lua_isnumber(L, 1) && lua_tonumber(L, 1) == 0)
     {
         // change environment of current thread
@@ -225,6 +232,42 @@ int luaB_next(lua_State* L)
         return 1;
     }
 }
+
+/*
+static int luaB_nexti(lua_State *L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    int i=luaL_optinteger(L,2,0);
+    i=lua_nexti(L,1,i);
+    if (i) {
+    	lua_pushinteger(L,i);
+    	return 3;
+    }
+    else
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushcclosure(L, luaB_nexti, "nexti", 1);
+}
+
+static int pairsnexti(lua_State *L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    int i=lua_tointeger(L,lua_upvalueindex(1));
+    i=lua_nexti(L,1,i);
+    if (i) {
+        lua_pushinteger(L,i);
+        lua_replace(L, lua_upvalueindex(1));
+    	return 2;
+    }
+    else
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+}
+*/
 
 static int luaB_pairs(lua_State* L)
 {
@@ -317,7 +360,7 @@ static int luaB_pcally(lua_State* L)
     return lua_gettop(L); // return status + all results
 }
 
-static int luaB_pcallcont(lua_State* L, int status)
+static int luaB_pcallcont(lua_State* L, int status, void *context)
 {
     if (status == 0)
     {
@@ -378,7 +421,7 @@ static void luaB_xpcallerr(lua_State* L, void* ud)
     luaD_call(L, func, 1);
 }
 
-static int luaB_xpcallcont(lua_State* L, int status)
+static int luaB_xpcallcont(lua_State* L, int status, void *context)
 {
     if (status == 0)
     {
@@ -534,6 +577,7 @@ static const luaL_Reg base_funcs[] = {
     {"rawlen", luaB_rawlen},
     {"select", luaB_select},
     {"setfenv", luaB_setfenv},
+    {"setsafeenv", luaB_setsafeenv},
     {"setmetatable", luaB_setmetatable},
     {"tonumber", luaB_tonumber},
     {"tostring", luaB_tostring},

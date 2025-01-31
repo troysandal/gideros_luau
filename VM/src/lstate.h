@@ -246,10 +246,10 @@ typedef struct global_State
 #define lualock_global() if (lua_hasThreads) lua_globalLock.lock()
 #define luaunlock_global() if (lua_hasThreads) lua_globalLock.unlock()
 //Acquire/Release a lock on GC. This should be very fast as this will be run often
-#define lualock_gc() //if (lua_hasThreads) L->global->gc_lock->lock()
-#define luaunlock_gc() //if (lua_hasThreads) L->global->gc_lock->unlock()
-#define lualock_gcstep() (!lua_hasThreads)
-#define luaunlock_gcstep()
+#define lualock_gc() lualock_global()
+#define luaunlock_gc() luaunlock_global()
+#define lualock_gcstep() lualock_global()
+#define luaunlock_gcstep() luaunlock_global()
 
 #else
 

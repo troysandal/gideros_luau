@@ -57,7 +57,7 @@ void luaL_sandbox(lua_State* L)
 
     // set globals to readonly and activate safeenv since the env is immutable
     lua_setreadonly(L, LUA_GLOBALSINDEX, true);
-    lua_setsafeenv(L, LUA_GLOBALSINDEX, true);
+    lua_setsafeenv(L, LUA_GLOBALSINDEX, -1);
 }
 
 void luaL_sandboxthread(lua_State* L)
@@ -74,7 +74,7 @@ void luaL_sandboxthread(lua_State* L)
 
     // we can set safeenv now although it's important to set it to false if code is loaded twice into the thread
     lua_replace(L, LUA_GLOBALSINDEX);
-    lua_setsafeenv(L, LUA_GLOBALSINDEX, true);
+    lua_setsafeenv(L, LUA_GLOBALSINDEX, -1);
 }
 
 static void* l_alloc(void* ud, void* ptr, size_t osize, size_t nsize)

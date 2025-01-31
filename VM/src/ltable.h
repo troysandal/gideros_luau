@@ -3,6 +3,7 @@
 #pragma once
 
 #include "lobject.h"
+#include "lua.h"
 
 #define gnode(t, i) (&(t)->node[i])
 #define gkey(n) (&(n)->key)

@@ -869,7 +869,7 @@ void lua_setsafeenv(lua_State* L, int objindex, int enabled)
     const TValue* o = index2addr(L, objindex);
     api_check(L, ttistable(o));
     Table* t = hvalue(o);
-    t->safeenv = bool(enabled);
+    t->safeenv = enabled;
 }
 
 int lua_getmetatable(lua_State* L, int objindex)

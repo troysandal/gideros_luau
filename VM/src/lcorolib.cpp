@@ -130,7 +130,7 @@ static int coresumey(lua_State* L)
     return coresumefinish(L, r);
 }
 
-static int coresumecont(lua_State* L, int status)
+static int coresumecont(lua_State* L, int status, void *context)
 {
     lua_State* co = lua_tothread(L, 1);
     luaL_argexpected(L, co, 1, "thread");
@@ -171,7 +171,7 @@ static int auxwrapy(lua_State* L)
     return auxwrapfinish(L, r);
 }
 
-static int auxwrapcont(lua_State* L, int status)
+static int auxwrapcont(lua_State* L, int status, void *context)
 {
     lua_State* co = lua_tothread(L, lua_upvalueindex(1));
 

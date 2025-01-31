@@ -166,7 +166,7 @@ static void resolveImportSafe(lua_State* L, Table* env, TValue* k, uint32_t id)
     };
 
     ResolveImport ri = {k, id};
-    if (L->gt->safeenv)
+    if (L->gt->safeenv&LUA_SAFEENV_IMPORTS)
     {
         // luaD_pcall will make sure that if any C/Lua calls during import resolution fail, the thread state is restored back
         int oldTop = lua_gettop(L);

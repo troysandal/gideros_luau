@@ -430,7 +430,7 @@ reentry:
                 TValue* kv = VM_KV(LUAU_INSN_D(insn));
 
                 // fast-path: import resolution was successful and closure environment is "safe" for import
-                if (!ttisnil(kv) && cl->env->safeenv)
+                if (!ttisnil(kv) && (cl->env->safeenv&LUA_SAFEENV_IMPORTS))
                 {
                     setobj2s(L, ra, kv);
                     pc++; // skip over AUX
@@ -2681,7 +2681,7 @@ reentry:
                 StkId ra = VM_REG(LUAU_INSN_A(insn));
 
                 // fast-path: ipairs/inext
-                if (cl->env->safeenv && ttistable(ra + 1) && ttisnumber(ra + 2) && nvalue(ra + 2) == 0.0)
+                if ((cl->env->safeenv&LUA_SAFEENV_ITERS) && ttistable(ra + 1) && ttisnumber(ra + 2) && nvalue(ra + 2) == 0.0)
                 {
                     setnilvalue(ra);
                     // ra+1 is already the table
@@ -2704,7 +2704,7 @@ reentry:
                 StkId ra = VM_REG(LUAU_INSN_A(insn));
 
                 // fast-path: pairs/next
-                if (cl->env->safeenv && ttistable(ra + 1) && ttisnil(ra + 2))
+                if ((cl->env->safeenv&LUA_SAFEENV_ITERS) && ttistable(ra + 1) && ttisnil(ra + 2))
                 {
                     setnilvalue(ra);
                     // ra+1 is already the table
@@ -2908,7 +2908,7 @@ reentry:
                 luau_FastFunction f = luauF_table[bfid];
                 LUAU_ASSERT(f);
 
-                if (cl->env->safeenv)
+                if (cl->env->safeenv&LUA_SAFEENV_FASTCALLS)
                 {
                     VM_PROTECT_PC(); // f may fail due to OOM
 
@@ -3024,7 +3024,7 @@ reentry:
                 luau_FastFunction f = luauF_table[bfid];
                 LUAU_ASSERT(f);
 
-                if (cl->env->safeenv)
+                if (cl->env->safeenv&LUA_SAFEENV_FASTCALLS)
                 {
                     VM_PROTECT_PC(); // f may fail due to OOM
 
@@ -3074,7 +3074,7 @@ reentry:
                 luau_FastFunction f = luauF_table[bfid];
                 LUAU_ASSERT(f);
 
-                if (cl->env->safeenv)
+                if (cl->env->safeenv&LUA_SAFEENV_FASTCALLS)
                 {
                     VM_PROTECT_PC(); // f may fail due to OOM
 
@@ -3124,7 +3124,7 @@ reentry:
                 luau_FastFunction f = luauF_table[bfid];
                 LUAU_ASSERT(f);
 
-                if (cl->env->safeenv)
+                if (cl->env->safeenv&LUA_SAFEENV_FASTCALLS)
                 {
                     VM_PROTECT_PC(); // f may fail due to OOM
 
@@ -3175,7 +3175,7 @@ reentry:
                 luau_FastFunction f = luauF_table[bfid];
                 LUAU_ASSERT(f);
 
-                if (cl->env->safeenv)
+                if (cl->env->safeenv&LUA_SAFEENV_FASTCALLS)
                 {
                     VM_PROTECT_PC(); // f may fail due to OOM
 

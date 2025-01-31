@@ -46,7 +46,7 @@ enum lua_CoStatus
 typedef struct lua_State lua_State;
 
 typedef int (*lua_CFunction)(lua_State* L);
-typedef int (*lua_Continuation)(lua_State* L, int status);
+typedef int (*lua_Continuation)(lua_State* L, int status, void *contContext);
 
 /*
 ** prototype for memory-allocation functions
@@ -237,6 +237,7 @@ LUA_API int lua_pcall(lua_State* L, int nargs, int nresults, int errfunc);
 ** coroutine functions
 */
 LUA_API int lua_yield(lua_State* L, int nresults);
+LUA_API int lua_yieldk(lua_State* L, lua_Continuation cont,void *context);
 LUA_API int lua_break(lua_State* L);
 LUA_API int lua_resume(lua_State* L, lua_State* from, int narg);
 LUA_API int lua_resumeerror(lua_State* L, lua_State* from);
@@ -476,6 +477,10 @@ LUA_API int lua_rawgettoken(lua_State* L, int idx, int token);
 LUA_API void lua_rawsettoken(lua_State* L, int idx, int token);
 
 //GIDEROS
+#define LUA_SAFEENV_IMPORTS   1
+#define LUA_SAFEENV_ITERS 	  2
+#define LUA_SAFEENV_FASTCALLS 4
+
 #define LUA_DTOR_UDATA(p) (p)
 #define lua_pushcnfunction(L, fn, debugname) lua_pushcclosurek(L, fn, debugname, 0, NULL)
 #define lua_pushcnclosure(L, fn, nup, debugname) lua_pushcclosurek(L, fn, debugname, nup, NULL)

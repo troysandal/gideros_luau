@@ -233,24 +233,20 @@ int luaB_next(lua_State* L)
     }
 }
 
-/*
-static int luaB_nexti(lua_State *L)
+static int luaB_rawiter(lua_State *L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
     int i=luaL_optinteger(L,2,0);
-    i=lua_nexti(L,1,i);
-    if (i) {
+    i=lua_rawiter(L,1,i);
+    if (i>=0) {
     	lua_pushinteger(L,i);
     	return 3;
     }
-    else
-    {
-        lua_pushnil(L);
-        return 1;
-    }
-    lua_pushcclosure(L, luaB_nexti, "nexti", 1);
+	lua_pushnil(L);
+	return 1;
 }
 
+/*
 static int pairsnexti(lua_State *L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -266,6 +262,7 @@ static int pairsnexti(lua_State *L)
         lua_pushnil(L);
         return 1;
     }
+    lua_pushcclosure(L, luaB_nexti, "nexti", 1);
 }
 */
 
@@ -569,6 +566,7 @@ static const luaL_Reg base_funcs[] = {
     {"getfenv", luaB_getfenv},
     {"getmetatable", luaB_getmetatable},
     {"next", luaB_next},
+    {"rawiter", luaB_rawiter},
     {"newproxy", luaB_newproxy},
     {"print", luaB_print},
     {"rawequal", luaB_rawequal},

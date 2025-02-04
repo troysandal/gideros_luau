@@ -609,13 +609,11 @@ static int tisfrozen(lua_State* L)
 static void deepclone(lua_State *L) //Clone table at -1
 {
 	lua_newtable(L); //O,T
-	lua_pushnil(L); //O,T,K
-	while (lua_next(L,-3)) { //O,T,K,V
-		lua_pushvalue(L,-2); //O,T,K,V,K
-		lua_insert(L,-2); //O,T,K,K,V
+    int iter=0;
+    while ((iter=lua_rawiter(L,-2,iter))>=0) { //O,T,K,V
 		if (lua_type(L,-1)==LUA_TTABLE)
 			deepclone(L);
-		lua_rawset(L,-4); //O,T,K
+		lua_rawset(L,-3); //O,T
 	}
 	lua_remove(L,-2); //T
 }
@@ -646,13 +644,11 @@ static int tclone(lua_State* L)
         }
     	lua_newtable(L);
     }
-    lua_pushnil(L); //T,K
-    while (lua_next(L,1)) { //T,K,V
-    	lua_pushvalue(L,-2); //T,K,V,K
-    	lua_insert(L,-2); //T,K,K,V
-    	if (deep&&(lua_type(L,-1)==LUA_TTABLE))
-    		deepclone(L);
-    	lua_rawset(L,-4); //T,K
+    int iter=0;
+    while ((iter=lua_rawiter(L,1,iter))>=0) { //T,K,V
+		if (deep&&(lua_type(L,-1)==LUA_TTABLE))
+			deepclone(L);
+    	lua_rawset(L,-3); //T
     }
     return 1; //T
 }

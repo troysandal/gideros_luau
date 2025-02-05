@@ -15,7 +15,6 @@ class LuaSpinLock {
     std::atomic_flag locked = ATOMIC_FLAG_INIT ;
     std::thread::id lockedid;
     void * lid=nullptr;
-    void *pc=nullptr;
     int lock_count = 0;
 public:
     void lock() {
@@ -27,7 +26,6 @@ public:
                 if (++i % 10000 == 0) std::this_thread::yield();
             }
             lockedid= std::this_thread::get_id();
-            pc=__builtin_return_address (0);
         }
 
     }
@@ -37,7 +35,6 @@ public:
         else {
             lockedid=std::thread::id();
             locked.clear(std::memory_order_release);
-            pc=nullptr;
         }
     }
     void lockt(void *L) {

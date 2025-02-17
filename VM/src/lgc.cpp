@@ -1042,7 +1042,7 @@ size_t luaC_step(lua_State* L, bool assist)
 
     GC_INTERRUPT(0);
 
-    lualock_gcstep();
+    if (!lualock_gcstep()) return 0;
     // at the start of the new cycle
     if (g->gcstate == GCSpause)
         g->gcstats.starttimestamp = lua_clock();
@@ -1102,7 +1102,7 @@ void luaC_fullgc(lua_State* L)
 {
     global_State* g = L->global;
 
-    lualock_gcstep();
+    if (!lualock_gcstep()) return;
 
 #ifdef LUAI_GCMETRICS
     if (g->gcstate == GCSpause)

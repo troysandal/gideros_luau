@@ -115,7 +115,7 @@ LUA_API lua_State* lua_newthread(lua_State* L);
 LUA_API lua_State* lua_mainthread(lua_State* L);
 LUA_API void lua_resetthread(lua_State* L);
 LUA_API int lua_isthreadreset(lua_State* L);
-LUA_API void lua_enableThreads(lua_State* L,int count);
+LUA_API void lua_enableThreads(lua_State* L,int threadsDiff, int suspendedDiff);
 
 /*
 ** basic stack manipulation
@@ -296,6 +296,9 @@ enum lua_GCOp
     LUA_GCSETGOAL,
     LUA_GCSETSTEPMUL,
     LUA_GCSETSTEPSIZE,
+
+    /* Returns 1 if a GC step is needed */
+    LUA_GCNEEDED,
 };
 
 LUA_API int lua_gc(lua_State* L, int what, int data);

@@ -10,6 +10,19 @@
 #ifdef LUAU_MULTITHREAD
 #include <atomic>
 #include <thread>
+
+/* About threading, locks and speed
+Luau wasn't designed with multi threading in mind, but as always making it work is just a matter of preventing
+concurrent accesses to structures. We do this here by:
+- (1) adding a mutex on global state
+- (2) adding a mutex on tables marked as 'shared'
+- (3) controlling when the GC should run
+
+For (1) and (2), we use a spinlock if we detect threads are possibly active.
+We need to ensure locks entered are always released, knowing that thread count may evolve. We assume that threads cannot be created or destroyed in whithin lockable sections.
+For (3), we prohibit GC unless all threads are suspended or yielded
+ */
+
 #if 1
 class LuaSpinLock {
     std::atomic_flag locked = ATOMIC_FLAG_INIT ;
@@ -63,7 +76,8 @@ public:
 #endif
 
 extern LuaSpinLock lua_globalLock;
-extern int lua_hasThreads;
+extern int lua_hasThreads; //Total thread count
+extern int lua_suspendedThreads; //Suspended thread count
 #endif
 
 /*

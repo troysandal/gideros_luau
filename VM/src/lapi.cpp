@@ -193,8 +193,11 @@ lua_State* lua_newthread(lua_State* L)
     return L1;
 }
 
-void lua_enableThreads(lua_State* L,int count) {
-    lua_hasThreads+=count;
+void lua_enableThreads(lua_State* L,int threadDiff, int suspendedDiff) {
+    lualock_global();
+    lua_hasThreads+=threadDiff;
+    lua_suspendedThreads+=suspendedDiff;
+    luaunlock_global();
 }
 
 lua_State* lua_mainthread(lua_State* L)
@@ -1273,6 +1276,12 @@ int lua_gc(lua_State* L, int what, int data)
         // GC values are expressed in Kbytes: #bytes/2^10
         res = g->gcstepsize >> 10;
         g->gcstepsize = data << 10;
+        break;
+    }
+    case LUA_GCNEEDED:
+    {
+        // GC values are expressed in Kbytes: #bytes/2^10
+        res = luaC_needsGC(L)?1:0;
         break;
     }
     default:

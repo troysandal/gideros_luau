@@ -16,6 +16,7 @@
 #ifdef LUAU_MULTITHREAD
 LuaSpinLock lua_globalLock;
 int lua_hasThreads=0;
+int lua_suspendedThreads=0;
 #endif
 
 const TValue luaO_nilobject_ = {{NULL}, {0}, LUA_TNIL};

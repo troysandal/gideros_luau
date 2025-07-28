@@ -605,7 +605,9 @@ int luau_load(lua_State* L, const char* chunkname, const char* data, size_t size
         Closure* cl = luaF_newLclosure(L, 0, envt, main);
         setclvalue(L, L->top, cl);
         incr_top(L);
+        #ifdef LUAU_ENABLE_CODEGEN
         lua_rawseti(L,-2,++done);
+        #endif
     }
     return -done;
 }

@@ -105,7 +105,7 @@ static int lua_loadstring(lua_State* L)
     lua_setsafeenv(L, LUA_ENVIRONINDEX, false);
 
     std::string bytecode = Luau::compile(std::string(s, l), chunkname, copts());
-    if (luau_load(L, chunkname, bytecode.data(), bytecode.size(), 0) == 0)
+    if (luau_load(L, chunkname, bytecode.data(), bytecode.size(), 0) <= 0)
         return 1;
 
     lua_pushnil(L);
@@ -146,10 +146,10 @@ static int lua_require(lua_State* L)
     // now we can compile & run module on the new thread
 /*HEAD
     std::string bytecode = Luau::compile(*source, chunkname, copts());
-    if (luau_load(ML, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
+    if (luau_load(ML, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) <= 0)
     */
     std::string bytecode = Luau::compile(resolvedRequire.sourceCode, resolvedRequire.chunkName, copts());
-    if (luau_load(ML, resolvedRequire.chunkName.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
+    if (luau_load(ML, resolvedRequire.chunkName.c_str(), bytecode.data(), bytecode.size(), 0) <= 0)
     {
 #ifndef NO_CODEGEN
         if (codegen)
@@ -278,7 +278,7 @@ std::string runCode(lua_State* L, const std::string& source)
 
     std::string bytecode = Luau::compile(source, "=stdin", copts());
 
-    if (luau_load(L, "=stdin", bytecode.data(), bytecode.size(), 0) != 0)
+    if (luau_load(L, "=stdin", bytecode.data(), bytecode.size(), 0) > 0)
     {
         size_t len;
         const char* msg = lua_tolstring(L, -1, &len);
@@ -291,7 +291,9 @@ std::string runCode(lua_State* L, const std::string& source)
 
 #ifndef NO_CODEGEN
     if (codegen)
+    {
         Luau::CodeGen::compile(L, -1);
+    }
 #endif
     lua_State* T = lua_newthread(L);
 
@@ -632,7 +634,7 @@ static bool runFile(const char* name, lua_State* GL, bool repl)
     std::string bytecode = Luau::compile(*source, chunkname, copts());
     int status = 0;
 
-    if (luau_load(L, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) == -1)
+    if (luau_load(L, chunkname.c_str(), bytecode.data(), bytecode.size(), 0) <= 0)
     {
 #ifndef NO_CODEGEN
         if (codegen)
@@ -694,7 +696,10 @@ static void displayHelp(const char* argv0)
     printf("  -g<n>: compile with debug level n (default 1, n should be between 0 and 2).\n");
     printf("  --profile[=N]: profile the code using N Hz sampling (default 10000) and output results to profile.out\n");
     printf("  --timetrace: record compiler time tracing information into trace.json\n");
+    // Gideros omits codegen for the Repl
+    #ifndef NO_CODEGEN
     printf("  --codegen: execute code using native code generation\n");
+    #endif
     printf("  --program-args,-a: declare start of arguments to be passed to the Luau program\n");
 }
 

@@ -5,6 +5,10 @@ if(EXT_PLATFORM_STRING)
 endif()
 
 cmake_minimum_required(VERSION 3.0)
+# Begin Gideros - Fixes missing std compile errors
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# End Gideros
 
 option(LUAU_BUILD_CLI "Build CLI" ON)
 option(LUAU_BUILD_TESTS "Build tests" ON)
@@ -97,7 +101,10 @@ target_link_libraries(Luau.CodeGen PRIVATE Luau.VM Luau.VM.Internals) # Code gen
 target_link_libraries(Luau.CodeGen PUBLIC Luau.Common)
 
 target_compile_features(Luau.VM PRIVATE cxx_std_11)
-target_include_directories(Luau.VM PUBLIC VM/include)
+# Begin Gideros - dependecies added by Gideros team
+target_include_directories(Luau.VM PUBLIC VM/include ../libgvfs Compiler/include Ast/include)
+target_compile_definitions(Luau.Repl.CLI PRIVATE NO_CODEGEN)
+# End Gideros
 target_link_libraries(Luau.VM PUBLIC Luau.Common)
 
 target_include_directories(isocline PUBLIC extern/isocline/include)
@@ -211,7 +218,10 @@ if(LUAU_BUILD_CLI)
     target_compile_options(Luau.Ast.CLI PRIVATE ${LUAU_OPTIONS})
     target_compile_options(Luau.Compile.CLI PRIVATE ${LUAU_OPTIONS})
     target_compile_options(Luau.Bytecode.CLI PRIVATE ${LUAU_OPTIONS})
-
+    # Begin Gideros - omits codegen & g_xxx methods
+    target_compile_definitions(Luau.Repl.CLI PUBLIC NO_CODEGEN)
+    target_compile_definitions(Luau.VM PRIVATE DESKTOP_TOOLS)
+    # End Gideros
     target_include_directories(Luau.Repl.CLI PRIVATE extern extern/isocline/include)
 
     target_link_libraries(Luau.Repl.CLI PRIVATE Luau.Compiler Luau.Config Luau.CodeGen Luau.VM Luau.CLI.lib isocline)

@@ -37,6 +37,7 @@ target_sources(Luau.Ast PRIVATE
 target_sources(Luau.Compiler PRIVATE
     Compiler/include/Luau/BytecodeBuilder.h
     Compiler/include/Luau/Compiler.h
+    Compiler/include/Luau/PseudoCode.h
     Compiler/include/luacode.h
 
     Compiler/src/BytecodeBuilder.cpp
@@ -45,6 +46,7 @@ target_sources(Luau.Compiler PRIVATE
     Compiler/src/BuiltinFolding.cpp
     Compiler/src/ConstantFolding.cpp
     Compiler/src/CostModel.cpp
+    Compiler/src/PseudoCode.cpp
     Compiler/src/TableShape.cpp
     Compiler/src/Types.cpp
     Compiler/src/ValueTracking.cpp
@@ -337,6 +339,8 @@ target_sources(Luau.VM PRIVATE
     VM/src/lgc.cpp
     VM/src/lgcdebug.cpp
     VM/src/linit.cpp
+    VM/src/lint64lib.cpp
+    VM/src/liolib.cpp
     VM/src/lmathlib.cpp
     VM/src/lmem.cpp
     VM/src/lnumprint.cpp

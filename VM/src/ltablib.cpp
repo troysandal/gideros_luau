@@ -606,6 +606,7 @@ static int tisfrozen(lua_State* L)
 
 static void deepclone(lua_State *L) //Clone table at -1
 {
+    lua_checkstack(L,8);
 	lua_newtable(L); //O,T
     int iter=0;
     while ((iter=lua_rawiter(L,-2,iter))>=0) { //O,T,K,V

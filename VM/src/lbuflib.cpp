@@ -293,6 +293,65 @@ static int buffer_setarrayaccess(lua_State* L)
     return 0;
 }
 
+static int buffer_convertendian(lua_State* L)
+{
+    size_t len = 0;
+    uint8_t *bdat=(uint8_t *)(luaL_checkbuffer(L, 1, &len));
+    Buffer* b = (Buffer *) lua_topointer(L,1);
+    bool exBE=lua_toboolean(L,2);
+    int i=1;
+    int isBE=(!*((char *)&i));
+    if (!((isBE&&(!exBE))||(exBE&&(!isBE)))) return 0;
+    switch (b->atype)
+    {
+    case 2:
+    case 3:
+        while (len>1)
+        {
+            len-=2;
+            uint8_t a=bdat[1];
+            bdat[1]=bdat[0];
+            bdat[0]=a;
+            bdat+=2;
+        }
+        break;
+    case 4:
+    case 5:
+    case 6:
+        while (len>3)
+        {
+            len-=4;
+            uint8_t a=bdat[3];
+            bdat[3]=bdat[0];
+            bdat[0]=a;
+            a=bdat[2];
+            bdat[2]=bdat[1];
+            bdat[1]=a;
+            bdat+=4;
+        }
+        break;
+    case 7:
+        while (len>7)
+        {
+            len-=8;
+            uint8_t a=bdat[7];
+            bdat[7]=bdat[0];
+            bdat[0]=a;
+            a=bdat[6];
+            bdat[6]=bdat[1];
+            bdat[1]=a;
+            a=bdat[5];
+            bdat[5]=bdat[2];
+            bdat[2]=a;
+            a=bdat[4];
+            bdat[4]=bdat[3];
+            bdat[3]=a;
+            bdat+=8;
+        }
+        break;
+    }
+    return 0;
+}
 static int buffer_resize(lua_State* L) //new size, data offset
 {
     size_t len = 0;
@@ -450,6 +509,7 @@ static const luaL_Reg bufferlib[] = {
     {"extract", buffer_extract},
     {"readbits", buffer_readbits},
     {"writebits", buffer_writebits},
+    {"convertendian", buffer_convertendian},
     {NULL, NULL},
 };
 

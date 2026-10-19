@@ -9,10 +9,8 @@
 /* Begin PBXBuildFile section */
 		03087ADC277EE036005D6D9B /* Ast.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AD5277EE036005D6D9B /* Ast.cpp */; };
 		03087ADD277EE036005D6D9B /* Confusables.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AD6277EE036005D6D9B /* Confusables.cpp */; };
-		03087ADE277EE036005D6D9B /* StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AD7277EE036005D6D9B /* StringUtils.cpp */; };
 		03087ADF277EE036005D6D9B /* Location.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AD8277EE036005D6D9B /* Location.cpp */; };
 		03087AE0277EE036005D6D9B /* Lexer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AD9277EE036005D6D9B /* Lexer.cpp */; };
-		03087AE1277EE036005D6D9B /* TimeTrace.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087ADA277EE036005D6D9B /* TimeTrace.cpp */; };
 		03087AE2277EE036005D6D9B /* Parser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087ADB277EE036005D6D9B /* Parser.cpp */; };
 		03087AE8277EE04D005D6D9B /* BytecodeBuilder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AE4277EE04D005D6D9B /* BytecodeBuilder.cpp */; };
 		03087AE9277EE04D005D6D9B /* Compiler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087AE5277EE04D005D6D9B /* Compiler.cpp */; };
@@ -50,6 +48,12 @@
 		03087B3A277EE070005D6D9B /* lbuiltins.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1B277EE070005D6D9B /* lbuiltins.cpp */; };
 		03087B3B277EE070005D6D9B /* ldblib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03087B1C277EE070005D6D9B /* ldblib.cpp */; };
 		032FC7C5278C277400DD298A /* lnumprint.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 032FC7C4278C277400DD298A /* lnumprint.cpp */; };
+		039734262F238B2F00ABB30B /* Cst.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 039734242F238B2F00ABB30B /* Cst.cpp */; };
+		039734272F238B2F00ABB30B /* PrettyPrinter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 039734252F238B2F00ABB30B /* PrettyPrinter.cpp */; };
+		039734282F238B2F00ABB30B /* Allocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 039734232F238B2F00ABB30B /* Allocator.cpp */; };
+		0397342A2F238B5000ABB30B /* lveclib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 039734292F238B5000ABB30B /* lveclib.cpp */; };
+		0397342E2F238B7400ABB30B /* StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0397342B2F238B7400ABB30B /* StringUtils.cpp */; };
+		0397342F2F238B7400ABB30B /* TimeTrace.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0397342C2F238B7400ABB30B /* TimeTrace.cpp */; };
 		03A4070C2CD142D600D97912 /* Types.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A4070B2CD142D600D97912 /* Types.cpp */; };
 		03A4070D2CD142D600D97912 /* CostModel.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A407092CD142D600D97912 /* CostModel.cpp */; };
 		03A407112CD142E800D97912 /* lbuflib.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 03A407102CD142E800D97912 /* lbuflib.cpp */; };
@@ -112,10 +116,8 @@
 /* Begin PBXFileReference section */
 		03087AD5277EE036005D6D9B /* Ast.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Ast.cpp; sourceTree = "<group>"; };
 		03087AD6277EE036005D6D9B /* Confusables.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Confusables.cpp; sourceTree = "<group>"; };
-		03087AD7277EE036005D6D9B /* StringUtils.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = StringUtils.cpp; sourceTree = "<group>"; };
 		03087AD8277EE036005D6D9B /* Location.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Location.cpp; sourceTree = "<group>"; };
 		03087AD9277EE036005D6D9B /* Lexer.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Lexer.cpp; sourceTree = "<group>"; };
-		03087ADA277EE036005D6D9B /* TimeTrace.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TimeTrace.cpp; sourceTree = "<group>"; };
 		03087ADB277EE036005D6D9B /* Parser.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Parser.cpp; sourceTree = "<group>"; };
 		03087AE4277EE04D005D6D9B /* BytecodeBuilder.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BytecodeBuilder.cpp; sourceTree = "<group>"; };
 		03087AE5277EE04D005D6D9B /* Compiler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Compiler.cpp; sourceTree = "<group>"; };
@@ -170,6 +172,12 @@
 		03087B1B277EE070005D6D9B /* lbuiltins.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lbuiltins.cpp; sourceTree = "<group>"; };
 		03087B1C277EE070005D6D9B /* ldblib.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ldblib.cpp; sourceTree = "<group>"; };
 		032FC7C4278C277400DD298A /* lnumprint.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lnumprint.cpp; sourceTree = "<group>"; };
+		039734232F238B2F00ABB30B /* Allocator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Allocator.cpp; sourceTree = "<group>"; };
+		039734242F238B2F00ABB30B /* Cst.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Cst.cpp; sourceTree = "<group>"; };
+		039734252F238B2F00ABB30B /* PrettyPrinter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PrettyPrinter.cpp; sourceTree = "<group>"; };
+		039734292F238B5000ABB30B /* lveclib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = lveclib.cpp; sourceTree = "<group>"; };
+		0397342B2F238B7400ABB30B /* StringUtils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = StringUtils.cpp; sourceTree = "<group>"; };
+		0397342C2F238B7400ABB30B /* TimeTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TimeTrace.cpp; sourceTree = "<group>"; };
 		03A407082CD142D600D97912 /* CostModel.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CostModel.h; sourceTree = "<group>"; };
 		03A407092CD142D600D97912 /* CostModel.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CostModel.cpp; sourceTree = "<group>"; };
 		03A4070A2CD142D600D97912 /* Types.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Types.h; sourceTree = "<group>"; };
@@ -259,12 +267,13 @@
 		03087AD4277EE036005D6D9B /* src */ = {
 			isa = PBXGroup;
 			children = (
+				039734232F238B2F00ABB30B /* Allocator.cpp */,
+				039734242F238B2F00ABB30B /* Cst.cpp */,
+				039734252F238B2F00ABB30B /* PrettyPrinter.cpp */,
 				03087AD5277EE036005D6D9B /* Ast.cpp */,
 				03087AD6277EE036005D6D9B /* Confusables.cpp */,
-				03087AD7277EE036005D6D9B /* StringUtils.cpp */,
 				03087AD8277EE036005D6D9B /* Location.cpp */,
 				03087AD9277EE036005D6D9B /* Lexer.cpp */,
-				03087ADA277EE036005D6D9B /* TimeTrace.cpp */,
 				03087ADB277EE036005D6D9B /* Parser.cpp */,
 			);
 			name = src;
@@ -300,6 +309,7 @@
 		03087AEC277EE070005D6D9B /* src */ = {
 			isa = PBXGroup;
 			children = (
+				039734292F238B5000ABB30B /* lveclib.cpp */,
 				03A4070E2CD142E800D97912 /* lbuffer.h */,
 				03A4070F2CD142E800D97912 /* lbuffer.cpp */,
 				03A407102CD142E800D97912 /* lbuflib.cpp */,
@@ -355,6 +365,16 @@
 			);
 			name = src;
 			path = VM/src;
+			sourceTree = "<group>";
+		};
+		0397342D2F238B7400ABB30B /* src */ = {
+			isa = PBXGroup;
+			children = (
+				0397342B2F238B7400ABB30B /* StringUtils.cpp */,
+				0397342C2F238B7400ABB30B /* TimeTrace.cpp */,
+			);
+			name = src;
+			path = Common/src;
 			sourceTree = "<group>";
 		};
 		03AAC6CD2D2FE1ED000988E7 /* src */ = {
@@ -423,6 +443,7 @@
 		5F11834A1833B78A00904D46 = {
 			isa = PBXGroup;
 			children = (
+				0397342D2F238B7400ABB30B /* src */,
 				03AAC6CD2D2FE1ED000988E7 /* src */,
 				03087AD4277EE036005D6D9B /* src */,
 				03087AE3277EE04D005D6D9B /* src */,
@@ -498,13 +519,14 @@
 				03087AE2277EE036005D6D9B /* Parser.cpp in Sources */,
 				03A407162CDA69CF00D97912 /* BuiltinFolding.cpp in Sources */,
 				03087B2C277EE070005D6D9B /* lmem.cpp in Sources */,
+				0397342E2F238B7400ABB30B /* StringUtils.cpp in Sources */,
+				0397342F2F238B7400ABB30B /* TimeTrace.cpp in Sources */,
 				03EBB28E27ABED6800DBF3A4 /* ConstantFolding.cpp in Sources */,
 				03087B27277EE070005D6D9B /* ldebug.cpp in Sources */,
 				03087B28277EE070005D6D9B /* lbaselib.cpp in Sources */,
 				03A4070C2CD142D600D97912 /* Types.cpp in Sources */,
 				03A4070D2CD142D600D97912 /* CostModel.cpp in Sources */,
 				03087B33277EE070005D6D9B /* lobject.cpp in Sources */,
-				03087AE1277EE036005D6D9B /* TimeTrace.cpp in Sources */,
 				03AAC6CE2D2FE1ED000988E7 /* CodeAllocator.cpp in Sources */,
 				03AAC6CF2D2FE1ED000988E7 /* OptimizeConstProp.cpp in Sources */,
 				03AAC6D02D2FE1ED000988E7 /* CodeGenContext.cpp in Sources */,
@@ -513,6 +535,9 @@
 				03AAC6D32D2FE1ED000988E7 /* CodeBlockUnwind.cpp in Sources */,
 				03AAC6D42D2FE1ED000988E7 /* BytecodeSummary.cpp in Sources */,
 				03AAC6D52D2FE1ED000988E7 /* SharedCodeAllocator.cpp in Sources */,
+				039734262F238B2F00ABB30B /* Cst.cpp in Sources */,
+				039734272F238B2F00ABB30B /* PrettyPrinter.cpp in Sources */,
+				039734282F238B2F00ABB30B /* Allocator.cpp in Sources */,
 				03AAC6D62D2FE1ED000988E7 /* IrTranslation.cpp in Sources */,
 				03AAC6D72D2FE1ED000988E7 /* IrDump.cpp in Sources */,
 				03AAC6D82D2FE1ED000988E7 /* OptimizeFinalX64.cpp in Sources */,
@@ -550,13 +575,13 @@
 				03087B37277EE070005D6D9B /* lvmutils.cpp in Sources */,
 				03087B29277EE070005D6D9B /* loslib.cpp in Sources */,
 				03087AE0277EE036005D6D9B /* Lexer.cpp in Sources */,
+				0397342A2F238B5000ABB30B /* lveclib.cpp in Sources */,
 				03087B3A277EE070005D6D9B /* lbuiltins.cpp in Sources */,
 				03087B2D277EE070005D6D9B /* lcorolib.cpp in Sources */,
 				03087B25277EE070005D6D9B /* lint64lib.cpp in Sources */,
 				03087B30277EE070005D6D9B /* ldo.cpp in Sources */,
 				03087AEA277EE04D005D6D9B /* PseudoCode.cpp in Sources */,
 				03087B2E277EE070005D6D9B /* lstate.cpp in Sources */,
-				03087ADE277EE036005D6D9B /* StringUtils.cpp in Sources */,
 				03EBB29027ABED6800DBF3A4 /* TableShape.cpp in Sources */,
 				03087B1D277EE070005D6D9B /* lperf.cpp in Sources */,
 				03087ADD277EE036005D6D9B /* Confusables.cpp in Sources */,
